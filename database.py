@@ -724,7 +724,7 @@ class Database:
         with self.connect() as db: return {row["key"]:row["value"] for row in db.execute("SELECT key,value FROM app_settings")}
 
     def save_settings(self, values, user_id):
-        allowed={"base_currency","backup_interval_hours","company_name","company_address","company_phone","company_mof","company_nssf","company_email","company_website","company_logo"}
+        allowed={"base_currency","backup_interval_hours","company_name","company_address","company_phone","company_mof","company_nssf","company_email","company_website","company_logo","company_vat_registered","company_vat_date"}
         if str(values.get("base_currency") or "USD") not in ("USD","EUR","LBP","AED"): raise ValueError("Invalid base currency")
         try: hours=int(values.get("backup_interval_hours",24))
         except Exception as exc: raise ValueError("Backup interval must be a number") from exc

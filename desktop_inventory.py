@@ -71,14 +71,16 @@ class InventoryMixin:
     # ------------------------------------------------------------ items
     def build_items_page(self, page):
         form = tk.LabelFrame(page, text="Item", bg=LIGHT, padx=8, pady=5); form.pack(fill="x", padx=8, pady=6)
-        self.item_id = None; self.item_vars = {k: tk.StringVar() for k in ("sku", "name", "unit", "category", "subcategory", "supplier_name", "location", "sales_price", "reorder_level", "barcode", "notes")}
-        self.item_vars["unit"].set("unit"); self.item_active = tk.BooleanVar(value=True)
+        self.item_id = None; self.item_vars = {k: tk.StringVar() for k in ("sku", "name", "unit", "category", "subcategory", "supplier_name", "location", "sales_price", "reorder_level", "barcode", "notes", "default_vat")}
+        self.item_vars["unit"].set("unit"); self.item_vars["default_vat"].set("11%"); self.item_active = tk.BooleanVar(value=True)
         self.item_boxes = {}
         for index, (key, label, width) in enumerate((("sku", "Item Code (auto if blank)", 14), ("name", "Item Name", 24), ("unit", "Unit", 12), ("category", "Category", 16),
-                                                     ("subcategory", "Subcategory", 16), ("supplier_name", "Supplier", 22), ("sales_price", "Sales Price", 11), ("reorder_level", "Reorder Level", 9),
+                                                     ("subcategory", "Subcategory", 16), ("supplier_name", "Supplier", 22), ("sales_price", "Sales Price", 11), ("default_vat", "Default VAT", 9), ("reorder_level", "Reorder Level", 9),
                                                      ("location", "Location (shelf)", 12), ("barcode", "Barcode", 14), ("notes", "Notes", 24))):
             tk.Label(form, text=label, bg=LIGHT).grid(row=index // 3, column=(index % 3) * 2, sticky="w", padx=4, pady=2)
-            if key in ("unit", "category", "subcategory", "supplier_name"):
+            if key == "default_vat":
+                widget = ttk.Combobox(form, textvariable=self.item_vars[key], values=["11%", "0%"], state="readonly", width=width); self.item_boxes[key] = widget
+            elif key in ("unit", "category", "subcategory", "supplier_name"):
                 widget = ttk.Combobox(form, textvariable=self.item_vars[key], width=width); self.item_boxes[key] = widget
                 if key == "category": widget.bind("<<ComboboxSelected>>", lambda _e: self.item_category_chosen())
             else: widget = tk.Entry(form, textvariable=self.item_vars[key], width=width)
@@ -95,7 +97,7 @@ class InventoryMixin:
         self.items_tree.tag_configure("reorder", foreground=RED); self.items_tree.bind("<Double-1>", lambda _e: self.edit_item())
 
     def new_item(self):
-        self.item_id = None; [v.set("") for v in self.item_vars.values()]; self.item_vars["unit"].set("unit"); self.item_active.set(True)
+        self.item_id = None; [v.set("") for v in self.item_vars.values()]; self.item_vars["unit"].set("unit"); self.item_vars["default_vat"].set("11%"); self.item_active.set(True)
         if hasattr(self, "item_cost_label"): self.item_cost_label.config(text="Cost price (average of purchases): -")
 
     def edit_item(self):
@@ -103,11 +105,13 @@ class InventoryMixin:
         if not selected: return
         item = next(i for i in self.inventory_rows if str(i["id"]) == selected[0]); self.item_id = item["id"]
         for key in self.item_vars: self.item_vars[key].set("" if item.get(key) in (None, 0.0) and key in ("barcode", "notes", "category") else str(item.get(key) if item.get(key) is not None else ""))
+        self.item_vars["default_vat"].set("0%" if str(item.get("default_vat") or "11").strip() in ("0", "0.0", "0%") else "11%")
         self.item_vars["sales_price"].set(f'{item["sales_price"]:g}'); self.item_vars["reorder_level"].set(f'{item["reorder_level"]:g}'); self.item_active.set(bool(item["active"]))
         self.item_cost_label.config(text=f'Cost price (average of purchases): {item["average_cost"]:,.4f} {getattr(self, "inventory_currency", "")}   On hand: {item["quantity"]:,.3f}')
 
     def save_item(self):
         payload = {k: v.get().strip() for k, v in self.item_vars.items()}; payload.update(id=self.item_id, active=self.item_active.get())
+        payload["default_vat"] = "0" if payload.get("default_vat", "11%").replace("%", "").strip() in ("0", "0.0") else "11"
         try: saved = self.client.save_inventory_item(payload)
         except Exception as exc: return messagebox.showerror("Items", str(exc))
         self.new_item(); self.load_inventory(); messagebox.showinfo("Items", f'Item {saved["sku"]} - {saved["name"]} saved')

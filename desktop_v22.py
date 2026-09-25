@@ -48,11 +48,29 @@ class V22Mixin:
         self.update_sales_totals(); calc = getattr(self, "sales_calculation", None)
         if not calc or not calc["lines"]: raise ValueError("Add at least one line")
         treatment = TREATMENTS.get(self.sales_treatment.get(), "standard")
+        currency = self.sales_currency.get()
         invoice = {"invoice_number": self.sales_no.get(), "invoice_date": self.sales_date.get(), "due_date": self.sales_due_date.get(), "party_name": self.sales_party.get(),
-                   "currency": self.sales_currency.get(), "kind": "sale", "subtotal": calc["total_ht"], "vat": calc["vat"], "total": calc["grand_total"],
+                   "currency": currency, "kind": "sale", "subtotal": calc["total_ht"], "vat": calc["vat"], "total": calc["grand_total"],
                    "invoice_discount_percent": self.sales_discount_percent.get(), "invoice_discount_amount": self.sales_discount_amount.get(),
                    "vat_treatment": treatment, "payment_method": self.sales_payment_method.get(), "amount_paid": self.sales_amount_paid.get(),
                    "doc_subtype": {"Credit Note": "credit_note", "Debit Note": "debit_note"}.get(self.sales_doc_type.get(), "invoice")}
+        # Party identity block for the printed invoice (Code / Name / Address / MOF)
+        party = getattr(self, "sales_customers", {}).get(self.sales_party.get()) or {}
+        invoice["party_code"] = self.sales_supplier_account.get().split(" - ", 1)[0].strip() or (party.get("account_number") or "")
+        invoice["party_address"] = party.get("address") or ""
+        invoice["party_mof"] = party.get("mof_number") or party.get("tax_number") or ""
+        # VAT 11% expressed in LBP using the exchange rate valid on the invoice date
+        try:
+            rates = self.sales_rates_for_date(self.client.exchange_rates(), self.sales_date.get())
+            vat_lbp, _ = self.exchange_equivalents(float(calc["vat"] or 0), currency, rates)
+            if currency == "LBP":
+                invoice["vat_lbp"] = float(calc["vat"] or 0); invoice["lbp_rate"] = None
+            elif vat_lbp is not None:
+                invoice["vat_lbp"] = vat_lbp
+                base_lbp, _ = self.exchange_equivalents(1.0, currency, rates)
+                invoice["lbp_rate"] = base_lbp
+        except Exception:
+            pass
         return invoice, calc["lines"]
 
     def sales_invoice_pdf(self, mode):
@@ -146,6 +164,7 @@ class V22Mixin:
             item = self.sales_item_for(iid); product = self.item_by_code(sku)
             if not item or not product: return
             item.update(item_code=product["sku"], description=product["name"], unit=product.get("unit") or "", unit_price=product["sales_price"] or item.get("unit_price") or 0)
+            if product.get("default_vat") not in (None,""): item["vat_rate"]=float(str(product["default_vat"]).replace("%","") or 11); item["_vat_typed"]=False
             self.recalculate_sales_item(item); self.sales_sheet.item(iid, values=self.sales_row_values(item)); self.update_sales_totals()
         self.item_picker(chosen)
 
