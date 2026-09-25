@@ -306,7 +306,10 @@ class BrainsScreensMixin:
     def search_vouchers(self, _event=None):
         from desktop import row_matches_search
         typed = self.manual_find.get().strip(); choices = list(getattr(self, "voucher_choices", {}))
-        self.manual_find_box["values"] = [c for c in choices if row_matches_search((c,), typed)] if typed else choices
+        values = [c for c in choices if row_matches_search((c,), typed)] if typed else choices
+        self.manual_find_box["values"] = values
+        if typed and values and _event is not None and getattr(_event, "keysym", "") not in ("Up", "Down", "Return", "Escape", "Tab"):
+            self.manual_find_box.after_idle(lambda: self.manual_find_box.event_generate("<Down>"))
 
     def set_next_manual_voucher_number(self):
         if not hasattr(self, "manual_no") or self.editing_voucher_id: return

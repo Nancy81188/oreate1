@@ -905,6 +905,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Button(toolbar,text="Save",command=lambda:self.save_sales_invoice(False),bg=NAVY,fg="white",font=("Segoe UI",10,"bold"),border=0,padx=14,pady=4).pack(side="left",padx=(8,2))
         tk.Button(toolbar,text="Save & Post",command=lambda:self.save_sales_invoice(True),bg=GOLD,fg=NAVY,font=("Segoe UI",10,"bold"),border=0,padx=14,pady=4).pack(side="left",padx=2)
         self.action_button(toolbar,"Duplicate",self.duplicate_sales_invoice).pack(side="left",padx=(8,2))
+        tk.Button(toolbar,text="Edit",command=self.edit_sales_invoice,bg="#1F6E8C",fg="white",font=("Segoe UI",10,"bold"),border=0,padx=14,pady=4).pack(side="left",padx=2)
         toolbar2=tk.Frame(self.sales_tab,bg=LIGHT); toolbar2.pack(fill="x",padx=10,pady=(2,0))
         for text,command in (("Print Preview",lambda:self.sales_invoice_pdf("preview")),("PDF",lambda:self.sales_invoice_pdf("pdf")),("Print",lambda:self.sales_invoice_pdf("print")),
                              ("Excel",lambda:self.sales_entry_report("xlsx"))):
@@ -1024,7 +1025,31 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         if typed.isdigit():
             wanted=int(typed); found=[c for c in choices if c.split(" (",1)[0].rsplit("-",1)[-1].isdigit() and int(c.split(" (",1)[0].rsplit("-",1)[-1])==wanted]
             self.sales_open_box["values"]=found or [c for c in choices if typed in c.split(" (",1)[0]]
-        else: self.sales_open_box["values"]=[c for c in choices if typed.casefold() in c.split(" (",1)[0].casefold()] if typed else choices
+        else: self.sales_open_box["values"]=[c for c in choices if typed.casefold() in c.casefold()] if typed else choices
+        if typed and self.sales_open_box["values"] and _event is not None and _event.keysym not in ("Up","Down","Return","Escape","Tab"):
+            self.sales_open_box.after_idle(lambda:self.sales_open_box.event_generate("<Down>"))
+
+    def edit_sales_invoice(self):
+        """Load the invoice picked in Find Invoice into the form for editing; then Save re-saves it."""
+        if self.sales_open_choice.get().strip() and getattr(self,"sales_open_map",{}).get(self.sales_open_choice.get()):
+            self.open_sales_invoice(); return
+        choices=list(getattr(self,"sales_open_map",{}))
+        if not choices:
+            messagebox.showinfo("Sales Invoice","No saved invoices to edit yet."); return
+        win=tk.Toplevel(self); win.title("Edit Invoice"); win.configure(bg=LIGHT); win.transient(self); win.grab_set()
+        tk.Label(win,text="Pick the invoice you want to edit:",bg=LIGHT,font=("Segoe UI",10,"bold")).pack(padx=14,pady=(14,4))
+        pick=tk.StringVar()
+        box=ttk.Combobox(win,textvariable=pick,width=40,values=choices); box.pack(padx=14,pady=4)
+        def do_edit():
+            if pick.get() in getattr(self,"sales_open_map",{}):
+                self.sales_open_choice.set(pick.get()); win.destroy(); self.open_sales_invoice()
+        def filt(_e=None):
+            t=pick.get().strip().casefold(); box["values"]=[c for c in choices if t in c.casefold()] if t else choices
+            if t and box["values"] and _e is not None and _e.keysym not in ("Up","Down","Return","Escape","Tab"):
+                box.after_idle(lambda:box.event_generate("<Down>"))
+        box.bind("<KeyRelease>",filt); box.bind("<Return>",lambda _e:do_edit())
+        tk.Button(win,text="Open for Editing",command=do_edit,bg=GOLD,fg=NAVY,font=("Segoe UI",10,"bold"),border=0,padx=14,pady=5).pack(pady=(8,14))
+        box.focus_set()
 
     def sales_customer_chosen(self):
         party=getattr(self,"sales_customers",{}).get(self.sales_party.get())

@@ -177,8 +177,12 @@ class Stage3Mixin:
         tk.Entry(row, textvariable=v["number"], width=16, state="readonly", readonlybackground="white", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(4, 10))
         tk.Label(row, text="Date", bg=LIGHT).pack(side="left"); self.date_entry(row, v["date"], 11).pack(side="left", padx=(4, 10))
         tk.Label(row, text="Customer" if kind == "customer_receipt" else "Supplier", bg=LIGHT).pack(side="left")
+        form["type"] = tk.StringVar(value="All")
+        tk.Label(row, text="Type", bg=LIGHT).pack(side="left", padx=(0, 2))
+        type_box = ttk.Combobox(row, textvariable=form["type"], values=["All", "client", "supplier", "asset_supplier", "other_payable"], state="readonly", width=13)
+        type_box.pack(side="left", padx=(0, 8)); type_box.bind("<<ComboboxSelected>>", lambda _e: self.payment_type_changed(form))
         form["party_box"] = ttk.Combobox(row, textvariable=v["party"], width=24); form["party_box"].pack(side="left", padx=(4, 10))
-        form["party_box"].bind("<KeyRelease>", lambda _e: self.filter_payment_parties(form)); form["party_box"].bind("<<ComboboxSelected>>", lambda _e: self.payment_party_chosen(form))
+        form["party_box"].bind("<KeyRelease>", lambda e: self.filter_payment_parties(form, e)); form["party_box"].bind("<<ComboboxSelected>>", lambda _e: self.payment_party_chosen(form))
         tk.Label(row, text="Currency", bg=LIGHT).pack(side="left")
         ttk.Combobox(row, textvariable=v["currency"], values=["USD", "LBP", "EUR", "AED"], state="readonly", width=6).pack(side="left", padx=(4, 10))
         tk.Label(row, text="Amount", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left"); tk.Entry(row, textvariable=v["amount"], width=14, font=("Segoe UI", 10, "bold")).pack(side="left", padx=4)
@@ -211,9 +215,19 @@ class Stage3Mixin:
         form["tree"].bind("<Double-1>", lambda _e: self.edit_payment(form))
         return form
 
-    def filter_payment_parties(self, form):
-        typed = form["vars"]["party"].get().strip().casefold(); names = list(form.get("party_map", {}))
-        form["party_box"]["values"] = [n for n in names if typed in n.casefold()] if typed else names
+    def filter_payment_parties(self, form, event=None):
+        typed = form["vars"]["party"].get().strip().casefold()
+        kind = form["type"].get() if form.get("type") else "All"
+        result = [name for name, p in form.get("party_map", {}).items()
+                  if (kind in ("All", "") or p.get("kind") == kind) and (not typed or typed in name.casefold())]
+        form["party_box"]["values"] = result
+        if typed and result and event is not None and getattr(event, "keysym", "") not in ("Up", "Down", "Return", "Escape", "Tab"):
+            form["party_box"].after_idle(lambda: form["party_box"].event_generate("<Down>"))
+
+    def payment_type_changed(self, form):
+        form["vars"]["party"].set(""); self.filter_payment_parties(form)
+        if "alloc_sheet" in form: form["alloc_sheet"].clear(); form["alloc_info"].config(text="Choose the customer / supplier to see the open invoices")
+        form["balance"].config(text="")
 
     def load_open_documents(self, form, party, existing=None):
         sheet = form["alloc_sheet"]; sheet.clear(); existing = {a["invoice_id"]: a["amount"] for a in (existing or [])}
@@ -339,7 +353,7 @@ class Stage3Mixin:
             except Exception as exc: return messagebox.showerror("Payment & Receipt", str(exc))
             for kind, form in self.payment_forms.items():
                 # clients and suppliers are both available in receipts and payments (refunds, advances, settlements)
-                form["party_map"] = {f'{p["name"]} | {p.get("account_number") or ""} | {p["kind"]}': p for p in parties}
+                form["party_map"] = {f'{p["name"]} | {p.get("account_number") or ""}': p for p in parties}
                 if not getattr(self, "_cash_accounts", None):
                     try: self._cash_accounts = [f'{a["code"]} - {a["name_en"]}' for a in self.client.accounts() if str(a["code"]).startswith(("511", "512", "519", "53"))]
                     except Exception: self._cash_accounts = ["531 - Cash"]
