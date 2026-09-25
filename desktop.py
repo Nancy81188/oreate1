@@ -902,16 +902,13 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.action_button(toolbar,"New",self.new_sales_invoice).pack(side="left",padx=2)
         self.action_button(toolbar,"Add Line",self.add_sales_item).pack(side="left",padx=2)
         tk.Button(toolbar,text="Delete Line",command=self.remove_sales_item,bg="#8B1E1E",fg="white",border=0,padx=10,pady=4).pack(side="left",padx=2)
-        tk.Button(toolbar,text="Save",command=lambda:self.save_sales_invoice(False),bg=NAVY,fg="white",font=("Segoe UI",10,"bold"),border=0,padx=14,pady=4).pack(side="left",padx=(8,2))
-        tk.Button(toolbar,text="Save & Post",command=lambda:self.save_sales_invoice(True),bg=GOLD,fg=NAVY,font=("Segoe UI",10,"bold"),border=0,padx=14,pady=4).pack(side="left",padx=2)
+        tk.Button(toolbar,text="Save",command=lambda:self.save_sales_invoice(True),bg=NAVY,fg="white",font=("Segoe UI",10,"bold"),border=0,padx=14,pady=4).pack(side="left",padx=(8,2))
         self.action_button(toolbar,"Duplicate",self.duplicate_sales_invoice).pack(side="left",padx=(8,2))
-        tk.Button(toolbar,text="Edit",command=self.edit_sales_invoice,bg="#1F6E8C",fg="white",font=("Segoe UI",10,"bold"),border=0,padx=14,pady=4).pack(side="left",padx=2)
-        toolbar2=tk.Frame(self.sales_tab,bg=LIGHT); toolbar2.pack(fill="x",padx=10,pady=(2,0))
         for text,command in (("Print Preview",lambda:self.sales_invoice_pdf("preview")),("PDF",lambda:self.sales_invoice_pdf("pdf")),("Print",lambda:self.sales_invoice_pdf("print")),
                              ("Excel",lambda:self.sales_entry_report("xlsx"))):
-            tk.Button(toolbar2,text=text,command=command,bg=NAVY,fg="white",border=0,padx=10,pady=4).pack(side="left",padx=2)
+            tk.Button(toolbar,text=text,command=command,bg=NAVY,fg="white",border=0,padx=10,pady=4).pack(side="left",padx=2)
         for text,command in (("Import Excel",self.import_sales_excel),("Import PDF",self.import_sales_pdf)):
-            tk.Button(toolbar2,text=text,command=command,bg=GOLD,fg=NAVY,border=0,padx=10,pady=4).pack(side="left",padx=(8 if text=="Import Excel" else 2,2))
+            tk.Button(toolbar,text=text,command=command,bg=GOLD,fg=NAVY,border=0,padx=10,pady=4).pack(side="left",padx=(8 if text=="Import Excel" else 2,2))
         body=tk.Frame(self.sales_tab,bg=LIGHT); body.pack(fill="both",expand=True,padx=10,pady=(2,4))
         # Item table on top, enlarged
         items_area=tk.Frame(body,bg=LIGHT); items_area.pack(side="top",fill="both",expand=True)
@@ -1158,7 +1155,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         if key in ("total","gross_amount"): key="description"; column_index=1
         bbox=tree.bbox(iid,f"#{column_index+1}")
         if not bbox: return
-        item=self.sales_item_for(iid); value=item.get(key,"")
+        item=self.sales_item_for(iid)
+        if item is None: return
+        value=item.get(key,"")
         editor=tk.Entry(tree,justify="left" if key in ("description","item_code","unit") else "right"); editor.insert(0,str(value if key in ("description","item_code","unit") else f"{float(value or 0):g}"))
         editor.place(x=bbox[0],y=bbox[1],width=bbox[2],height=bbox[3]); editor.focus_set(); editor.select_range(0,"end")
         def commit(move=0):

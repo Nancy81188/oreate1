@@ -218,8 +218,9 @@ class Stage3Mixin:
     def filter_payment_parties(self, form, event=None):
         typed = form["vars"]["party"].get().strip().casefold()
         kind = form["type"].get() if form.get("type") else "All"
+        def cat(p): return (p.get("account_category") or ("client" if p.get("kind") == "customer" else "supplier"))
         result = [name for name, p in form.get("party_map", {}).items()
-                  if (kind in ("All", "") or p.get("kind") == kind) and (not typed or typed in name.casefold())]
+                  if (kind in ("All", "") or cat(p) == kind) and (not typed or typed in name.casefold())]
         form["party_box"]["values"] = result
         if typed and result and event is not None and getattr(event, "keysym", "") not in ("Up", "Down", "Return", "Escape", "Tab"):
             form["party_box"].after_idle(lambda: form["party_box"].event_generate("<Down>"))
@@ -373,8 +374,8 @@ class Stage3Mixin:
     # ================================================================ Purchases & Expenses
     def build_purchases_expenses(self):
         nested = ttk.Notebook(self.purchases_tab); nested.pack(fill="both", expand=True, padx=8, pady=8)
-        purchases_outer, purchases = self.scrollable_page(nested); expenses = tk.Frame(nested, bg=LIGHT)
-        nested.add(purchases_outer, text="Purchases"); nested.add(expenses, text="Expenses")
+        purchases_outer, purchases = self.scrollable_page(nested); expenses_outer, expenses = self.scrollable_page(nested)
+        nested.add(purchases_outer, text="Purchases"); nested.add(expenses_outer, text="Expenses")
         self.build_purchases_page(purchases); self.build_expenses_page(expenses)
         self.load_purchases(); self.load_expenses()
 

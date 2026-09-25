@@ -95,6 +95,7 @@ class EditableSheet:
         def commit(move):
             if done["flag"]: return
             done["flag"] = True; text = editor.get().strip(); editor.destroy()
+            if iid not in self.rows or not self.tree.exists(iid): return
             if self.on_change(iid, key, text) is False: return
             self.refresh(iid)
             if move:
@@ -195,7 +196,8 @@ class BrainsScreensMixin:
         return row
 
     def voucher_cell_changed(self, iid, key, text):
-        row = self.voucher_sheet.rows[iid]
+        row = self.voucher_sheet.rows.get(iid)
+        if row is None: return False
         if key == "account":
             code = text.split(" - ", 1)[0].strip()
             if code:
@@ -298,6 +300,7 @@ class BrainsScreensMixin:
             except ValueError: return (datetime.min, item["number"])
         self.voucher_order = [item["id"] for item in sorted(grouped.values(), key=key)]
         self.voucher_choices = {f'{v["number"]} | {_date_text(v["date"])} | {v["description"][:40]} | {v["debit"]:,.2f} {v["currency"]}': v["id"] for v in grouped.values()}
+        self.voucher_search = {label: f'{label} {grouped.get(vid, {}).get("description", "")}' for label, vid in self.voucher_choices.items()}
         self.manual_find_box["values"] = list(self.voucher_choices)
         self.set_next_manual_voucher_number()
 
@@ -306,7 +309,8 @@ class BrainsScreensMixin:
     def search_vouchers(self, _event=None):
         from desktop import row_matches_search
         typed = self.manual_find.get().strip(); choices = list(getattr(self, "voucher_choices", {}))
-        values = [c for c in choices if row_matches_search((c,), typed)] if typed else choices
+        searchmap = getattr(self, "voucher_search", {})
+        values = [c for c in choices if row_matches_search((searchmap.get(c, c),), typed)] if typed else choices
         self.manual_find_box["values"] = values
         if typed and values and _event is not None and getattr(_event, "keysym", "") not in ("Up", "Down", "Return", "Escape", "Tab"):
             self.manual_find_box.after_idle(lambda: self.manual_find_box.event_generate("<Down>"))
