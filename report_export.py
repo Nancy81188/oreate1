@@ -236,10 +236,17 @@ def export_invoice_pdf(path, invoice, items, logo_path=None, company=None):
     trw=ParagraphStyle("t-rw",parent=tr,fontName="Helvetica-Bold",fontSize=10.5,textColor=colors.white)
     tlg=ParagraphStyle("t-lg",parent=tl,textColor=GREY,fontSize=8)
     trg=ParagraphStyle("t-rg",parent=tr,textColor=GREY,fontSize=8)
-    trows=[[Paragraph("Total Before VAT",tl),Paragraph(f"{money(subtotal)} {cur}",tr)],
+    gross_total=float(invoice.get("gross_total") or subtotal); inv_discount=float(invoice.get("discount") or 0)
+    disc_pct=float(invoice.get("invoice_discount_percent") or 0)
+    trows=[]
+    if inv_discount>0.004 or disc_pct>0:
+        trows.append([Paragraph("Total",tl),Paragraph(f"{money(gross_total)} {cur}",tr)])
+        disc_label=f"Discount {disc_pct:g}%" if disc_pct else "Discount"
+        trows.append([Paragraph(disc_label,tl),Paragraph(f"-{money(inv_discount)} {cur}",tr)])
+    trows+=[[Paragraph("Total HT (before VAT)",tl),Paragraph(f"{money(subtotal)} {cur}",tr)],
            [Paragraph(vat_label,tl),Paragraph(f"{money(vat)} {cur}",tr)],
-           [Paragraph("Total",tlw),Paragraph(f"{money(total)} {cur}",trw)]]
-    total_row=2; grey_rows=[]
+           [Paragraph("TOTAL",tlw),Paragraph(f"{money(total)} {cur}",trw)]]
+    total_row=len(trows)-1; grey_rows=[]
     if invoice.get("lbp_rate"):
         trows.append([Paragraph("VAT LBP Rate",tlg),Paragraph(f"{float(invoice['lbp_rate']):,.0f}",trg)]); grey_rows.append(len(trows)-1)
     if invoice.get("vat_lbp") is not None:

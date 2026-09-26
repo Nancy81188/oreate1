@@ -51,6 +51,7 @@ class V22Mixin:
         currency = self.sales_currency.get()
         invoice = {"invoice_number": self.sales_no.get(), "invoice_date": self.sales_date.get(), "due_date": self.sales_due_date.get(), "party_name": self.sales_party.get(),
                    "currency": currency, "kind": "sale", "subtotal": calc["total_ht"], "vat": calc["vat"], "total": calc["grand_total"],
+                   "gross_total": calc["total"], "discount": calc["discount"],
                    "invoice_discount_percent": self.sales_discount_percent.get(), "invoice_discount_amount": self.sales_discount_amount.get(),
                    "vat_treatment": treatment, "payment_method": self.sales_payment_method.get(), "amount_paid": self.sales_amount_paid.get(),
                    "doc_subtype": {"Credit Note": "credit_note", "Debit Note": "debit_note"}.get(self.sales_doc_type.get(), "invoice")}

@@ -377,7 +377,9 @@ class Database:
                 for column in ("department_id","project_id"):
                     if column not in columns: db.execute(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER")
             payment_columns={row["name"] for row in db.execute("PRAGMA table_info(payments)")}
-            for column,definition in (("payment_number","TEXT"),("payment_method","TEXT"),("department_id","INTEGER"),("project_id","INTEGER")):
+            for column,definition in (("payment_number","TEXT"),("payment_method","TEXT"),("department_id","INTEGER"),("project_id","INTEGER"),
+                                      ("bank_commission","TEXT NOT NULL DEFAULT '0'"),("commission_account","TEXT"),
+                                      ("exchange_difference","TEXT NOT NULL DEFAULT '0'"),("exchange_account","TEXT")):
                 if column not in payment_columns: db.execute(f"ALTER TABLE payments ADD COLUMN {column} {definition}")
             expense_cols={row["name"] for row in db.execute("PRAGMA table_info(expenses)")}
             if "expense_number" not in expense_cols: db.execute("ALTER TABLE expenses ADD COLUMN expense_number TEXT")
@@ -839,7 +841,17 @@ class Database:
                          self._line_for_side(expense_account,subtotal,self._side(item.get("expense_side"),"C")),
                          self._line_for_side(vat_account,vat,self._side(item.get("vat_side"),"C"))]
             else:
-                lines = [self._line_for_side(expense_account,deductible,expense_side),self._line_for_side(expense_no_vat_account,non_deductible,expense_no_vat_side),self._line_for_side(vat_account,vat,vat_side),self._line_for_side(supplier_account,total,supplier_side)]
+                splits=item.get("expense_splits")
+                if splits:
+                    expense_lines=[]
+                    for acct,amt in splits:
+                        code=str(acct).strip(); value=Decimal(str(amt))
+                        if not value: continue
+                        db.execute("INSERT OR IGNORE INTO accounts(code,name_en,type) VALUES(?,?,?)",(code,"Expense Account","expense"))
+                        expense_lines.append(self._line_for_side(code,value,expense_side))
+                    lines = expense_lines+[self._line_for_side(expense_no_vat_account,non_deductible,expense_no_vat_side),self._line_for_side(vat_account,vat,vat_side),self._line_for_side(supplier_account,total,supplier_side)]
+                else:
+                    lines = [self._line_for_side(expense_account,deductible,expense_side),self._line_for_side(expense_no_vat_account,non_deductible,expense_no_vat_side),self._line_for_side(vat_account,vat,vat_side),self._line_for_side(supplier_account,total,supplier_side)]
             lines=[line for line in lines if Decimal(str(line[1])) or Decimal(str(line[2]))]
             difference = sum(x[1] for x in lines) - sum(x[2] for x in lines)
             if kind=="sale" and any(item.get(key) for key in ("supplier_side","expense_side","vat_side")) and difference:
@@ -867,7 +879,7 @@ class Database:
             raise ValueError("Add at least one invoice item")
         normalized = []
         deductible_total = Decimal("0"); non_deductible_total=Decimal("0")
-        vat_total = Decimal("0")
+        vat_total = Decimal("0"); expense_splits={}
         for index, line in enumerate(line_items, start=1):
             description = str(line.get("description") or "").strip()
             if not description:
@@ -891,9 +903,12 @@ class Database:
             if vat < 0:
                 raise ValueError(f"Item {index}: VAT cannot be negative")
             total = subtotal + vat
+            line_expense_account=str(line.get("expense_account") or "").split(" - ",1)[0].strip() or None
             normalized.append((description, quantity, unit_price, subtotal,deductible,non_deductible,vat_rate,vat,total,str(line.get("item_code") or "").strip() or None))
             deductible_total+=deductible; non_deductible_total+=non_deductible
             vat_total += vat
+            if line_expense_account and deductible:
+                expense_splits[line_expense_account]=expense_splits.get(line_expense_account,Decimal("0"))+deductible
         invoice = dict(item)
         if not str(invoice.get("invoice_number") or "").strip():
             invoice["invoice_number"] = self.next_invoice_number(invoice.get("kind", "sale"), invoice.get("invoice_date"))
@@ -901,6 +916,14 @@ class Database:
         invoice["subtotal"] = float(deductible_total+non_deductible_total)
         invoice["vat"] = float(vat_total)
         invoice["total"] = float(deductible_total+non_deductible_total+vat_total)
+        # per-item cost-account routing: split the expense side by each line's own account, remainder on the invoice default
+        if expense_splits and self._entry_type(invoice)!="sales":
+            default_account=str(invoice.get("expense_account") or EXPENSE_ACCOUNT_9).strip()
+            routed=sum(expense_splits.values()); remainder=deductible_total-routed
+            splits=[(acct,amount) for acct,amount in expense_splits.items()]
+            if remainder>Decimal("0.005") or remainder<Decimal("-0.005"):
+                splits.append((default_account,remainder))
+            invoice["expense_splits"]=[(acct,str(amount)) for acct,amount in splits if amount]
         if self._entry_type(invoice)!="sales":
             raw_lines=[self._line_for_side(invoice.get("expense_account") or EXPENSE_ACCOUNT_9,deductible_total,self._side(invoice.get("expense_side"),"D")),
                 self._line_for_side(invoice.get("expense_no_vat_account") or EXPENSE_NO_VAT_ACCOUNT_9,non_deductible_total,self._side(invoice.get("expense_no_vat_side"),"D")),
@@ -1534,6 +1557,13 @@ class Database:
         if amount<=0: raise ValueError("Payment amount must be above zero")
         currency=str(item.get("currency") or "USD").upper()
         cash_account=str(item.get("cash_account") or "531").strip()
+        try: commission=Decimal(str(item.get("bank_commission") or 0))
+        except Exception as exc: raise ValueError("Invalid bank commission amount") from exc
+        if commission<0: raise ValueError("Bank commission cannot be negative")
+        try: exchange_diff=Decimal(str(item.get("exchange_difference") or 0))
+        except Exception as exc: raise ValueError("Invalid exchange difference amount") from exc
+        import chart_extra
+        commission_account=str(item.get("commission_account") or chart_extra.BANK_COMMISSION_ACCOUNT).split(" - ",1)[0].strip() or chart_extra.BANK_COMMISSION_ACCOUNT
         party_account=str(item.get("party_account") or (DEFAULT_LEBANESE_ACCOUNTS["accounts_receivable"] if kind=="customer_receipt" else DEFAULT_LEBANESE_ACCOUNTS["accounts_payable"])).strip()
         party_id=int(item.get("party_id"))
         with self.connect() as db:
@@ -1549,16 +1579,26 @@ class Database:
             department_id,project_id=self._dimension_ids(db,item)
             db.execute("INSERT OR IGNORE INTO accounts(code,name_en,type) VALUES(?,?,?)",(cash_account,"Cash / Bank Account","asset"))
             db.execute("INSERT OR IGNORE INTO accounts(code,name_en,type) VALUES(?,?,?)",(party_account,"Party Control Account","asset" if kind=="customer_receipt" else "liability"))
-            result=db.execute("""INSERT INTO payments(kind,party_id,payment_date,currency,amount,cash_account,party_account,reference,description,created_by,created_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(kind,party_id,date,currency,str(amount),cash_account,party_account,
-                str(item.get("reference") or "").strip(),str(item.get("description") or "").strip(),user_id,utcnow()))
+            if commission: db.execute("INSERT OR IGNORE INTO accounts(code,name_en,type) VALUES(?,?,?)",(commission_account,"Bank Commissions","expense"))
+            if exchange_diff:
+                db.execute("INSERT OR IGNORE INTO accounts(code,name_en,type) VALUES(?,?,?)",(chart_extra.EXCHANGE_GAIN_ACCOUNT,"Gain on Exchange Difference","income"))
+                db.execute("INSERT OR IGNORE INTO accounts(code,name_en,type) VALUES(?,?,?)",(chart_extra.EXCHANGE_LOSS_ACCOUNT,"Loss on Exchange Difference","expense"))
+            result=db.execute("""INSERT INTO payments(kind,party_id,payment_date,currency,amount,cash_account,party_account,reference,description,bank_commission,commission_account,exchange_difference,created_by,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(kind,party_id,date,currency,str(amount),cash_account,party_account,
+                str(item.get("reference") or "").strip(),str(item.get("description") or "").strip(),str(commission),commission_account,str(exchange_diff),user_id,utcnow()))
             payment_id=result.lastrowid
             db.execute("UPDATE payments SET payment_number=?,payment_method=?,department_id=?,project_id=? WHERE id=?",
                 (number,str(item.get("payment_method") or "Cash").strip(),department_id,project_id,payment_id))
             entry=db.execute("""INSERT INTO journal_entries(entry_number,entry_date,description,source_type,source_id,currency,created_by,created_at)
-                VALUES(?,?,?,?,?,?,?,?)""",(number,date,str(item.get("description") or ("Receipt from " if kind=="customer_receipt" else "Payment to ")+party["name"]).strip(),"payment",payment_id,currency,user_id,utcnow()))
-            if kind=="customer_receipt": lines=[(cash_account,amount,0),(party_account,0,amount)]
-            else: lines=[(party_account,amount,0),(cash_account,0,amount)]
+                VALUES(?,?,?,?,?,?,?,?)""",(number,date,str(item.get("description") or (("Receipt from " if kind=="customer_receipt" else "Payment to ")+party["name"])).strip(),"payment",payment_id,currency,user_id,utcnow()))
+            party_settlement=amount+exchange_diff
+            if kind=="customer_receipt": lines=[(cash_account,amount-commission,Decimal("0")),(party_account,Decimal("0"),party_settlement)]
+            else: lines=[(party_account,party_settlement,Decimal("0")),(cash_account,Decimal("0"),amount+commission)]
+            if commission: lines.append((commission_account,commission,Decimal("0")))
+            balance=sum(d for _c,d,_cr in lines)-sum(cr for _c,_d,cr in lines)
+            if balance>0: lines.append((chart_extra.EXCHANGE_GAIN_ACCOUNT,Decimal("0"),balance))
+            elif balance<0: lines.append((chart_extra.EXCHANGE_LOSS_ACCOUNT,-balance,Decimal("0")))
+            lines=[(code,debit,credit) for code,debit,credit in lines if Decimal(str(debit)) or Decimal(str(credit))]
             for code,debit,credit in lines:
                 db.execute("INSERT INTO journal_lines(entry_id,account_id,party_id,debit,credit,department_id,project_id) VALUES(?,?,?,?,?,?,?)",
                     (entry.lastrowid,self._account_id(db,code),party_id,str(debit),str(credit),department_id,project_id))
@@ -1570,6 +1610,7 @@ class Database:
         with self.connect() as db:
             return [dict(row) for row in db.execute("""SELECT x.id,x.kind,x.payment_number,x.payment_date,x.party_id,p.name party_name,x.currency,
                 CAST(x.amount AS REAL) amount,x.cash_account,x.party_account,x.reference,x.description,x.payment_method,
+                CAST(x.bank_commission AS REAL) bank_commission,x.commission_account,CAST(x.exchange_difference AS REAL) exchange_difference,
                 d.code department,pr.code project
                 FROM payments x JOIN parties p ON p.id=x.party_id LEFT JOIN departments d ON d.id=x.department_id LEFT JOIN projects pr ON pr.id=x.project_id
                 ORDER BY x.id DESC""")]
@@ -2822,11 +2863,19 @@ class Database:
         if not lines: lines.append({"description": f"Import VAT - {purchase['invoice_number']}", "quantity": 1, "unit_price": "0", "deductible_subtotal": "0", "vat_rate": 0, "vat": 0})
         lines[0]["vat"] = str(import_vat)
         declaration = str(item.get("customs_declaration_no") or "").strip()
+        supplier_account=None; party_name=str(item.get("party_name") or "Lebanese Customs").strip()
+        if str(item.get("party_id") or "").strip():
+            with self.connect() as db:
+                chosen=db.execute("SELECT * FROM parties WHERE id=?",(int(item["party_id"]),)).fetchone()
+            if chosen:
+                party_name=chosen["name"]
+                supplier_account=chosen["account_number"] or None
         invoice = {"invoice_number": declaration or f"LC-{purchase['invoice_number']}", "invoice_date": item.get("date") or purchase["invoice_date"],
-                   "party_name": str(item.get("party_name") or "Lebanese Customs").strip(), "kind": "purchases", "currency": item.get("currency") or purchase["currency"],
+                   "party_name": party_name, "kind": "purchases", "currency": item.get("currency") or purchase["currency"],
                    "expense_account": purchase["expense_account"], "status": "posted", "source_file": "Customs Case",
                    "description": f"Landed cost of {purchase['invoice_number']} ({purchase['party_name'] or ''})" + (f" - declaration {declaration}" if declaration else ""),
                    "department_id": purchase["department_id"], "project_id": purchase["project_id"]}
+        if supplier_account: invoice["supplier_account"]=supplier_account
         invoice_id = self.create_manual_invoice(invoice, lines, user_id)
         # each cost goes to its own 9-digit 6018 account (freight, insurance, duties, broker, other)
         import chart_extra

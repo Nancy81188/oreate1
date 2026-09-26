@@ -168,7 +168,7 @@ class Stage3Mixin:
         self.load_transactions()
 
     def build_payment_form(self, page, kind):
-        form = {"kind": kind, "id": None, "vars": {k: tk.StringVar() for k in ("number", "date", "party", "currency", "amount", "method", "cash_account", "reference", "description")}}
+        form = {"kind": kind, "id": None, "vars": {k: tk.StringVar() for k in ("number", "date", "party", "currency", "amount", "method", "cash_account", "reference", "description", "bank_commission", "exchange_difference")}}
         v = form["vars"]; v["date"].set(datetime.now().strftime("%d-%m-%Y")); v["currency"].set("USD"); v["method"].set("Cash"); v["cash_account"].set("531")
         form["department"] = tk.StringVar(); form["project"] = tk.StringVar()
         box = tk.LabelFrame(page, text="Customer Receipt (RV)" if kind == "customer_receipt" else "Supplier Payment (PV)", bg=LIGHT, padx=8, pady=6); box.pack(fill="x", padx=8, pady=6)
@@ -192,6 +192,10 @@ class Stage3Mixin:
         form["cash_box"] = ttk.Combobox(row2, textvariable=v["cash_account"], width=26, state="readonly"); form["cash_box"].pack(side="left", padx=(4, 10))
         tk.Label(row2, text="Ref. / Cheque", bg=LIGHT).pack(side="left"); tk.Entry(row2, textvariable=v["reference"], width=14).pack(side="left", padx=(4, 10))
         tk.Label(row2, text="Description", bg=LIGHT).pack(side="left"); tk.Entry(row2, textvariable=v["description"], width=22).pack(side="left", padx=4)
+        row_fx = tk.Frame(box, bg=LIGHT); row_fx.pack(fill="x", pady=(6, 0))
+        tk.Label(row_fx, text="Bank Commission", bg=LIGHT).pack(side="left"); tk.Entry(row_fx, textvariable=v["bank_commission"], width=12).pack(side="left", padx=(4, 10))
+        tk.Label(row_fx, text="Exchange Difference", bg=LIGHT).pack(side="left"); tk.Entry(row_fx, textvariable=v["exchange_difference"], width=12).pack(side="left", padx=(4, 10))
+        tk.Label(row_fx, text="(+ gain / - loss)", bg=LIGHT, fg=MUTED).pack(side="left")
         row3 = tk.Frame(box, bg=LIGHT); row3.pack(fill="x", pady=(6, 0))
         self.dimension_selectors(row3, form["department"], form["project"])
         form["balance"] = tk.Label(row3, text="", bg=LIGHT, fg=NAVY, font=("Segoe UI", 9, "bold")); form["balance"].pack(side="left", padx=10)
@@ -210,6 +214,12 @@ class Stage3Mixin:
         tk.Button(buttons, text="Save", command=lambda: self.save_payment(form), bg=GOLD, fg=NAVY, border=0, padx=18, pady=7, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
         tk.Button(buttons, text="Delete", command=lambda: self.delete_payment(form), bg=RED, fg="white", border=0, padx=12, pady=7).pack(side="left", padx=3)
         tk.Label(buttons, text="Double-click a line in the list to edit it.", bg=LIGHT, fg=MUTED).pack(side="left", padx=10)
+        find_bar = tk.Frame(page, bg=LIGHT); find_bar.pack(fill="x", padx=8, pady=(4, 0))
+        tk.Label(find_bar, text="Find", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
+        form["find"] = tk.StringVar()
+        find_entry = tk.Entry(find_bar, textvariable=form["find"], width=32); find_entry.pack(side="left", padx=(4, 6))
+        find_entry.bind("<KeyRelease>", lambda _e: self.filter_payments(form))
+        tk.Button(find_bar, text="Clear", command=lambda: (form["find"].set(""), self.filter_payments(form)), bg=LIGHT, border=0, fg=NAVY).pack(side="left")
         form["tree"] = self.table(page, [("number", "Number", 125), ("date", "Date", 90), ("party", "Customer" if kind == "customer_receipt" else "Supplier", 210), ("currency", "Currency", 65),
             ("amount", "Amount", 110), ("method", "Method", 100), ("cash", "Cash / Bank", 90), ("reference", "Reference", 110), ("description", "Description", 200), ("dims", "Dep. / Project", 110)])
         form["tree"].bind("<Double-1>", lambda _e: self.edit_payment(form))
@@ -292,7 +302,7 @@ class Stage3Mixin:
 
     def new_payment(self, form):
         form["id"] = None; v = form["vars"]
-        for key in ("party", "amount", "reference", "description"): v[key].set("")
+        for key in ("party", "amount", "reference", "description", "bank_commission", "exchange_difference"): v[key].set("")
         if "alloc_sheet" in form: form["alloc_sheet"].clear(); form["alloc_info"].config(text="Choose the customer / supplier to see the open invoices")
         v["date"].set(datetime.now().strftime("%d-%m-%Y")); v["method"].set("Cash"); form["department"].set("(none)"); form["project"].set("(none)"); form["balance"].config(text="")
         try: v["number"].set(self.client.next_document_number(form["kind"], v["date"].get()))
@@ -306,7 +316,8 @@ class Stage3Mixin:
         datetime.strptime(v["date"].get().strip(), "%d-%m-%Y")
         return {"kind": form["kind"], "party_id": party["id"], "payment_date": v["date"].get().strip(), "currency": v["currency"].get(), "amount": amount,
                 "cash_account": v["cash_account"].get().split(" - ", 1)[0].strip() or "531", "reference": v["reference"].get().strip(), "description": v["description"].get().strip(),
-                "payment_method": v["method"].get(), "department": self.dimension_code(form["department"].get()), "project": self.dimension_code(form["project"].get())}
+                "payment_method": v["method"].get(), "department": self.dimension_code(form["department"].get()), "project": self.dimension_code(form["project"].get()),
+                "bank_commission": _num(v["bank_commission"].get(), 0.0) or 0.0, "exchange_difference": _num(v["exchange_difference"].get(), 0.0) or 0.0}
 
     def save_payment(self, form):
         try: payload = self.payment_payload(form)
@@ -329,7 +340,8 @@ class Stage3Mixin:
         form["id"] = row["id"]; v = form["vars"]
         label = next((name for name, p in form.get("party_map", {}).items() if p["id"] == row["party_id"]), row["party_name"])
         for key, value in (("number", row.get("payment_number") or ""), ("date", _dd(row["payment_date"])), ("party", label), ("currency", row["currency"]), ("amount", f'{row["amount"]:g}'),
-                           ("method", row.get("payment_method") or "Cash"), ("cash_account", row["cash_account"]), ("reference", row.get("reference") or ""), ("description", row.get("description") or "")):
+                           ("method", row.get("payment_method") or "Cash"), ("cash_account", row["cash_account"]), ("reference", row.get("reference") or ""), ("description", row.get("description") or ""),
+                           ("bank_commission", f'{row.get("bank_commission") or 0:g}' if (row.get("bank_commission") or 0) else ""), ("exchange_difference", f'{row.get("exchange_difference") or 0:g}' if (row.get("exchange_difference") or 0) else "")):
             v[key].set(value)
         lists = self.dimension_lists()
         form["department"].set(next((f'{d["code"]} - {d["name"]}' for d in lists["departments"] if d["code"] == row.get("department")), "(none)"))
@@ -363,13 +375,22 @@ class Stage3Mixin:
                     form["vars"]["cash_account"].set(next((a for a in self._cash_accounts if a.startswith("531")), self._cash_accounts[0] if self._cash_accounts else "531"))
                 form["party_box"]["values"] = list(form["party_map"])
                 rows = [r for r in payments if r["kind"] == kind]; form["rows"] = {str(r["id"]): r for r in rows}
-                form["tree"].delete(*form["tree"].get_children())
-                for r in rows:
-                    form["tree"].insert("", "end", iid=str(r["id"]), values=(r.get("payment_number") or f"#{r['id']}", _dd(r["payment_date"]), r["party_name"], r["currency"], f'{r["amount"]:,.2f}',
-                        r.get("payment_method") or "", r["cash_account"], r.get("reference") or "", r.get("description") or "", " / ".join(x for x in (r.get("department"), r.get("project")) if x)))
+                self.filter_payments(form)
                 if not form["id"] and not form["vars"]["number"].get(): self.new_payment(form)
         if hasattr(self, "purchase_form"): self.load_purchases()
         if hasattr(self, "expense_form"): self.load_expenses()
+
+    def _payment_tree_values(self, r):
+        return (r.get("payment_number") or f"#{r['id']}", _dd(r["payment_date"]), r["party_name"], r["currency"], f'{r["amount"]:,.2f}',
+                r.get("payment_method") or "", r["cash_account"], r.get("reference") or "", r.get("description") or "", " / ".join(x for x in (r.get("department"), r.get("project")) if x))
+
+    def filter_payments(self, form):
+        needle = (form["find"].get() if form.get("find") else "").strip().casefold()
+        form["tree"].delete(*form["tree"].get_children())
+        for r in form.get("rows", {}).values():
+            values = self._payment_tree_values(r)
+            if needle and not any(needle in str(x).casefold() for x in values): continue
+            form["tree"].insert("", "end", iid=str(r["id"]), values=values)
 
     # ================================================================ Purchases & Expenses
     def build_purchases_expenses(self):
@@ -441,7 +462,7 @@ class Stage3Mixin:
             tk.Label(c1, text=label, bg=LIGHT).pack(side="left"); tk.Entry(c1, textvariable=f["lc"][key], width=width).pack(side="left", padx=(3, 7))
         c2 = tk.Frame(cost, bg=LIGHT); c2.pack(fill="x", pady=(4, 0))
         tk.Label(c2, text="Declaration No.", bg=LIGHT).pack(side="left"); tk.Entry(c2, textvariable=f["lc"]["customs_declaration_no"], width=14).pack(side="left", padx=(3, 8))
-        tk.Label(c2, text="Paid to", bg=LIGHT).pack(side="left"); tk.Entry(c2, textvariable=f["lc"]["party_name"], width=20).pack(side="left", padx=(3, 8))
+        tk.Label(c2, text="Paid to", bg=LIGHT).pack(side="left"); f["lc_party_box"] = ttk.Combobox(c2, textvariable=f["lc"]["party_name"], width=28); f["lc_party_box"].pack(side="left", padx=(3, 8))
         tk.Button(c2, text="Add Cost on Purchase", command=self.save_landed_cost, bg=GOLD, fg=NAVY, border=0, padx=12, pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
         self.action_button(c2, "Import Customs Excel", self.import_customs_excel).pack(side="left", padx=3)
         self.action_button(c2, "Attach Customs PDF", self.attach_customs_pdf).pack(side="left", padx=3)
@@ -596,8 +617,11 @@ class Stage3Mixin:
                 if not code:
                     item = self.client.find_or_create_item(r["name"], r.get("unit") or "unit", None, party["id"] if party else None); code = item["sku"]
                 cost = (_num(r["unit_cost"]) or 0) * (1 - (_num(r.get("discount_percent")) or 0) / 100)
-                lines.append({"item_code": code, "description": r.get("name") or code, "quantity": _num(r["quantity"]), "unit": r.get("unit") or "", "unit_price": round(cost, 4),
-                              "discount_percent": _num(r.get("discount_percent")) or 0, "vat_rate": rate, "warehouse": warehouse})
+                item_row = next((i for i in getattr(self, "inventory_rows", []) if i.get("sku") == code), None)
+                line = {"item_code": code, "description": r.get("name") or code, "quantity": _num(r["quantity"]), "unit": r.get("unit") or "", "unit_price": round(cost, 4),
+                              "discount_percent": _num(r.get("discount_percent")) or 0, "vat_rate": rate, "warehouse": warehouse}
+                if item_row and item_row.get("cost_account"): line["expense_account"] = item_row["cost_account"]
+                lines.append(line)
             if exempt: lines.append({"description": "Exempt part", "quantity": 1, "unit_price": exempt, "deductible_subtotal": 0, "non_deductible_subtotal": exempt, "vat_rate": 0, "vat": 0})
             return invoice, lines
         line = {"description": f"Supplier invoice {invoice['invoice_number']}".strip(), "quantity": 1, "unit_price": taxable, "deductible_subtotal": taxable,
@@ -627,6 +651,9 @@ class Stage3Mixin:
         except Exception: parties = []
         f["supplier_map"] = {f'{p["name"]} | {p.get("account_number") or ""}': p for p in parties if p["kind"] in ("supplier", "both")}
         f["supplier_box"]["values"] = list(f["supplier_map"])
+        f["lc_party_map"] = {f'{p["name"]} | {p.get("account_number") or ""}': p for p in parties
+                             if (p.get("account_category") in ("supplier", "asset_supplier", "other_payable")) or p["kind"] in ("supplier", "both")}
+        if f.get("lc_party_box"): f["lc_party_box"]["values"] = list(f["lc_party_map"])
         rows = self.purchase_rows_list(); lists = self.dimension_lists()
         departments = {d["id"]: d["code"] for d in lists["departments"]}; projects = {p["id"]: p["code"] for p in lists["projects"]}
         landed = {}
@@ -712,6 +739,8 @@ class Stage3Mixin:
         f = self.purchase_form; item = {k: v.get().strip() for k, v in f["lc"].items()}
         for key in ("freight", "insurance", "customs_duties", "broker_fees", "other_costs", "import_vat"):
             if _num(item[key]) is None: raise ValueError(f"{key.replace('_', ' ').title()} must be a number")
+        party = f.get("lc_party_map", {}).get(f["lc"]["party_name"].get().strip())
+        if party: item["party_id"] = party["id"]; item["party_name"] = party["name"]
         return item
 
     def save_landed_cost(self):

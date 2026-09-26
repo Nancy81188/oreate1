@@ -15,9 +15,13 @@ EXTRA_ACCOUNTS = [
     ("601800001", "Purchase Costs - Freight", "expense"), ("601800002", "Purchase Costs - Insurance", "expense"),
     ("601800003", "Purchase Costs - Customs Duties", "expense"), ("601800004", "Purchase Costs - Customs Broker Fees", "expense"),
     ("601800005", "Purchase Costs - Other", "expense"),
+    ("6739", "Bank Commissions & Charges", "expense"), ("673900000", "Bank Commissions", "expense"),
+    ("6751", "Losses on Exchange Differences", "expense"), ("675100000", "Loss on Exchange Difference", "expense"),
+    ("7751", "Gains on Exchange Differences", "income"), ("775100000", "Gain on Exchange Difference", "income"),
 ]
 SALES_VAT = "4427"; PURCHASE_VAT = "44210"; EXPENSE_VAT = "44216"; EXPORT_VAT = "44211"
 LANDED_COST_ACCOUNTS = {"freight": "601800001", "insurance": "601800002", "customs_duties": "601800003", "broker_fees": "601800004", "other_costs": "601800005"}
+BANK_COMMISSION_ACCOUNT = "673900000"; EXCHANGE_LOSS_ACCOUNT = "675100000"; EXCHANGE_GAIN_ACCOUNT = "775100000"
 PAYROLL_MAP = {"salary": "6311", "overtime": "6311", "retro_salary": "6311", "bonus": "6312", "thirteenth_month": "6312", "commission": "6313",
                "schooling": "6315", "transport": "6319", "tax": "4411", "nssf": "4431", "payable": "421100001"}
 MANAGER_PAYROLL_MAP = {**PAYROLL_MAP, "salary": "6316", "overtime": "6316", "retro_salary": "6316"}

@@ -71,12 +71,12 @@ class InventoryMixin:
     # ------------------------------------------------------------ items
     def build_items_page(self, page):
         form = tk.LabelFrame(page, text="Item", bg=LIGHT, padx=8, pady=5); form.pack(fill="x", padx=8, pady=6)
-        self.item_id = None; self.item_vars = {k: tk.StringVar() for k in ("sku", "name", "unit", "category", "subcategory", "supplier_name", "location", "sales_price", "reorder_level", "barcode", "notes", "default_vat")}
+        self.item_id = None; self.item_vars = {k: tk.StringVar() for k in ("sku", "name", "unit", "category", "subcategory", "supplier_name", "location", "sales_price", "reorder_level", "barcode", "notes", "default_vat", "cost_account")}
         self.item_vars["unit"].set("unit"); self.item_vars["default_vat"].set("11%"); self.item_active = tk.BooleanVar(value=True)
         self.item_boxes = {}
         for index, (key, label, width) in enumerate((("sku", "Item Code (auto if blank)", 14), ("name", "Item Name", 24), ("unit", "Unit", 12), ("category", "Category", 16),
                                                      ("subcategory", "Subcategory", 16), ("supplier_name", "Supplier", 22), ("sales_price", "Sales Price", 11), ("default_vat", "Default VAT", 9), ("reorder_level", "Reorder Level", 9),
-                                                     ("location", "Location (shelf)", 12), ("barcode", "Barcode", 14), ("notes", "Notes", 24))):
+                                                     ("location", "Location (shelf)", 12), ("barcode", "Barcode", 14), ("notes", "Notes", 24), ("cost_account", "Cost Account (opt.)", 14))):
             tk.Label(form, text=label, bg=LIGHT).grid(row=index // 3, column=(index % 3) * 2, sticky="w", padx=4, pady=2)
             if key == "default_vat":
                 widget = ttk.Combobox(form, textvariable=self.item_vars[key], values=["11%", "0%"], state="readonly", width=width); self.item_boxes[key] = widget
@@ -86,7 +86,7 @@ class InventoryMixin:
             else: widget = tk.Entry(form, textvariable=self.item_vars[key], width=width)
             widget.grid(row=index // 3, column=(index % 3) * 2 + 1, sticky="w", padx=4, pady=2)
         self.item_cost_label = tk.Label(form, text="Cost price (average of purchases): -", bg=LIGHT, fg=NAVY, font=("Segoe UI", 9, "bold")); self.item_cost_label.grid(row=3, column=4, columnspan=2, sticky="w", padx=4)
-        buttons = tk.Frame(form, bg=LIGHT); buttons.grid(row=4, column=0, columnspan=6, sticky="w", pady=(4, 0))
+        buttons = tk.Frame(form, bg=LIGHT); buttons.grid(row=5, column=0, columnspan=6, sticky="w", pady=(4, 0))
         tk.Checkbutton(buttons, text="Active", variable=self.item_active, bg=LIGHT).pack(side="left", padx=(0, 8))
         self.action_button(buttons, "New", self.new_item).pack(side="left", padx=3)
         tk.Button(buttons, text="Save", command=self.save_item, bg=GOLD, fg=NAVY, border=0, padx=18, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)

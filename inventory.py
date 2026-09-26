@@ -43,6 +43,7 @@ def migrate(db):
     for column in ("subcategory", "supplier_id", "location"):
         if column not in item_columns: db.execute(f"ALTER TABLE inventory_items ADD COLUMN {column} TEXT")
     if "default_vat" not in item_columns: db.execute("ALTER TABLE inventory_items ADD COLUMN default_vat TEXT NOT NULL DEFAULT '11'")
+    if "cost_account" not in item_columns: db.execute("ALTER TABLE inventory_items ADD COLUMN cost_account TEXT")
     for unit in ("unit", "piece", "sheet", "m", "m2", "kg", "box", "roll", "set"): db.execute("INSERT OR IGNORE INTO item_units(name) VALUES(?)", (unit,))
     db.execute("INSERT OR IGNORE INTO warehouses(code,name) VALUES('MAIN','Main Store')")
     db.execute("INSERT OR IGNORE INTO app_settings(key,value) VALUES('inventory_currency','USD')")
@@ -97,13 +98,14 @@ def save_item(database, item, user_id):
             row = db.execute("SELECT id FROM parties WHERE name=? ORDER BY id LIMIT 1", (str(item["supplier_name"]).strip(),)).fetchone(); supplier = row["id"] if row else None
         unit = str(item.get("unit") or "unit").strip() or "unit"; db.execute("INSERT OR IGNORE INTO item_units(name) VALUES(?)", (unit,))
         default_vat = "0" if str(item.get("default_vat") or "11").strip() in ("0", "0.0", "0%") else "11"
+        cost_account = str(item.get("cost_account") or "").split(" - ", 1)[0].strip() or None
         values = (sku, name, unit, str(item.get("category") or "").strip() or None, str(reorder), str(price),
                   1 if item.get("active", True) else 0, str(item.get("notes") or "").strip() or None, str(item.get("barcode") or "").strip() or None,
-                  str(item.get("subcategory") or "").strip() or None, str(supplier) if supplier else None, str(item.get("location") or "").strip() or None, default_vat)
+                  str(item.get("subcategory") or "").strip() or None, str(supplier) if supplier else None, str(item.get("location") or "").strip() or None, default_vat, cost_account)
         if item.get("id"):
-            db.execute("UPDATE inventory_items SET sku=?,name=?,unit=?,category=?,reorder_level=?,sales_price=?,active=?,notes=?,barcode=?,subcategory=?,supplier_id=?,location=?,default_vat=? WHERE id=?", values + (int(item["id"]),)); saved = int(item["id"])
+            db.execute("UPDATE inventory_items SET sku=?,name=?,unit=?,category=?,reorder_level=?,sales_price=?,active=?,notes=?,barcode=?,subcategory=?,supplier_id=?,location=?,default_vat=?,cost_account=? WHERE id=?", values + (int(item["id"]),)); saved = int(item["id"])
         else:
-            saved = db.execute("INSERT INTO inventory_items(sku,name,unit,category,reorder_level,sales_price,active,notes,barcode,subcategory,supplier_id,location,default_vat,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values + (utcnow(),)).lastrowid
+            saved = db.execute("INSERT INTO inventory_items(sku,name,unit,category,reorder_level,sales_price,active,notes,barcode,subcategory,supplier_id,location,default_vat,cost_account,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values + (utcnow(),)).lastrowid
         db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)", (user_id, "save", "inventory_item", saved, json.dumps({"sku": sku}), utcnow()))
     return next(i for i in list_items(database) if i["id"] == saved)
 
