@@ -216,7 +216,18 @@ class CompanyManager:
                 if table=="accounts": dst.execute("UPDATE accounts SET parent_id=NULL")
                 dst.execute(f"DELETE FROM {table}")
                 placeholders=",".join("?" for _ in columns)
-                dst.executemany(f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})",[tuple(row[col] for col in columns) for row in rows])
+                if table=="accounts" and "parent_id" in columns:
+                    # insert with parent_id detached, then re-link by code so row order never trips the FK
+                    pid=columns.index("parent_id"); code_by_id={row["id"]:row["code"] for row in rows}
+                    detached=[]
+                    for row in rows:
+                        vals=list(row[col] for col in columns); vals[pid]=None; detached.append(tuple(vals))
+                    dst.executemany(f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})",detached)
+                    for row in rows:
+                        if row["parent_id"] and row["parent_id"] in code_by_id:
+                            dst.execute("UPDATE accounts SET parent_id=(SELECT id FROM accounts WHERE code=?) WHERE code=?",(code_by_id[row["parent_id"]],row["code"]))
+                else:
+                    dst.executemany(f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})",[tuple(row[col] for col in columns) for row in rows])
 
     def _opening_balances(self,source,target,year,user_id):
         import year_end
