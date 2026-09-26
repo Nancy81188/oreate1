@@ -434,7 +434,7 @@ class Stage3Mixin:
         f["department"] = tk.StringVar(); f["project"] = tk.StringVar(); f["vat_typed"] = False; self.purchase_form = f
         f["use"] = tk.StringVar(value="Mixed (partial deduction)"); f["reverse"] = tk.BooleanVar(value=False)
         f["discount_percent"] = tk.StringVar(value="0"); f["discount_amount"] = tk.StringVar(value="0"); f["discount_mode"] = "percent"
-        box = tk.LabelFrame(page, text="Purchase Invoice", bg=LIGHT, padx=8, pady=5); box.pack(fill="x", padx=8, pady=(6, 3))
+        box = tk.LabelFrame(page, text="Purchase Invoice", bg=LIGHT, padx=6, pady=2); box.pack(fill="x", padx=8, pady=(2, 1))
         r1 = tk.Frame(box, bg=LIGHT); r1.pack(fill="x")
         tk.Label(r1, text="Supplier", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
         f["supplier_box"] = ttk.Combobox(r1, textvariable=v["supplier"], width=22); f["supplier_box"].pack(side="left", padx=(4, 8))
@@ -444,7 +444,7 @@ class Stage3Mixin:
         tk.Label(r1, text="Due", bg=LIGHT).pack(side="left"); self.date_entry(r1, v["due"], 11).pack(side="left", padx=(4, 8))
         ttk.Combobox(r1, textvariable=v["currency"], values=self.currency_codes, state="readonly", width=5).pack(side="left", padx=4)
         ttk.Combobox(r1, textvariable=v["type"], values=["Purchases", "Assets"], state="readonly", width=9).pack(side="left", padx=4)
-        accounts_row = tk.Frame(box, bg=LIGHT); accounts_row.pack(fill="x", pady=(5, 0))
+        accounts_row = tk.Frame(box, bg=LIGHT); accounts_row.pack(fill="x", pady=(2, 0))
         tk.Label(accounts_row, text="Cost / Asset A/C", bg=LIGHT).pack(side="left"); self.account_search_box(accounts_row, v["account"], 18).pack(side="left", padx=(4, 12))
         tk.Label(accounts_row, text="VAT A/C", bg=LIGHT).pack(side="left"); self.account_search_box(accounts_row, v["vat_account"], 14).pack(side="left", padx=4)
         totals_box = tk.LabelFrame(totals_parent or page, text="Purchase totals", bg="#dfe6ee", padx=10, pady=4)
@@ -463,7 +463,7 @@ class Stage3Mixin:
         percent_entry.bind("<KeyRelease>",lambda _e:self.purchase_discount_changed("percent"))
         amount_entry.bind("<KeyRelease>",lambda _e:self.purchase_discount_changed("amount"))
         f["discount_summary"] = tk.Label(summary,text="Total HT: 0.00",bg="#dfe6ee",fg=NAVY,font=("Segoe UI",9,"bold")); f["discount_summary"].pack(side="right",padx=8)
-        r3 = tk.Frame(box, bg=LIGHT); r3.pack(fill="x", pady=(5, 0))
+        r3 = tk.Frame(box, bg=LIGHT); r3.pack(fill="x", pady=(2, 0))
         self.dimension_selectors(r3, f["department"], f["project"])
         tk.Label(r3, text="VAT use", bg=LIGHT).pack(side="left"); ttk.Combobox(r3, textvariable=f["use"], values=list(PURCHASE_USES), state="readonly", width=23).pack(side="left", padx=(4, 6))
         tk.Checkbutton(r3, text="Reverse charge", variable=f["reverse"], bg=LIGHT).pack(side="left")
@@ -488,7 +488,7 @@ class Stage3Mixin:
             ["item_code", "name", "quantity", "unit", "unit_cost", "discount_percent"], self.purchase_item_changed, height=9)
         f["items_sheet"].tree.bind("<F2>", lambda _e: self.purchase_item_lookup())
         f["items_sheet"].tree.master.pack_configure(expand=True,fill="both")
-        r4 = tk.Frame(box, bg=LIGHT); r4.pack(fill="x", pady=(5, 0))
+        r4 = tk.Frame(box, bg=LIGHT); r4.pack(fill="x", pady=(2, 0))
         f["pdf_label"] = tk.Label(r4, text="No PDF", bg=LIGHT, fg=MUTED)
         self.action_button(r4, "New", self.new_purchase).pack(side="left", padx=(0, 3))
         tk.Button(r4, text="Save", command=self.save_purchase, bg=GOLD, fg=NAVY, border=0, padx=18, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
@@ -500,6 +500,8 @@ class Stage3Mixin:
         cost = tk.LabelFrame(cost_parent or page, text="Cost on Purchase (customs / freight / insurance) for the selected purchase", bg=LIGHT, padx=8, pady=4); cost.pack(fill="x", padx=8, pady=3)
         f["lc"] = {k: tk.StringVar() for k in ("freight", "insurance", "customs_duties", "broker_fees", "other_costs", "import_vat", "customs_declaration_no", "party_name")}
         f["lc"]["party_name"].set("Lebanese Customs")
+        import chart_extra
+        f["lc_accounts"] = {key: tk.StringVar(value=code) for key, code in chart_extra.LANDED_COST_ACCOUNTS.items()}
         c1 = tk.Frame(cost, bg=LIGHT); c1.pack(fill="x")
         for label, key, width in (("Freight", "freight", 9), ("Insurance", "insurance", 9), ("Customs Duties", "customs_duties", 10), ("Broker Fees", "broker_fees", 9),
                                   ("Other", "other_costs", 8), ("Import VAT", "import_vat", 9)):
@@ -508,6 +510,7 @@ class Stage3Mixin:
         tk.Label(c2, text="Declaration No.", bg=LIGHT).pack(side="left"); tk.Entry(c2, textvariable=f["lc"]["customs_declaration_no"], width=14).pack(side="left", padx=(3, 8))
         tk.Label(c2, text="Paid to", bg=LIGHT).pack(side="left"); f["lc_party_box"] = ttk.Combobox(c2, textvariable=f["lc"]["party_name"], width=28); f["lc_party_box"].pack(side="left", padx=(3, 8))
         tk.Button(c2, text="Add Cost on Purchase", command=self.save_landed_cost, bg=GOLD, fg=NAVY, border=0, padx=12, pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
+        self.action_button(c2, "Edit Cost Accounts", self.edit_landed_cost_accounts).pack(side="left", padx=3)
         self.action_button(c2, "Import Customs Excel", self.import_customs_excel).pack(side="left", padx=3)
         self.action_button(c2, "Attach Customs PDF", self.attach_customs_pdf).pack(side="left", padx=3)
         f["lc_label"] = tk.Label(c2, text="", bg=LIGHT, fg=NAVY); f["lc_label"].pack(side="left", padx=8)
@@ -877,7 +880,19 @@ class Stage3Mixin:
             if _num(item[key]) is None: raise ValueError(f"{key.replace('_', ' ').title()} must be a number")
         party = f.get("lc_party_map", {}).get(f["lc"]["party_name"].get().strip())
         if party: item["party_id"] = party["id"]; item["party_name"] = party["name"]
+        item["cost_accounts"] = {key: var.get().split(" - ", 1)[0].strip() for key, var in f["lc_accounts"].items()}
         return item
+
+    def edit_landed_cost_accounts(self):
+        import chart_extra
+        window = tk.Toplevel(self); window.title("Cost on Purchase Accounts"); window.configure(bg=LIGHT); window.transient(self); window.grab_set()
+        tk.Label(window, text="Default accounts are filled in. Edit an account when this purchase needs a different posting.", bg=LIGHT, fg=NAVY).pack(anchor="w", padx=12, pady=10)
+        for key, var in self.purchase_form["lc_accounts"].items():
+            row = tk.Frame(window, bg=LIGHT); row.pack(fill="x", padx=12, pady=3)
+            tk.Label(row, text=key.replace("_", " ").title(), width=18, anchor="w", bg=LIGHT).pack(side="left")
+            self.account_search_box(row, var, 24).pack(side="left")
+        self.action_button(window, "Restore defaults", lambda: [var.set(chart_extra.LANDED_COST_ACCOUNTS[key]) for key, var in self.purchase_form["lc_accounts"].items()]).pack(side="left", padx=12, pady=12)
+        self.action_button(window, "Done", window.destroy).pack(side="right", padx=12, pady=12)
 
     def save_landed_cost(self):
         row = self.selected_purchase()

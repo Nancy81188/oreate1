@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from database import display_date, iso_date
@@ -73,7 +73,7 @@ def ageing(db, options):
     labels = ["Not due"] + [f"{a + 1}-{b} days" for a, b in zip((0,) + limits[:-1], limits)] + [f"Over {limits[-1]} days"]
     convert = _Converter(db, options.get("basis") or "USD"); basis = convert.basis; as_of_date = datetime.strptime(as_of, "%Y-%m-%d")
     with db.connect() as connection:
-        invoices = [dict(r) for r in connection.execute("""SELECT i.id,i.invoice_number,i.invoice_date,i.due_date,i.currency,i.doc_subtype,i.party_id,p.name party_name,p.account_number,
+        invoices = [dict(r) for r in connection.execute("""SELECT i.id,i.invoice_number,i.invoice_date,i.due_date,i.currency,i.doc_subtype,i.party_id,p.name party_name,p.account_number,p.due_days,
             CAST(i.total AS REAL) total,CAST(COALESCE(i.amount_paid,'0') AS REAL) paid,
             (SELECT COALESCE(SUM(CAST(a.amount AS REAL)),0) FROM payment_allocations a JOIN payments x ON x.id=a.payment_id WHERE a.invoice_id=i.id) allocated
             FROM invoices i LEFT JOIN parties p ON p.id=i.party_id WHERE i.kind=? AND i.status IN ('posted','review')""", (kind,))]
@@ -88,7 +88,7 @@ def ageing(db, options):
         sign = -1 if inv.get("doc_subtype") == "credit_note" else 1
         open_amount = _d(sign * inv["total"]) - _d(inv["paid"]) - _d(inv["allocated"])
         if abs(open_amount) < Decimal("0.01"): continue
-        try: due = iso_date(inv["due_date"]) if inv.get("due_date") else day
+        try: due = iso_date(inv["due_date"]) if inv.get("due_date") else (datetime.strptime(day, "%Y-%m-%d") + timedelta(days=inv.get("due_days") or 0)).strftime("%Y-%m-%d")
         except ValueError: due = day
         days = (as_of_date - datetime.strptime(due, "%Y-%m-%d")).days
         index = 0 if days <= 0 else next((i + 1 for i, limit in enumerate(limits) if days <= limit), len(limits) + 1)

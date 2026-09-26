@@ -1,5 +1,12 @@
 # Saber Accounting MVP
 
+## Version 2.8.1
+
+- Customer and supplier files include **Due days from invoice**. New invoices automatically use invoice date plus the saved term when Due Date is blank; an explicit Due Date takes precedence. Existing invoices keep their saved due dates.
+- Purchase Invoice header is shorter so more item rows fit. Cost on Purchase uses predefined expense accounts, with an Edit Cost Accounts dialog for a particular posting.
+- Inventory Reports adds Stock Turnover, Stock by Supplier, and Physical Count Variances. Stock Ageing can filter by item; Stock Card continues to use the selected item and From/To dates. Physical Inventory can add an item to its count sheet.
+- Each manually entered exchange rate is saved separately. The daily rate used in reports is the arithmetic mean of entered rates for that date and currency pair. Automatic reference rates no longer overwrite a manual daily average.
+
 Saber Accounting is a Windows desktop accounting application with a central shared database for three users. This first version includes:
 
 - English, Arabic, and French interface

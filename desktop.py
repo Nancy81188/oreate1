@@ -83,7 +83,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.8.0")
+        self.title("Saber Accounting 2.8.1")
         self.geometry("1180x720")
         self.minsize(940, 600)
         if sys.platform == "win32":
@@ -1496,7 +1496,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def build_parties(self):
         form=tk.LabelFrame(self.parties_tab,text="Customer / Supplier File",bg=LIGHT,padx=10,pady=8); form.pack(fill="x",padx=10,pady=10)
-        self.edit_party_id=None; self.party_name=tk.StringVar(); self.party_kind=tk.StringVar(value="client"); self.party_account_number=tk.StringVar(); self.party_tax=tk.StringVar(); self.party_mof=tk.StringVar(); self.party_address=tk.StringVar(); self.party_contact=tk.StringVar(); self.party_currency=tk.StringVar(value="USD")
+        self.edit_party_id=None; self.party_name=tk.StringVar(); self.party_kind=tk.StringVar(value="client"); self.party_account_number=tk.StringVar(); self.party_tax=tk.StringVar(); self.party_mof=tk.StringVar(); self.party_address=tk.StringVar(); self.party_contact=tk.StringVar(); self.party_currency=tk.StringVar(value="USD"); self.party_due_days=tk.StringVar(value="0")
         tk.Label(form,text="Account Number",bg=LIGHT,font=("Segoe UI",10,"bold")).grid(row=0,column=0,sticky="w",padx=4,pady=4)
         account_entry=tk.Entry(form,textvariable=self.party_account_number,width=16,font=("Segoe UI",11,"bold")); account_entry.grid(row=0,column=1,sticky="w",padx=4,pady=4)
         self.party_account_hint=tk.Label(form,text="Type the first 4 digits (4111 client, 4011 supplier) - the full number fills in automatically",bg=LIGHT,fg="#5f6b76")
@@ -1508,6 +1508,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(form,text="Name",bg=LIGHT).grid(row=1,column=2,sticky="w",padx=4); tk.Entry(form,textvariable=self.party_name,width=32).grid(row=1,column=3,sticky="w",padx=4)
         tk.Label(form,text="Currency",bg=LIGHT).grid(row=1,column=4,sticky="w",padx=4)
         ttk.Combobox(form,textvariable=self.party_currency,values=self.currency_codes,state="readonly",width=7).grid(row=1,column=5,sticky="w",padx=4)
+        tk.Label(form,text="Due days from invoice",bg=LIGHT).grid(row=1,column=6,sticky="w",padx=4)
+        tk.Entry(form,textvariable=self.party_due_days,width=6).grid(row=1,column=7,sticky="w",padx=4)
         for index,(label,var,width) in enumerate((("Tax Number",self.party_tax,16),("MOF Number",self.party_mof,16),("Address",self.party_address,32),("Contact Number",self.party_contact,16))):
             tk.Label(form,text=label,bg=LIGHT).grid(row=2+index//2,column=(index%2)*2,sticky="w",padx=4,pady=4)
             tk.Entry(form,textvariable=var,width=width).grid(row=2+index//2,column=(index%2)*2+1,sticky="w",padx=4,pady=4)
@@ -1516,7 +1518,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Button(buttons,text="Save",command=self.save_party,bg=GOLD,fg=NAVY,font=("Segoe UI",9,"bold"),border=0,padx=18,pady=7).pack(side="left",padx=3)
         self.action_button(buttons,"Edit Selected",self.edit_selected_party).pack(side="left",padx=3)
         self.action_button(buttons,"Legal Documents",self.party_documents_dialog).pack(side="left",padx=3)
-        self.parties_tree=self.table(self.parties_tab,[("id","ID",55),("account","9-Digit Account",115),("name","Name",180),("kind","Type",85),("tax","Tax Number",110),("mof","MOF Number",110),("address","Address",180),("contact","Contact",110),("currency","Currency",70)])
+        self.parties_tree=self.table(self.parties_tab,[("id","ID",55),("account","9-Digit Account",115),("name","Name",180),("kind","Type",85),("tax","Tax Number",110),("mof","MOF Number",110),("address","Address",180),("contact","Contact",110),("currency","Currency",70),("due_days","Due Days",80)])
         self.parties_tree.bind("<Double-1>",lambda _event:self.edit_selected_party())
         self.load_parties_page()
 
@@ -1536,11 +1538,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             self.party_account_number.set(prefix); self.party_account_typed()
 
     def new_party_account(self):
-        self.edit_party_id=None; self.party_name.set(""); self.party_kind.set("client"); self.party_account_number.set(""); self.party_tax.set(""); self.party_mof.set(""); self.party_address.set(""); self.party_contact.set(""); self.party_currency.set("USD")
+        self.edit_party_id=None; self.party_name.set(""); self.party_kind.set("client"); self.party_account_number.set(""); self.party_tax.set(""); self.party_mof.set(""); self.party_address.set(""); self.party_contact.set(""); self.party_currency.set("USD"); self.party_due_days.set("0")
         self.suggest_party_prefix()
 
     def save_party(self):
-        try: saved=self.client.save_party({"id":self.edit_party_id,"name":self.party_name.get(),"account_category":self.party_kind.get(),"account_number":self.party_account_number.get(),"tax_number":self.party_tax.get(),"mof_number":self.party_mof.get(),"address":self.party_address.get(),"contact_number":self.party_contact.get(),"currency":self.party_currency.get()})
+        try: saved=self.client.save_party({"id":self.edit_party_id,"name":self.party_name.get(),"account_category":self.party_kind.get(),"account_number":self.party_account_number.get(),"tax_number":self.party_tax.get(),"mof_number":self.party_mof.get(),"address":self.party_address.get(),"contact_number":self.party_contact.get(),"currency":self.party_currency.get(),"due_days":self.party_due_days.get()})
         except Exception as exc: return messagebox.showerror("Customers / Suppliers",str(exc))
         self.edit_party_id=saved.get("id"); self.party_account_number.set(saved.get("account_number") or ""); self.load_parties_page(); self.load_statement_parties()
         messagebox.showinfo("Customers / Suppliers",f'Saved successfully\nAutomatic Account Number: {saved.get("account_number") or ""}')
@@ -1548,13 +1550,13 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
     def edit_selected_party(self):
         selected=self.parties_tree.selection()
         if not selected: return messagebox.showwarning("Customers / Suppliers","Select a customer or supplier first")
-        values=self.parties_tree.item(selected[0],"values"); self.edit_party_id=int(values[0]); self.party_account_number.set(values[1]); self.party_name.set(values[2]); self.party_kind.set(values[3]); self.party_tax.set(values[4]); self.party_mof.set(values[5]); self.party_address.set(values[6]); self.party_contact.set(values[7]); self.party_currency.set(values[8])
+        values=self.parties_tree.item(selected[0],"values"); self.edit_party_id=int(values[0]); self.party_account_number.set(values[1]); self.party_name.set(values[2]); self.party_kind.set(values[3]); self.party_tax.set(values[4]); self.party_mof.set(values[5]); self.party_address.set(values[6]); self.party_contact.set(values[7]); self.party_currency.set(values[8]); self.party_due_days.set(values[9])
 
     def load_parties_page(self):
         try: rows=self.client.parties()
         except Exception as exc: return messagebox.showerror("Customers / Suppliers",str(exc))
         self.party_rows=rows; self.parties_tree.delete(*self.parties_tree.get_children())
-        for row in rows: self.parties_tree.insert("","end",values=(row["id"],row.get("account_number") or "",row["name"],row.get("account_category") or row["kind"],row.get("tax_number") or "",row.get("mof_number") or "",row.get("address") or "",row.get("contact_number") or "",row["currency"]))
+        for row in rows: self.parties_tree.insert("","end",values=(row["id"],row.get("account_number") or "",row["name"],row.get("account_category") or row["kind"],row.get("tax_number") or "",row.get("mof_number") or "",row.get("address") or "",row.get("contact_number") or "",row["currency"],row.get("due_days") or 0))
 
     def party_documents_dialog(self):
         selected=self.parties_tree.selection()
@@ -2204,7 +2206,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(rate_controls,text="to",bg=LIGHT).pack(side="left")
         self.rate_to_box=ttk.Combobox(rate_controls,textvariable=self.rate_to,values=self.currency_codes,state="readonly",width=7); self.rate_to_box.pack(side="left",padx=4)
         tk.Entry(rate_controls,textvariable=self.rate_value,width=14).pack(side="left",padx=4)
-        self.action_button(rate_controls,"Save Rate",self.save_exchange_rate).pack(side="left",padx=5)
+        self.action_button(rate_controls,"Add Daily Rate",self.save_exchange_rate).pack(side="left",padx=5)
         self.action_button(rate_controls,"Restore EUR Rates 2024-Today",self.restore_euro_rates).pack(side="left",padx=5)
         currency_controls=tk.Frame(rates,bg=LIGHT); currency_controls.pack(fill="x",padx=12,pady=(0,6))
         self.new_currency_code=tk.StringVar(); self.new_currency_name=tk.StringVar()
@@ -2215,7 +2217,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(currency_controls,text="Name",bg=LIGHT).pack(side="left",padx=(3,8))
         self.action_button(currency_controls,"Add Currency",self.create_currency).pack(side="left",padx=4)
         tk.Label(currency_controls,text="Set a rate before using it in another currency's report.",bg=LIGHT,fg="#5f6b76").pack(side="left",padx=8)
-        self.rates_tree=self.table(rates,[("date","Date",110),("from","From",80),("to","To",80),("rate","Rate",150),("created","Saved",180)])
+        self.rates_tree=self.table(rates,[("date","Date",110),("from","From",80),("to","To",80),("rate","Daily Average",150),("samples","Entries",75),("created","Saved",180)])
         self.rates_tree.bind("<Double-1>",lambda _event:self.edit_selected_exchange_rate())
         branch_controls=tk.Frame(branches,bg=LIGHT); branch_controls.pack(fill="x",padx=10,pady=10)
         self.new_branch_name=tk.StringVar(); tk.Label(branch_controls,text="New Branch Name",bg=LIGHT).pack(side="left"); tk.Entry(branch_controls,textvariable=self.new_branch_name,width=32).pack(side="left",padx=6)
@@ -2246,7 +2248,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             self.company_vat_registered.set(settings.get("company_vat_registered","Yes") or "Yes"); self.company_vat_date.set(settings.get("company_vat_date","") or "")
         except Exception as exc: return messagebox.showerror("Settings",str(exc))
         self.rates_tree.delete(*self.rates_tree.get_children())
-        for row in rates: self.rates_tree.insert("","end",values=(row["rate_date"],row["from_currency"],row["to_currency"],row["rate"],row["created_at"][:19]))
+        for row in rates: self.rates_tree.insert("","end",values=(row["rate_date"],row["from_currency"],row["to_currency"],row["rate"],row.get("samples",0),row["created_at"][:19]))
         try: branch_rows=self.client.branches()
         except Exception: branch_rows=[]
         self.branches_tree.delete(*self.branches_tree.get_children())
@@ -2304,7 +2306,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
     def save_exchange_rate(self):
         try: self.client.save_exchange_rate({"date_from":self.rate_date.get(),"date_to":self.rate_date_to.get(),"from_currency":self.rate_from.get(),"to_currency":self.rate_to.get(),"rate":self.rate_value.get()})
         except Exception as exc: return messagebox.showerror("Exchange Rates",str(exc))
-        self.load_settings_pages(); messagebox.showinfo("Exchange Rates","Rate saved successfully")
+        self.load_settings_pages(); messagebox.showinfo("Exchange Rates","Rate added. The daily rate is the average of all entered rates for this date and currency pair.")
 
     def create_currency(self):
         try: item=self.client.save_currency(self.new_currency_code.get(),self.new_currency_name.get())

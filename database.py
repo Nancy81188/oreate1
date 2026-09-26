@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT
 CREATE TABLE IF NOT EXISTS parties (
  id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('customer','supplier','both')),
  name TEXT NOT NULL, tax_number TEXT, mof_number TEXT, address TEXT, contact_number TEXT,
- currency TEXT NOT NULL DEFAULT 'USD', account_number TEXT, account_category TEXT, UNIQUE(kind,name)
+ currency TEXT NOT NULL DEFAULT 'USD', account_number TEXT, account_category TEXT, due_days INTEGER NOT NULL DEFAULT 0, UNIQUE(kind,name)
 );
 CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS accounts (
@@ -129,6 +129,10 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
  id INTEGER PRIMARY KEY, rate_date TEXT NOT NULL, from_currency TEXT NOT NULL, to_currency TEXT NOT NULL,
  rate TEXT NOT NULL, created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL,
  UNIQUE(rate_date,from_currency,to_currency)
+);
+CREATE TABLE IF NOT EXISTS exchange_rate_samples (
+ id INTEGER PRIMARY KEY, rate_date TEXT NOT NULL, from_currency TEXT NOT NULL, to_currency TEXT NOT NULL,
+ rate TEXT NOT NULL, created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS currencies (
  code TEXT PRIMARY KEY, name TEXT NOT NULL
@@ -351,6 +355,7 @@ class Database:
             for column in ("mof_number","address","contact_number"):
                 if column not in party_columns: db.execute(f"ALTER TABLE parties ADD COLUMN {column} TEXT")
             if "account_category" not in party_columns: db.execute("ALTER TABLE parties ADD COLUMN account_category TEXT")
+            if "due_days" not in party_columns: db.execute("ALTER TABLE parties ADD COLUMN due_days INTEGER NOT NULL DEFAULT 0")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_parties_account_number ON parties(account_number) WHERE account_number IS NOT NULL")
             employee_columns={row["name"] for row in db.execute("PRAGMA table_info(employees)")}
             if "spouse_works" not in employee_columns: db.execute("ALTER TABLE employees ADD COLUMN spouse_works INTEGER NOT NULL DEFAULT 0")
@@ -847,7 +852,7 @@ class Database:
                     "INSERT OR IGNORE INTO accounts(code,name_en,type) VALUES(?,?,?)",
                     (code, name, account_type),
                 )
-            due_date = str(item.get("due_date") or "").strip() or None
+            due_date = self._invoice_due_date(item, party)
             amount_paid = Decimal(str(item.get("amount_paid") or 0))
             if amount_paid < 0 or amount_paid > total:
                 raise ValueError("Amount paid must be between zero and invoice total")
@@ -1178,7 +1183,7 @@ class Database:
         status = str(item.get("status") or "posted").strip().lower()
         if status not in ("posted", "review"):
             raise ValueError("Status must be posted or review")
-        due_date = str(item.get("due_date") or "").strip() or None
+        due_date = None
         amount_paid = Decimal(str(item.get("amount_paid") or 0))
         if amount_paid < 0 or amount_paid > total:
             raise ValueError("Amount paid must be between zero and invoice total")
@@ -1193,6 +1198,7 @@ class Database:
             party_name = str(item["party_name"]).strip()
             db.execute("INSERT OR IGNORE INTO parties(kind,name,currency) VALUES(?,?,?)", (party_kind, party_name, currency))
             party = db.execute("SELECT * FROM parties WHERE kind=? AND name=?", (party_kind, party_name)).fetchone()
+            due_date = self._invoice_due_date(item, party)
             party_account = self._ensure_party_account(db, party)
             if kind == "purchase" and supplier_account == DEFAULT_LEBANESE_ACCOUNTS["accounts_payable"] and party_account:
                 supplier_account = party_account
@@ -1545,7 +1551,14 @@ class Database:
     def list_parties(self):
         with self.connect() as db:
             return [dict(row) for row in db.execute(
-                "SELECT id,kind,name,tax_number,mof_number,address,contact_number,currency,account_number,COALESCE(account_category,CASE WHEN kind='customer' THEN 'client' ELSE 'supplier' END) account_category FROM parties ORDER BY name,kind")]
+                "SELECT id,kind,name,tax_number,mof_number,address,contact_number,currency,account_number,due_days,COALESCE(account_category,CASE WHEN kind='customer' THEN 'client' ELSE 'supplier' END) account_category FROM parties ORDER BY name,kind")]
+
+    @staticmethod
+    def _invoice_due_date(item, party):
+        explicit = str(item.get("due_date") or "").strip()
+        if explicit: return display_date(iso_date(explicit))
+        days = int(party["due_days"] or 0)
+        return display_date((datetime.strptime(iso_date(item["invoice_date"]), "%Y-%m-%d") + timedelta(days=days)).strftime("%Y-%m-%d"))
 
     def list_branches(self):
         with self.connect() as db: return [dict(row) for row in db.execute("SELECT id,name,active FROM branches WHERE active=1 ORDER BY name")]
@@ -1567,6 +1580,9 @@ class Database:
         currency=str(item.get("currency") or "USD").upper(); tax_number=str(item.get("tax_number") or "").strip() or None
         mof_number=str(item.get("mof_number") or "").strip() or None; address=str(item.get("address") or "").strip() or None; contact_number=str(item.get("contact_number") or "").strip() or None
         requested_account=str(item.get("account_number") or "").strip() or None
+        try: due_days=int(str(item.get("due_days") if item.get("due_days") not in (None, "") else 0).strip())
+        except ValueError as exc: raise ValueError("Due days must be a whole number") from exc
+        if not 0 <= due_days <= 3650: raise ValueError("Due days must be between 0 and 3650")
         if requested_account and (not requested_account.isdigit() or len(requested_account) not in (4,9)): raise ValueError("Enter the first 4 digits for automatic numbering, or the full 9-digit account number")
         if not name or kind not in ("customer","supplier","both") or currency not in self.currency_codes():
             raise ValueError("Enter a valid name, type, and currency")
@@ -1583,12 +1599,12 @@ class Database:
                 duplicate=db.execute("SELECT 1 FROM parties WHERE kind=? AND name=? AND id<>?",(kind,name,int(party_id))).fetchone()
                 if duplicate: raise ValueError("A customer/supplier with this name and type already exists")
                 if requested_account and db.execute("SELECT 1 FROM parties WHERE account_number=? AND id<>?",(requested_account,int(party_id))).fetchone(): raise ValueError("Account number already exists")
-                db.execute("UPDATE parties SET kind=?,name=?,tax_number=?,mof_number=?,address=?,contact_number=?,currency=?,account_number=COALESCE(?,account_number),account_category=? WHERE id=?",(kind,name,tax_number,mof_number,address,contact_number,currency,requested_account,category,int(party_id)))
+                db.execute("UPDATE parties SET kind=?,name=?,tax_number=?,mof_number=?,address=?,contact_number=?,currency=?,account_number=COALESCE(?,account_number),account_category=?,due_days=? WHERE id=?",(kind,name,tax_number,mof_number,address,contact_number,currency,requested_account,category,due_days,int(party_id)))
                 row=db.execute("SELECT * FROM parties WHERE id=?",(int(party_id),)).fetchone()
             else:
-                db.execute("""INSERT INTO parties(kind,name,tax_number,mof_number,address,contact_number,currency) VALUES(?,?,?,?,?,?,?)
-                    ON CONFLICT(kind,name) DO UPDATE SET tax_number=excluded.tax_number,mof_number=excluded.mof_number,address=excluded.address,contact_number=excluded.contact_number,currency=excluded.currency""",
-                    (kind,name,tax_number,mof_number,address,contact_number,currency))
+                db.execute("""INSERT INTO parties(kind,name,tax_number,mof_number,address,contact_number,currency,due_days) VALUES(?,?,?,?,?,?,?,?)
+                    ON CONFLICT(kind,name) DO UPDATE SET tax_number=excluded.tax_number,mof_number=excluded.mof_number,address=excluded.address,contact_number=excluded.contact_number,currency=excluded.currency,due_days=excluded.due_days""",
+                    (kind,name,tax_number,mof_number,address,contact_number,currency,due_days))
                 row=db.execute("SELECT * FROM parties WHERE kind=? AND name=?",(kind,name)).fetchone()
                 db.execute("UPDATE parties SET account_category=? WHERE id=?",(category,row["id"])); row=db.execute("SELECT * FROM parties WHERE id=?",(row["id"],)).fetchone()
                 if requested_account:
@@ -1736,14 +1752,19 @@ class Database:
             rows=[]; current=start
             while current<=end:
                 rows.append((current.strftime("%d-%m-%Y"),source,target,str(rate),user_id,utcnow())); current+=timedelta(days=1)
+            db.executemany("INSERT INTO exchange_rate_samples(rate_date,from_currency,to_currency,rate,created_by,created_at) VALUES(?,?,?,?,?,?)", rows)
+            averaged=[]
+            for rate_date,_,_,_,_,_ in rows:
+                values=[Decimal(sample["rate"]) for sample in db.execute("SELECT rate FROM exchange_rate_samples WHERE rate_date=? AND from_currency=? AND to_currency=?",(rate_date,source,target))]
+                averaged.append((rate_date,source,target,str(sum(values)/len(values)),user_id,utcnow()))
             db.executemany("""INSERT INTO exchange_rates(rate_date,from_currency,to_currency,rate,created_by,created_at)
                 VALUES(?,?,?,?,?,?) ON CONFLICT(rate_date,from_currency,to_currency) DO UPDATE SET rate=excluded.rate,
-                created_by=excluded.created_by,created_at=excluded.created_at""",rows)
+                created_by=excluded.created_by,created_at=excluded.created_at""",averaged)
             if (source,target) in (("EUR","USD"),("USD","LBP")):
                 derived=[]
                 for rate_date,_,_,_,_,_ in rows:
-                    eur_usd=rate if (source,target)==("EUR","USD") else None
-                    usd_lbp=rate if (source,target)==("USD","LBP") else None
+                    eur_usd=next((Decimal(x[3]) for x in averaged if x[0]==rate_date),None) if (source,target)==("EUR","USD") else None
+                    usd_lbp=next((Decimal(x[3]) for x in averaged if x[0]==rate_date),None) if (source,target)==("USD","LBP") else None
                     if eur_usd is None:
                         found=db.execute("SELECT rate FROM exchange_rates WHERE rate_date=? AND from_currency='EUR' AND to_currency='USD'",(rate_date,)).fetchone()
                         eur_usd=Decimal(str(found["rate"])) if found else Decimal("1")
@@ -1754,7 +1775,7 @@ class Database:
                 db.executemany("""INSERT INTO exchange_rates(rate_date,from_currency,to_currency,rate,created_by,created_at)
                     VALUES(?,?,?,?,?,?) ON CONFLICT(rate_date,from_currency,to_currency) DO UPDATE SET rate=excluded.rate,
                     created_by=excluded.created_by,created_at=excluded.created_at""",derived)
-        return {"date_from":date_from,"date_to":date_to,"days":len(rows)}
+        return {"date_from":date_from,"date_to":date_to,"days":len(rows),"calculation":"average of manually entered daily rates"}
 
     def list_exchange_rates(self):
         loaded=self.settings().get("exchange_history_loaded_through","")
@@ -1764,14 +1785,15 @@ class Database:
         if loaded!=datetime.now().date().isoformat() or eur_days<expected: self.sync_historical_exchange_rates()
         self._ensure_automatic_rates()
         with self.connect() as db:
-            return [dict(row) for row in db.execute("""SELECT id,rate_date,from_currency,to_currency,CAST(rate AS REAL) rate,created_at
-                FROM exchange_rates ORDER BY id DESC""")]
+            return [dict(row) for row in db.execute("""SELECT r.id,r.rate_date,r.from_currency,r.to_currency,CAST(r.rate AS REAL) rate,r.created_at,
+                (SELECT COUNT(*) FROM exchange_rate_samples s WHERE s.rate_date=r.rate_date AND s.from_currency=r.from_currency AND s.to_currency=r.to_currency) samples
+                FROM exchange_rates r ORDER BY r.id DESC""")]
 
     def _ensure_automatic_rates(self):
         today=datetime.now().strftime("%d-%m-%Y")
         with self.connect() as db:
             db.execute("""INSERT INTO exchange_rates(rate_date,from_currency,to_currency,rate,created_at)
-                VALUES(?,?,?,?,?) ON CONFLICT(rate_date,from_currency,to_currency) DO UPDATE SET rate=excluded.rate,created_at=excluded.created_at""",
+                VALUES(?,?,?,?,?) ON CONFLICT(rate_date,from_currency,to_currency) DO NOTHING""",
                 (today,"USD","LBP","89500",utcnow()))
             exists=db.execute("SELECT 1 FROM exchange_rates WHERE rate_date=? AND from_currency='EUR' AND to_currency='USD'",(today,)).fetchone()
         if exists: return
@@ -1782,7 +1804,7 @@ class Database:
             with self.connect() as db:
                 for source,target,rate in (("EUR","USD",eur_usd),("EUR","LBP",eur_lbp)):
                     db.execute("""INSERT INTO exchange_rates(rate_date,from_currency,to_currency,rate,created_at)
-                        VALUES(?,?,?,?,?) ON CONFLICT(rate_date,from_currency,to_currency) DO UPDATE SET rate=excluded.rate,created_at=excluded.created_at""",
+                        VALUES(?,?,?,?,?) ON CONFLICT(rate_date,from_currency,to_currency) DO NOTHING""",
                         (today,source,target,str(rate),utcnow()))
         except Exception:
             pass
@@ -1813,12 +1835,13 @@ class Database:
             current+=timedelta(days=1)
         with self.connect() as db:
             db.executemany("""INSERT INTO exchange_rates(rate_date,from_currency,to_currency,rate,created_at)
-                VALUES(?,?,?,?,?) ON CONFLICT(rate_date,from_currency,to_currency) DO UPDATE SET rate=excluded.rate,created_at=excluded.created_at""",rows)
+                VALUES(?,?,?,?,?) ON CONFLICT(rate_date,from_currency,to_currency) DO NOTHING""",rows)
             db.execute("INSERT INTO app_settings(key,value) VALUES('exchange_history_loaded_through',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(end.isoformat(),))
         return {"from":start.isoformat(),"to":end.isoformat(),"days":(end-start).days+1,"rates":len(rows)}
 
     def restore_euro_rates(self):
         with self.connect() as db:
+            db.execute("DELETE FROM exchange_rate_samples WHERE from_currency='EUR' AND to_currency IN ('USD','LBP')")
             db.execute("DELETE FROM exchange_rates WHERE from_currency='EUR' AND to_currency IN ('USD','LBP')")
             db.execute("DELETE FROM app_settings WHERE key='exchange_history_loaded_through'")
         return self.sync_historical_exchange_rates()
@@ -2919,6 +2942,15 @@ class Database:
         if not lines and not import_vat: raise ValueError("Enter at least one landed-cost amount")
         if not lines: lines.append({"description": f"Import VAT - {purchase['invoice_number']}", "quantity": 1, "unit_price": "0", "deductible_subtotal": "0", "vat_rate": 0, "vat": 0})
         lines[0]["vat"] = str(import_vat)
+        import chart_extra
+        cost_accounts = {**chart_extra.LANDED_COST_ACCOUNTS, **(item.get("cost_accounts") or {})}
+        with self.connect() as db:
+            for key, _label in components:
+                code = str(cost_accounts[key]).split(" - ", 1)[0].strip()
+                account = db.execute("SELECT type FROM accounts WHERE code=? AND active=1", (code,)).fetchone()
+                if not code.isdigit() or len(code) != 9 or not account or account["type"] != "expense":
+                    raise ValueError(f"{key.replace('_', ' ').title()} needs an active 9-digit expense account")
+                cost_accounts[key] = code
         declaration = str(item.get("customs_declaration_no") or "").strip()
         supplier_account=None; party_name=str(item.get("party_name") or "Lebanese Customs").strip()
         if str(item.get("party_id") or "").strip():
@@ -2935,12 +2967,11 @@ class Database:
         if supplier_account: invoice["supplier_account"]=supplier_account
         invoice_id = self.create_manual_invoice(invoice, lines, user_id)
         # each cost goes to its own 9-digit 6018 account (freight, insurance, duties, broker, other)
-        import chart_extra
         with self.connect() as db:
             db.execute("UPDATE invoices SET linked_invoice_id=? WHERE id=?", (int(purchase_id), invoice_id))
             entry = db.execute("SELECT id FROM journal_entries WHERE source_type='invoice' AND source_id=?", (invoice_id,)).fetchone()
             cost_account = self._account_id(db, purchase["expense_account"])
-            parts = [(chart_extra.LANDED_COST_ACCOUNTS[key], Decimal(str(item.get(key) or 0).replace(",", ""))) for key, _label in components]
+            parts = [(cost_accounts[key], Decimal(str(item.get(key) or 0).replace(",", ""))) for key, _label in components]
             parts = [(code, amount) for code, amount in parts if amount]
             if entry and parts:
                 line = db.execute("SELECT * FROM journal_lines WHERE entry_id=? AND account_id=? AND CAST(debit AS REAL)>0 ORDER BY id LIMIT 1", (entry["id"], cost_account)).fetchone()
@@ -3087,4 +3118,3 @@ class Database:
             if index>0: db.execute("UPDATE payroll_settings SET date_to=? WHERE id=?",(target["date_to"],rows[index-1]["id"]))
             db.execute("INSERT INTO audit_log(user_id,action,entity,details,created_at) VALUES(?,?,?,?,?)",(user_id,"delete","payroll_period",json.dumps({"date_from":date_from}),utcnow()))
         return self.list_payroll_settings()
-

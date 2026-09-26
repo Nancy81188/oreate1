@@ -346,6 +346,8 @@ def build_report(database, report, options):
             data = listed.get(item_id, {})
             if str(item.get("supplier_id") or "") != supplier_filter and data.get("supplier_name") != options.get("supplier_name"): return False
         return True
+    if report in ("turnover", "supplier_stock", "count_variances"):
+        return additional_inventory_report(database, report, options, items, warehouses, in_category, currency, method, date_from, date_to, warehouse, company)
     if report == "valuation":
         state = run_costing(database, date_to, method)
         headers = ["Item Code", "Item", "Category", "Unit", "Quantity", f"Unit Cost ({currency})", f"Stock Value ({currency})", "Sales Price", "Value at Sales Price", "Reorder Level", "Status"]
@@ -560,12 +562,16 @@ def count_sheet(database, warehouse_id, date):
 def save_count(database, header, lines, user_id, count_id=None, post=False):
     date = iso_date(header.get("count_date"), "Count date"); warehouse = int(header.get("warehouse_id") or 0)
     if not warehouse: raise ValueError("Choose the warehouse")
+    stock = {row["item_id"]: row for row in count_sheet(database, warehouse, date)}
     clean = []
     for line in lines or []:
         if line.get("counted") in (None, ""): continue
         counted = _d(line["counted"])
         if counted < 0: raise ValueError(f"{line.get('sku')}: the counted quantity cannot be negative")
-        clean.append({"item_id": int(line["item_id"]), "sku": line.get("sku"), "counted": str(counted)})
+        item_id = int(line["item_id"])
+        if item_id not in stock: raise ValueError(f"Item {item_id} is not on the stock sheet")
+        clean.append({"item_id": item_id, "sku": line.get("sku"), "counted": str(counted),
+                      "system_qty": str(stock[item_id]["system_qty"]), "unit_cost": str(stock[item_id]["unit_cost"])})
     with database.connect() as db:
         if count_id:
             row = db.execute("SELECT * FROM physical_counts WHERE id=?", (int(count_id),)).fetchone()
@@ -603,6 +609,68 @@ def list_counts(database):
 
 
 # ---------------------------------------------------------------- ageing and summary
+def additional_inventory_report(database, report, options, items, warehouses, in_category, currency, method, date_from, date_to, warehouse, company):
+    """Turnover, stock by supplier, and saved physical count differences."""
+    selected = lambda item_id: item_id in items and in_category(item_id) and (not options.get("item_id") or int(options["item_id"]) == item_id)
+    money = lambda value: Decimal(value).quantize(Decimal("0.01"))
+    meta = [f"Company: {company.get('company_name') or '-'}   Currency: {currency}", f"From {display_date(date_from)} to {display_date(date_to)}"]
+    if report == "count_variances":
+        with database.connect() as db:
+            counts = [dict(row) for row in db.execute("SELECT number,count_date,warehouse_id,status,lines FROM physical_counts WHERE count_date BETWEEN ? AND ? ORDER BY count_date,number", (date_from, date_to))]
+        rows = []; total = ZERO
+        for count in counts:
+            if warehouse and count["warehouse_id"] != warehouse: continue
+            snapshot = {row["item_id"]: row for row in count_sheet(database, count["warehouse_id"], count["count_date"])}
+            if count["status"] == "posted":
+                with database.connect() as db:
+                    adjustments = db.execute("""SELECT m.item_id,m.quantity FROM stock_movements m JOIN stock_documents d ON d.id=m.document_id
+                        WHERE d.reference=? AND d.doc_date=? AND d.warehouse_id=? AND d.notes=?""",
+                        (count["number"], count["count_date"], count["warehouse_id"], f"Physical count {count['number']}")).fetchall()
+                for change in adjustments:
+                    if change["item_id"] in snapshot: snapshot[change["item_id"]]["system_qty"] -= float(change["quantity"])
+            for line in json.loads(count["lines"]):
+                item_id = int(line["item_id"])
+                if not selected(item_id): continue
+                system = _d(line.get("system_qty") if line.get("system_qty") is not None else snapshot.get(item_id, {}).get("system_qty"))
+                counted = _d(line["counted"]); difference = counted - system
+                if not difference: continue
+                cost = _d(line.get("unit_cost") if line.get("unit_cost") is not None else snapshot.get(item_id, {}).get("unit_cost"))
+                value = money(difference * cost); total += value
+                rows.append([count["number"], display_date(count["count_date"]), warehouses[count["warehouse_id"]]["code"], items[item_id]["sku"], items[item_id]["name"], system, counted, difference, value, count["status"]])
+        rows.append(["TOTAL", "", "", "", "", "", "", "", money(total), ""])
+        return {"title": "Physical Count Variances", "meta": meta, "sections": [{"heading": "Saved counts with differences", "headers": ["Count", "Date", "Warehouse", "Item Code", "Item", "Stock on Hand", "Counted", "Difference", f"Variance ({currency})", "Status"], "rows": rows, "total_rows": [len(rows)-1]}]}
+    state = run_costing(database, date_to, method)
+    if report == "turnover":
+        issued = {}
+        for row in _movements(database, date_to):
+            item_id = row["item_id"]
+            if date_from <= row["doc_date"] <= date_to and row["doc_type"] == "issue" and selected(item_id) and (not warehouse or row["warehouse_id"] == warehouse):
+                issued[item_id] = issued.get(item_id, ZERO) - _d(row["quantity"])
+        rows = []; period_days = (datetime.strptime(date_to, "%Y-%m-%d") - datetime.strptime(date_from, "%Y-%m-%d")).days + 1
+        for item_id, item in sorted(items.items(), key=lambda pair: pair[1]["sku"]):
+            if not selected(item_id): continue
+            data = state.get(item_id, {}); on_hand = data.get("by_warehouse", {}).get(warehouse, ZERO) if warehouse else data.get("qty", ZERO)
+            sold = issued.get(item_id, ZERO)
+            if not sold and not on_hand and not options.get("include_zero"): continue
+            days = (on_hand / sold * Decimal(period_days)).quantize(Decimal("0.1")) if sold else "-"
+            rows.append([item["sku"], item["name"], item["unit"], sold, on_hand, days, money(on_hand * data.get("avg", ZERO))])
+        return {"title": "Stock Turnover", "meta": meta, "sections": [{"heading": "Issues during period and stock at To Date (coverage at the period's issue rate)", "headers": ["Item Code", "Item", "Unit", "Issued", "On Hand", "Coverage Days", f"On-hand Value ({currency})"], "rows": rows, "total_rows": []}]}
+    with database.connect() as db:
+        suppliers = {str(row["id"]): row["name"] for row in db.execute("SELECT id,name FROM parties")}
+    groups = {}
+    for item_id, item in items.items():
+        if not selected(item_id): continue
+        data = state.get(item_id, {}); qty = data.get("by_warehouse", {}).get(warehouse, ZERO) if warehouse else data.get("qty", ZERO)
+        if not qty and not options.get("include_zero"): continue
+        name = suppliers.get(str(item.get("supplier_id") or ""), "(No supplier)")
+        groups.setdefault(name, []).append([item["sku"], item["name"], item["unit"], qty, money(qty * data.get("avg", ZERO))])
+    rows = []; totals = []
+    for name, members in sorted(groups.items()):
+        rows.extend([[name, *member] for member in sorted(members)])
+        rows.append([f"Subtotal {name}", "", "", "", sum((member[3] for member in members), ZERO), money(sum((member[4] for member in members), ZERO))]); totals.append(len(rows)-1)
+    rows.append(["TOTAL", "", "", "", sum((member[3] for members in groups.values() for member in members), ZERO), money(sum((member[4] for members in groups.values() for member in members), ZERO))]); totals.append(len(rows)-1)
+    return {"title": "Stock by Supplier", "meta": meta, "sections": [{"heading": f"On-hand stock at {display_date(date_to)} by item supplier", "headers": ["Supplier", "Item Code", "Item", "Unit", "On Hand", f"Value ({currency})"], "rows": rows, "total_rows": totals}]}
+
 AGEING_BUCKETS = (30, 60, 90, 180, 365)
 
 
@@ -640,7 +708,7 @@ def _ageing_data(database, options, items, in_category, method, date_to):
     result = []
     for item_id, item in sorted(items.items(), key=lambda pair: pair[1]["sku"]):
         data = state.get(item_id); remaining = layers.get(item_id, [])
-        if not data or data["qty"] <= 0 or not in_category(item_id) or not remaining: continue
+        if not data or data["qty"] <= 0 or not in_category(item_id) or (options.get("item_id") and int(options["item_id"]) != item_id) or not remaining: continue
         on_hand = data["by_warehouse"].get(warehouse, ZERO) if warehouse else data["qty"]
         if on_hand <= 0: continue
         share = on_hand / data["qty"]  # a warehouse's stock is aged like the item's stock
@@ -731,4 +799,3 @@ def summary_report(database, options, items, warehouses, in_category, currency, 
                                "rows": [[it["sku"], it["name"], state[it["id"]]["qty"].quantize(Decimal("0.001")), _d(it.get("reorder_level"))] for it in below], "total_rows": []})
     meta = [f"Company: {company.get('company_name') or '-'}   Inventory currency: {currency}   Costing: {'FIFO' if method == 'fifo' else 'Weighted average'}", f"Situation at {display_date(date_to)}"]
     return {"title": "Inventory Summary", "meta": meta, "sections": sections}
-

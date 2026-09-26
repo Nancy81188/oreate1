@@ -10,7 +10,7 @@ from desktop_brains import EditableSheet
 NAVY, GOLD, LIGHT = "#071b2e", "#c9a96a", "#f3f6f8"
 RED, MUTED = "#8B1E1E", "#5f6b76"
 DOC_TYPES = {"Opening Stock": "opening", "Stock Receipt": "receipt", "Stock Issue": "issue", "Adjustment +": "adjustment_in", "Adjustment -": "adjustment_out", "Transfer": "transfer"}
-REPORTS = {"Inventory Summary": "summary", "Stock Ageing": "ageing", "Stock Valuation": "valuation", "Stock Card": "stock_card", "Stock Movements": "movements", "Sales Margin (COGS)": "margin", "Reorder Report": "reorder", "Slow-moving Stock": "slow"}
+REPORTS = {"Inventory Summary": "summary", "Stock Ageing": "ageing", "Stock Valuation": "valuation", "Stock Card": "stock_card", "Stock Movements": "movements", "Stock Turnover": "turnover", "Stock by Supplier": "supplier_stock", "Physical Count Variances": "count_variances", "Sales Margin (COGS)": "margin", "Reorder Report": "reorder", "Slow-moving Stock": "slow"}
 
 
 def _num(value):
@@ -304,7 +304,7 @@ class InventoryMixin:
         tk.Label(bar, text="Costing", bg=LIGHT).pack(side="left")
         ttk.Combobox(bar, textvariable=self.ir_method, values=["Company setting", "Weighted average", "FIFO"], state="readonly", width=15).pack(side="left", padx=4)
         bar2 = tk.Frame(page, bg=LIGHT); bar2.pack(fill="x", padx=8)
-        tk.Label(bar2, text="Item (Stock Card)", bg=LIGHT).pack(side="left")
+        tk.Label(bar2, text="Item (Stock Card / Ageing)", bg=LIGHT).pack(side="left")
         self.ir_item_box = ttk.Combobox(bar2, textvariable=self.ir_item, width=30); self.ir_item_box.pack(side="left", padx=(4, 8))
         self.ir_item_box.bind("<KeyRelease>", self.filter_report_items)
         self.ir_item_box.bind("<Return>", self.select_report_item)
@@ -536,6 +536,7 @@ class InventoryMixin:
         tk.Label(bar, text="Count date", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.pc_vars["date"], 11).pack(side="left", padx=(4, 8))
         tk.Label(bar, text="Warehouse", bg=LIGHT).pack(side="left"); self.pc_wh_box = ttk.Combobox(bar, textvariable=self.pc_vars["warehouse"], state="readonly", width=18); self.pc_wh_box.pack(side="left", padx=(4, 8))
         tk.Button(bar, text="Load Stock on Hand", command=self.load_count_sheet, bg=GOLD, fg=NAVY, border=0, padx=12, pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
+        self.action_button(bar, "Add Item", self.add_physical_item).pack(side="left", padx=3)
         tk.Label(bar, text="Open count", bg=LIGHT).pack(side="left", padx=(12, 2)); self.pc_find_box = ttk.Combobox(bar, textvariable=self.pc_vars["find"], state="readonly", width=34); self.pc_find_box.pack(side="left")
         self.pc_find_box.bind("<<ComboboxSelected>>", lambda _e: self.open_count())
         self.pc_find_box.bind("<KeyRelease>", lambda _e: self.filter_inventory_find(self.pc_find_box, self.pc_vars["find"], "pc_map"))
@@ -558,6 +559,17 @@ class InventoryMixin:
         self.pc_id = None; self.pc_sheet.clear()
         for row in rows: row["counted"] = ""; self.count_display(row); self.pc_sheet.insert(row)
         self.update_count_info()
+
+    def add_physical_item(self):
+        def add(sku):
+            item = self.item_by_code(sku)
+            if not item: return
+            if any(row["item_id"] == item["id"] for row in self.pc_sheet.ordered()): return messagebox.showinfo("Physical Inventory", "Item already on the count sheet")
+            try: rows = self.client.count_sheet(self.warehouse_id_of(self.pc_vars["warehouse"].get()), self.pc_vars["date"].get())
+            except Exception as exc: return messagebox.showerror("Physical Inventory", str(exc))
+            row = next((r for r in rows if r["item_id"] == item["id"]), None)
+            if row: row["counted"] = ""; self.count_display(row); self.pc_sheet.insert(row); self.update_count_info()
+        self.item_picker(add)
 
     def warehouse_id_of(self, label):
         code = (label or "MAIN").split(" - ", 1)[0]
