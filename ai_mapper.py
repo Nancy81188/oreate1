@@ -1,49 +1,38 @@
-# ai_mapper.py
-import openai # Or your preferred LLM client
+"""Local expense account suggestions from the installed Lebanese chart.
 
-# We only send a sample of the chart to the AI to save tokens, 
-# or we use the full list if it fits in the context window.
+Suggestions are advisory; the accountant selects and verifies the final account.
+No API key or external service is required.
+"""
+from difflib import SequenceMatcher
+import re
+
 from lebanese_accounts import LEBANESE_ACCOUNTS
 
-def suggest_account(expense_description):
-    """
-    Takes an expense description and suggests the most 
-    appropriate Lebanese Chart of Account code.
-    """
-    
-    # 1. Prepare the context: We give the AI a few examples of your chart
-    # To be efficient, we can filter the chart for "Expense" types (usually codes starting with 6)
-    expense_accounts = [acc for acc in LEBANESE_ACCOUNTS if acc[0].startswith('6')]
-    
-    # Format the list for the AI
-    chart_context = "\n".join([f"Code: {a[0]} | Name: {a[1]} | Arabic: {a[2]}" for a in expense_accounts])
 
-    prompt = f"""
-    You are an expert Lebanese Accountant. 
-    Below is a list of expense accounts from the Lebanese Standard Chart of Accounts (PCGL).
-    
-    Chart:
-    {chart_context}
-    
-    User Expense: "{expense_description}"
-    
-    Task: Find the most accurate Account Code for this expense.
-    Return ONLY a JSON object in this format:
-    {{
-      "code": "CODE_HERE",
-      "name": "ACCOUNT_NAME_HERE",
-      "confidence": 0.0 to 1.0,
-      "reason": "Brief explanation why"
-    }}
-    """
-
-    try:
-        # Replace with your actual AI API call (Gemma, GPT, etc.)
-        response = openai.ChatCompletion.create(
-            model="gpt-4o", # or gemma-2-9b
-            messages=[{"role": "user", "content": prompt}],
-            response_format={ "type": "json_object" }
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return {"error": str(e)}
+def suggest_account(expense_description, accounts=None):
+    query = str(expense_description or "").strip().casefold()
+    if not query:
+        return None
+    words = set(re.findall(r"\w+", query))
+    candidates = []
+    if accounts is None:
+        accounts = [(row[0], row[1], row[2], row[3]) for row in LEBANESE_ACCOUNTS]
+    else:
+        accounts = [(str(row).split(" - ", 1)[0], str(row).split(" - ", 1)[-1], "", "") for row in accounts]
+    for code, english, arabic, french in accounts:
+        code = str(code)
+        if not code.startswith("6") or len(code) < 4 or not code.isdigit():
+            continue
+        names = " ".join(str(name or "") for name in (english, arabic, french)).casefold()
+        tokens = set(re.findall(r"\w+", names))
+        overlap = len(words & tokens) / max(1, len(words))
+        similarity = max(SequenceMatcher(None, query, str(name or "").casefold()).ratio()
+                         for name in (english, arabic, french))
+        score = max(overlap, similarity)
+        candidates.append((score, len(code), code, english))
+    if not candidates:
+        return None
+    score, _, code, name = max(candidates)
+    if score < 0.35:
+        return None
+    return {"code": code, "name": name, "confidence": round(score, 2)}

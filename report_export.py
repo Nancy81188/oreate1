@@ -28,8 +28,9 @@ _FONTS = {"ready": None}
 
 def _font_folder():
     base = _Path(getattr(_sys, "_MEIPASS", _Path(__file__).resolve().parent))
-    lower = base / "assets" / "fonts"
-    return lower if lower.is_dir() else base / "assets" / "Fonts"
+    for folder in (base / "assets" / "fonts", base / "assets" / "Fonts", base / "Assets" / "fonts"):
+        if folder.is_dir(): return folder
+    return base / "assets" / "fonts"
 
 
 def arabic_fonts():

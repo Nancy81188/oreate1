@@ -410,6 +410,21 @@ class Stage3PaymentsPurchasesExpensesTest(unittest.TestCase):
         self.assertEqual(float(result["per_currency"]["USD"]["customs"]["vat"]), 42.35); self.assertEqual(float(result["per_currency"]["USD"]["purchases"]["vat"]), 132)
         with self.assertRaisesRegex(ValueError, "at least one"): self.db.add_landed_cost(new_id, {}, self.user)
 
+    def test_failed_invoice_replacement_preserves_original(self):
+        invoice = self.db.create_manual_invoice(
+            {"invoice_date": "15-03-2025", "party_name": "Alpha Trading", "kind": "sales",
+             "currency": "USD", "status": "posted", "invoice_number": "SAL-ORIGINAL"},
+            [{"description": "Service", "quantity": 1, "unit_price": 100, "vat_rate": 11}], self.user)
+        before = self.db.invoice_detail(invoice)
+        with self.assertRaises(ValueError):
+            self.db.replace_manual_invoice(invoice,
+                {"invoice_date": "15-03-2025", "party_name": "Alpha Trading", "kind": "sales",
+                 "currency": "USD", "status": "posted"},
+                [{"description": "Service", "quantity": -1, "unit_price": 200, "vat_rate": 11}], self.user)
+        after = self.db.invoice_detail(invoice)
+        self.assertEqual(after["invoice"]["total"], before["invoice"]["total"])
+        self.assertEqual(len(self.db.list_invoices()), 1)
+
     def test_pdf_and_excel_readers(self):
         from reportlab.pdfgen import canvas
         from openpyxl import Workbook

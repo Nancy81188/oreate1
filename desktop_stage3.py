@@ -801,6 +801,8 @@ class Stage3Mixin:
             if key in ("account", "no_vat_account", "payment_account"):
                 box_widget = ttk.Combobox(r3, textvariable=v[key], width=24 if key == "account" else 14); box_widget.pack(side="left", padx=(4, 8)); f[f"{key}_box"] = box_widget
             else: self.account_search_box(r3, v[key], 9).pack(side="left", padx=(4, 8))
+        tk.Button(r3, text="Suggest A/C", command=self.suggest_expense_account,
+                  bg=GOLD, fg=NAVY, border=0).pack(side="left", padx=4)
         r4 = tk.Frame(box, bg=LIGHT); r4.pack(fill="x", pady=(5, 0))
         self.dimension_selectors(r4, f["department"], f["project"])
         tk.Label(r4, text="VAT used for", bg=LIGHT).pack(side="left"); ttk.Combobox(r4, textvariable=f["use"], values=list(PURCHASE_USES), state="readonly", width=24).pack(side="left", padx=4)
@@ -893,6 +895,17 @@ class Stage3Mixin:
             f["tree"].insert("", "end", iid=str(r["id"]), values=(r.get("expense_number") or f"EXP-{r['id']}", _dd(r["expense_date"]), r["description"], r.get("category") or "", r["currency"],
                 f'{r.get("with_vat_subtotal") or 0:,.2f}', f'{r.get("without_vat_subtotal") or 0:,.2f}', f'{r["vat"]:,.2f}', f'{r["total"]:,.2f}',
                 "Yes" if r.get("vat_recoverable", 1) else "NO", r.get("attachment_count") or "", " / ".join(x for x in (departments.get(r.get("department_id")), projects.get(r.get("project_id"))) if x)))
+
+    def suggest_expense_account(self):
+        from ai_mapper import suggest_account
+        form = self.expense_form["vars"]
+        suggestion = suggest_account(form["description"].get(), getattr(self, "_expense_accounts", []))
+        if not suggestion:
+            messagebox.showinfo("Account suggestion", "Enter a more specific expense description and choose an account manually.")
+            return
+        if messagebox.askyesno("Account suggestion",
+                               f"Use {suggestion['code']} - {suggestion['name']}?\nPlease verify the account before saving."):
+            form["account"].set(suggestion["code"])
 
     def expense_found(self):
         f = self.expense_form; expense_id = f.get("find_map", {}).get(f["find"].get())

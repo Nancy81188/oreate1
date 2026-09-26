@@ -28,7 +28,11 @@ PURCHASE_USES={"Mixed (partial deduction)":"mixed","Taxable sales only (100%)":"
 
 def resource_path(relative_path):
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return base / relative_path
+    path = base / relative_path
+    if not path.exists() and relative_path.startswith("assets/"):
+        alternative = base / "Assets" / relative_path[len("assets/"):]
+        if alternative.exists(): return alternative
+    return path
 
 def row_matches_search(values, query):
     """Return True when every search term appears somewhere in the row.
@@ -918,7 +922,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         sheet_frame=tk.Frame(items_area,bg=LIGHT); sheet_frame.pack(fill="both",expand=True)
         self.sales_columns=[("item_code","Item",90),("description","Description",250),("quantity","Qty",55),("unit","Unit",60),("unit_price","Unit Price",95),
             ("gross_amount","Total Amount",105),("discount_percent","Discount %",80),("vat_rate","VAT %",60),("total","Net",105)]
-        self.sales_sheet=ttk.Treeview(sheet_frame,columns=[c[0] for c in self.sales_columns],show="headings",height=5,style="Sales.Treeview")
+        self.sales_sheet=ttk.Treeview(sheet_frame,columns=[c[0] for c in self.sales_columns],show="headings",height=7,style="Sales.Treeview")
         for key,label,width in self.sales_columns: self.sales_sheet.heading(key,text=label); self.sales_sheet.column(key,width=width,anchor="w" if key=="description" else "e")
         scroll=ttk.Scrollbar(sheet_frame,orient="vertical",command=self.sales_sheet.yview); self.sales_sheet.configure(yscrollcommand=scroll.set)
         self.sales_sheet.pack(side="left",fill="both",expand=True); scroll.pack(side="right",fill="y")
@@ -937,7 +941,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(discount,text="Discount %",bg="#dfe6ee").pack(side="left"); e1=tk.Entry(discount,textvariable=self.sales_discount_percent,width=5); e1.pack(side="left",padx=2)
         tk.Label(discount,text="or amount",bg="#dfe6ee").pack(side="left"); e2=tk.Entry(discount,textvariable=self.sales_discount_amount,width=9); e2.pack(side="left",padx=2)
         for entry in (e1,e2): entry.bind("<KeyRelease>",lambda _event:self.update_sales_totals())
-        for row,(key,caption) in enumerate((("Discount",""),("VAT","VAT 11%"),("VAT_LBP","VAT 11% in LBP"),("TOTAL","TOTAL")),start=4):
+        for row,(key,caption) in enumerate((("Discount",""),("VAT","VAT 11%"),("TOTAL","TOTAL")),start=4):
             if caption:
                 label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key=="TOTAL" else "normal"))
                 label.grid(row=row,column=0,sticky="e",padx=4)
@@ -1228,10 +1232,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.sales_calculation=result; currency=self.sales_currency.get()
         if hasattr(self,"sales_total_labels"):
             values={"Total":result["total"],"Discount":-result["discount"],"Total HT":result["total_ht"],"VAT":result["vat"],"TOTAL":result["grand_total"]}
-            vat_lbp,lbp_rate=self.sales_vat_in_lbp(result["vat"],currency)
             for key,label in self.sales_total_labels.items():
-                if key=="VAT_LBP":
-                    label.config(text=(f"{vat_lbp:,.0f} LBP" if vat_lbp is not None else "LBP rate not set"),fg=NAVY); continue
                 label.config(text=f"{values[key]:,.2f} {currency}" if key=="TOTAL" else f"{values[key]:,.2f}",fg=NAVY)
             self.sales_vat_caption.config(text="VAT 11%" if not export else f"VAT 11%  ({self.sales_treatment.get()})",font=("Segoe UI",9,"overstrike") if export else ("Segoe UI",9))
             from report_export import shape_arabic
@@ -1397,9 +1398,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         except ValueError as exc: return messagebox.showerror("Sales Invoice",str(exc))
         if self.sales_edit_id:
             if not messagebox.askyesno("Sales Invoice",f"Save the changes to invoice {invoice['invoice_number']}? Its journal entry will be replaced with the new figures."): return
-            try: self.client.delete_invoice(self.sales_edit_id)
-            except Exception as exc: return messagebox.showerror("Sales Invoice",f"The invoice could not be changed: {exc}")
-        try: self.client.create_manual_invoice(invoice,lines)
+        try:
+            if self.sales_edit_id: self.client.replace_invoice(self.sales_edit_id,invoice,lines)
+            else: self.client.create_manual_invoice(invoice,lines)
         except Exception as exc: return messagebox.showerror("Sales Invoice",str(exc))
         number=invoice["invoice_number"]
         messagebox.showinfo("Sales Invoice",f'Invoice {number} saved as {"Posted" if post else "Draft"}.')
