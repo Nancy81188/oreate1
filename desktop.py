@@ -246,13 +246,13 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                      "sio_sheet","pc_sheet","pc_find_box","sio_wh_box","pc_wh_box","cat_tree","item_boxes","ir_subcategory_box","ir_unit_box","ir_supplier_box","_all_accounts"):
             self.__dict__.pop(name,None)
         self.clear(); lang=self.language.get()
-        top=tk.Frame(self,bg=NAVY,height=76); top.pack(fill="x"); top.pack_propagate(False)
+        top=tk.Frame(self,bg=NAVY,height=58); top.pack(fill="x"); top.pack_propagate(False)
         try:
             self.header_logo = tk.PhotoImage(file=str(resource_path("assets/Saber_for_Audit_logo.png"))).subsample(18, 18)
             tk.Label(top,image=self.header_logo,bg=NAVY).pack(side="left",padx=(18,8),pady=2)
         except Exception:
             pass
-        tk.Label(top,text=tr(lang,"title"),bg=NAVY,fg="white",font=("Segoe UI",17,"bold")).pack(side="left",padx=8,pady=19)
+        tk.Label(top,text=tr(lang,"title"),bg=NAVY,fg="white",font=("Segoe UI",16,"bold")).pack(side="left",padx=8,pady=12)
         tk.Label(top,text="11% VAT  |  USD · LBP · EUR · AED",bg=NAVY,fg=GOLD,font=("Segoe UI",10,"bold")).pack(side="right",padx=28)
         tk.Button(top,text="Switch Company / Year",command=self.company_selection_screen,bg=GOLD,fg=NAVY,border=0,padx=10,pady=5).pack(side="right",padx=5)
         self.alerts_button=tk.Button(top,text="Document Alerts",command=self.show_document_alerts,bg=NAVY,fg="white",border=1,padx=10,pady=5)
@@ -925,20 +925,24 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.sales_sheet.bind("<Double-1>",self.edit_sales_cell); self.sales_sheet.bind("<Return>",self.edit_sales_cell)
         self.sales_sheet.bind("<Delete>",lambda _event:self.remove_sales_item())
         totals=tk.Frame(bottom,bg=LIGHT); totals.pack(side="right",fill="y",padx=(8,0))
-        box=tk.Frame(totals,bg="#dfe6ee",padx=8,pady=3); box.pack(side="top",fill="x")
-        discount=tk.Frame(box,bg="#dfe6ee"); discount.grid(row=0,column=0,columnspan=2,sticky="e",pady=(0,2))
+        box=tk.Frame(totals,bg="#dfe6ee",padx=8,pady=2); box.pack(side="top",fill="x")
+        self.sales_total_labels={}
+        # Totals order (top to bottom): Total, Total HT, then the discount input row, then Discount value, VAT, VAT LBP, TOTAL
+        for row,(key,caption) in enumerate((("Total","Total"),("Total HT","Total HT (before VAT)")),start=1):
+            label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key=="Total HT" else "normal"))
+            label.grid(row=row,column=0,sticky="e",padx=4)
+            value=tk.Label(box,text="0.00",bg="#dfe6ee",width=16,anchor="e",font=("Segoe UI",9,"bold" if key=="Total HT" else "normal"))
+            value.grid(row=row,column=1,sticky="e"); self.sales_total_labels[key]=value
+        discount=tk.Frame(box,bg="#dfe6ee"); discount.grid(row=3,column=0,columnspan=2,sticky="e",pady=(2,2))
         tk.Label(discount,text="Discount %",bg="#dfe6ee").pack(side="left"); e1=tk.Entry(discount,textvariable=self.sales_discount_percent,width=5); e1.pack(side="left",padx=2)
         tk.Label(discount,text="or amount",bg="#dfe6ee").pack(side="left"); e2=tk.Entry(discount,textvariable=self.sales_discount_amount,width=9); e2.pack(side="left",padx=2)
         for entry in (e1,e2): entry.bind("<KeyRelease>",lambda _event:self.update_sales_totals())
-        self.sales_total_labels={}
-        rows=(("Total","Total"),("Discount",""),("Total HT","Total HT (before VAT)"),("VAT","VAT 11%"),("VAT_LBP","VAT 11% in LBP"),("TOTAL","TOTAL"))
-        for offset,(key,caption) in enumerate(rows):
-            row=offset+1
+        for row,(key,caption) in enumerate((("Discount",""),("VAT","VAT 11%"),("VAT_LBP","VAT 11% in LBP"),("TOTAL","TOTAL")),start=4):
             if caption:
-                label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key in ("Total HT","TOTAL") else "normal"))
+                label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key=="TOTAL" else "normal"))
                 label.grid(row=row,column=0,sticky="e",padx=4)
                 if key=="VAT": self.sales_vat_caption=label
-            value=tk.Label(box,text="0.00",bg="#dfe6ee",width=16,anchor="e",font=("Segoe UI",10 if key=="TOTAL" else 9,"bold" if key in ("Total HT","TOTAL") else "normal"))
+            value=tk.Label(box,text="0.00",bg="#dfe6ee",width=16,anchor="e",font=("Segoe UI",10 if key=="TOTAL" else 9,"bold" if key=="TOTAL" else "normal"))
             value.grid(row=row,column=1,sticky="e"); self.sales_total_labels[key]=value
         self.sales_totals=tk.Label(totals,text="",bg=LIGHT,fg=NAVY); self.sales_totals.pack(side="top",anchor="e",padx=8,pady=3)
         self.sales_words=tk.Label(bottom,text="",bg=LIGHT,fg="#5f6b76",anchor="w",justify="left",wraplength=560)
