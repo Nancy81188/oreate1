@@ -190,7 +190,7 @@ class Stage3Mixin:
 
     def build_payment_form(self, page, kind):
         form = {"kind": kind, "id": None, "vars": {k: tk.StringVar() for k in ("number", "date", "party", "currency", "amount", "method", "cash_account", "reference", "description", "bank_commission", "exchange_difference")}}
-        v = form["vars"]; v["date"].set(datetime.now().strftime("%d-%m-%Y")); v["currency"].set("USD"); v["method"].set("Cash"); v["cash_account"].set("531")
+        v = form["vars"]; v["date"].set(self.fiscal_today()); v["currency"].set("USD"); v["method"].set("Cash"); v["cash_account"].set("531")
         form["department"] = tk.StringVar(); form["project"] = tk.StringVar()
         box = tk.LabelFrame(page, text="Customer Receipt (RV)" if kind == "customer_receipt" else "Supplier Payment (PV)", bg=LIGHT, padx=8, pady=6); box.pack(fill="x", padx=8, pady=6)
         row = tk.Frame(box, bg=LIGHT); row.pack(fill="x")
@@ -325,7 +325,7 @@ class Stage3Mixin:
         form["id"] = None; v = form["vars"]
         for key in ("party", "amount", "reference", "description", "bank_commission", "exchange_difference"): v[key].set("")
         if "alloc_sheet" in form: form["alloc_sheet"].clear(); form["alloc_info"].config(text="Choose the customer / supplier to see the open invoices")
-        v["date"].set(datetime.now().strftime("%d-%m-%Y")); v["method"].set("Cash"); form["department"].set("(none)"); form["project"].set("(none)"); form["balance"].config(text="")
+        v["date"].set(self.fiscal_today()); v["method"].set("Cash"); form["department"].set("(none)"); form["project"].set("(none)"); form["balance"].config(text="")
         try: v["number"].set(self.client.next_document_number(form["kind"], v["date"].get()))
         except Exception: v["number"].set("")
 
@@ -417,15 +417,19 @@ class Stage3Mixin:
     # ================================================================ Purchases & Expenses
     def build_purchases_expenses(self):
         nested = ttk.Notebook(self.purchases_tab); nested.pack(fill="both", expand=True, padx=8, pady=8)
-        purchases_outer, purchases = self.scrollable_page(nested); expenses_outer, expenses = self.scrollable_page(nested)
+        purchases_outer=tk.Frame(nested,bg=LIGHT)
+        purchase_totals=tk.Frame(purchases_outer,bg=LIGHT); purchase_totals.pack(side="bottom",fill="x")
+        purchase_scroll,purchases=self.scrollable_page(purchases_outer)
+        purchase_scroll.pack(side="top",fill="both",expand=True)
+        expenses_outer, expenses = self.scrollable_page(nested)
         nested.add(purchases_outer, text="Purchases"); nested.add(expenses_outer, text="Expenses")
-        self.build_purchases_page(purchases); self.build_expenses_page(expenses)
+        self.build_purchases_page(purchases,purchase_totals); self.build_expenses_page(expenses)
         self.load_purchases(); self.load_expenses()
 
     # ---- purchases
-    def build_purchases_page(self, page):
+    def build_purchases_page(self, page, totals_parent=None):
         f = {"id": None, "pdf": None, "vars": {k: tk.StringVar() for k in ("supplier", "number", "date", "due", "currency", "type", "taxable", "exempt", "rate", "vat", "account", "vat_account")}}
-        v = f["vars"]; v["date"].set(datetime.now().strftime("%d-%m-%Y")); v["currency"].set("USD"); v["type"].set("Purchases"); v["rate"].set("11"); v["account"].set("601100000"); v["vat_account"].set("44210")
+        v = f["vars"]; v["date"].set(self.fiscal_today()); v["currency"].set("USD"); v["type"].set("Purchases"); v["rate"].set("11"); v["account"].set("601100000"); v["vat_account"].set("44210")
         f["department"] = tk.StringVar(); f["project"] = tk.StringVar(); f["vat_typed"] = False; self.purchase_form = f
         f["use"] = tk.StringVar(value="Mixed (partial deduction)"); f["reverse"] = tk.BooleanVar(value=False)
         f["discount_percent"] = tk.StringVar(value="0"); f["discount_amount"] = tk.StringVar(value="0"); f["discount_mode"] = "percent"
@@ -442,7 +446,7 @@ class Stage3Mixin:
         accounts_row = tk.Frame(box, bg=LIGHT); accounts_row.pack(fill="x", pady=(5, 0))
         tk.Label(accounts_row, text="Cost / Asset A/C", bg=LIGHT).pack(side="left"); self.account_search_box(accounts_row, v["account"], 18).pack(side="left", padx=(4, 12))
         tk.Label(accounts_row, text="VAT A/C", bg=LIGHT).pack(side="left"); self.account_search_box(accounts_row, v["vat_account"], 14).pack(side="left", padx=4)
-        totals_box = tk.LabelFrame(page, text="Purchase totals", bg="#dfe6ee", padx=10, pady=6)
+        totals_box = tk.LabelFrame(totals_parent or page, text="Purchase totals", bg="#dfe6ee", padx=10, pady=4)
         r2 = tk.Frame(totals_box, bg="#dfe6ee"); r2.pack(fill="x", pady=(2, 4))
         for label, key, width in (("Taxable Amount", "taxable", 12), ("Exempt Amount", "exempt", 11), ("VAT %", "rate", 5), ("VAT", "vat", 11)):
             tk.Label(r2, text=label, bg="#dfe6ee").pack(side="left"); entry = tk.Entry(r2, textvariable=v[key], width=width); entry.pack(side="left", padx=(4, 8))
@@ -471,7 +475,8 @@ class Stage3Mixin:
         self.action_button(find, "Excel Template", lambda: self.save_invoice_template("purchases")).pack(side="left", padx=3)
         items = tk.LabelFrame(page, text="Purchase Invoice Items · F2 to find an item · double-click a cell to edit", bg=LIGHT, padx=6, pady=2)
         items.pack(fill="x", padx=8, pady=2, after=box)
-        totals_box.pack(fill="x", padx=8, pady=(2, 4), after=items)
+        if totals_parent is not None: totals_box.pack(fill="x", padx=8, pady=(2,4))
+        else: totals_box.pack(fill="x", padx=8, pady=(2,4), after=items)
         wh = tk.Frame(items, bg=LIGHT); wh.pack(fill="x"); f["warehouse"] = tk.StringVar()
         tk.Label(wh, text="Warehouse", bg=LIGHT).pack(side="left"); f["warehouse_box"] = ttk.Combobox(wh, textvariable=f["warehouse"], state="readonly", width=20); f["warehouse_box"].pack(side="left", padx=4)
         self.action_button(wh, "Add Item Line", lambda: self.purchase_item_line()).pack(side="left", padx=6)
@@ -641,7 +646,7 @@ class Stage3Mixin:
     def new_purchase(self):
         f = self.purchase_form; v = f["vars"]; f["id"] = None; f["pdf"] = None; f["vat_typed"] = False
         for key in ("supplier", "number", "due", "taxable", "exempt", "vat"): v[key].set("")
-        v["date"].set(datetime.now().strftime("%d-%m-%Y")); v["rate"].set("11"); v["type"].set("Purchases"); f["department"].set("(none)"); f["project"].set("(none)")
+        v["date"].set(self.fiscal_today()); v["rate"].set("11"); v["type"].set("Purchases"); f["department"].set("(none)"); f["project"].set("(none)")
         f["use"].set("Mixed (partial deduction)"); f["reverse"].set(False)
         f["discount_mode"]="percent"; f["discount_percent"].set("0"); f["discount_amount"].set("0")
         f["pdf_label"].config(text="No PDF", fg=MUTED); f["total"].config(text="TOTAL TTC: 0.00"); f["tree"].selection_remove(*f["tree"].selection())
@@ -907,7 +912,7 @@ class Stage3Mixin:
     def build_expenses_page(self, page):
         f = {"id": None, "pdf": None, "vars": {k: tk.StringVar() for k in ("date", "description", "category", "currency", "with_vat", "without_vat", "vat", "account", "no_vat_account",
                                                                           "vat_account", "payment_account", "reference")}}
-        v = f["vars"]; v["date"].set(datetime.now().strftime("%d-%m-%Y")); v["currency"].set("USD"); v["category"].set("General")
+        v = f["vars"]; v["date"].set(self.fiscal_today()); v["currency"].set("USD"); v["category"].set("General")
         v["account"].set("601100000"); v["no_vat_account"].set("601100001"); v["vat_account"].set("44216"); v["payment_account"].set("531")
         f["department"] = tk.StringVar(); f["project"] = tk.StringVar(); f["non_deductible"] = tk.BooleanVar(value=False); f["vat_typed"] = False; self.expense_form = f
         f["use"] = tk.StringVar(value="Mixed (partial deduction)")
@@ -966,7 +971,7 @@ class Stage3Mixin:
     def new_expense(self):
         f = self.expense_form; v = f["vars"]; f["id"] = None; f["pdf"] = None; f["vat_typed"] = False
         for key in ("description", "with_vat", "without_vat", "vat", "reference"): v[key].set("")
-        v["date"].set(datetime.now().strftime("%d-%m-%Y")); f["non_deductible"].set(False); f["department"].set("(none)"); f["project"].set("(none)")
+        v["date"].set(self.fiscal_today()); f["non_deductible"].set(False); f["department"].set("(none)"); f["project"].set("(none)")
         f["pdf_label"].config(text="No PDF", fg=MUTED); f["total"].config(text="Total: 0.00"); f["number_label"].config(text="New expense")
 
     def choose_expense_pdf(self):

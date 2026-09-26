@@ -134,7 +134,7 @@ class InventoryMixin:
     # ------------------------------------------------------------ stock documents
     def build_stock_documents_page(self, page):
         self.sd_id = None; self.sd_vars = {k: tk.StringVar() for k in ("type", "number", "date", "warehouse", "to_warehouse", "party", "reference", "notes", "find")}
-        v = self.sd_vars; v["type"].set("Stock Receipt"); v["date"].set(datetime.now().strftime("%d-%m-%Y"))
+        v = self.sd_vars; v["type"].set("Stock Receipt"); v["date"].set(self.fiscal_today())
         bar = tk.Frame(page, bg=LIGHT); bar.pack(fill="x", padx=8, pady=(6, 2))
         tk.Label(bar, text="Type", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
         type_box = ttk.Combobox(bar, textvariable=v["type"], values=list(DOC_TYPES), state="readonly", width=14); type_box.pack(side="left", padx=(4, 8))
@@ -239,7 +239,7 @@ class InventoryMixin:
     def new_stock_document(self):
         self.sd_id = None; v = self.sd_vars
         for key in ("party", "reference", "notes", "find"): v[key].set("")
-        v["date"].set(datetime.now().strftime("%d-%m-%Y"))
+        v["date"].set(self.fiscal_today())
         if not v["warehouse"].get() and getattr(self, "warehouse_rows", None): v["warehouse"].set(f'{self.warehouse_rows[0]["code"]} - {self.warehouse_rows[0]["name"]}')
         self.stock_sheet.clear(); self.add_stock_line(edit=False); self.add_stock_line(edit=False); self.stock_type_changed()
 
@@ -467,7 +467,7 @@ class InventoryMixin:
     # ------------------------------------------------------------ stock in / stock out
     def build_stock_in_out_page(self, page):
         self.sio_vars = {k: tk.StringVar() for k in ("direction", "date", "warehouse", "reason")}
-        self.sio_vars["direction"].set("Stock In (add)"); self.sio_vars["date"].set(datetime.now().strftime("%d-%m-%Y"))
+        self.sio_vars["direction"].set("Stock In (add)"); self.sio_vars["date"].set(self.fiscal_today())
         bar = tk.Frame(page, bg=LIGHT); bar.pack(fill="x", padx=8, pady=6)
         ttk.Combobox(bar, textvariable=self.sio_vars["direction"], values=["Stock In (add)", "Stock Out (remove)"], state="readonly", width=18).pack(side="left", padx=(0, 8))
         tk.Label(bar, text="Date", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.sio_vars["date"], 11).pack(side="left", padx=(4, 8))
@@ -529,7 +529,7 @@ class InventoryMixin:
 
     # ------------------------------------------------------------ physical inventory
     def build_physical_page(self, page):
-        self.pc_id = None; self.pc_vars = {k: tk.StringVar() for k in ("date", "warehouse", "find")}; self.pc_vars["date"].set(datetime.now().strftime("%d-%m-%Y"))
+        self.pc_id = None; self.pc_vars = {k: tk.StringVar() for k in ("date", "warehouse", "find")}; self.pc_vars["date"].set(self.fiscal_today())
         bar = tk.Frame(page, bg=LIGHT); bar.pack(fill="x", padx=8, pady=6)
         tk.Label(bar, text="Count date", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.pc_vars["date"], 11).pack(side="left", padx=(4, 8))
         tk.Label(bar, text="Warehouse", bg=LIGHT).pack(side="left"); self.pc_wh_box = ttk.Combobox(bar, textvariable=self.pc_vars["warehouse"], state="readonly", width=18); self.pc_wh_box.pack(side="left", padx=(4, 8))

@@ -83,7 +83,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting")
+        self.title("Saber Accounting 2.5.1")
         self.geometry("1180x720")
         self.minsize(940, 600)
         self.configure(bg=LIGHT)
@@ -142,6 +142,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def clear(self):
         for child in self.winfo_children(): child.destroy()
+
+    def fiscal_today(self):
+        today=datetime.now()
+        year=int(getattr(self,"current_fiscal_year",today.year))
+        return today.strftime("%d-%m-%Y") if year==today.year else f"01-01-{year}"
 
     def date_entry(self,parent,variable,width=13):
         entry=tk.Entry(parent,textvariable=variable,width=width)
@@ -203,15 +208,23 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(card,text="Fiscal Year",bg="white").grid(row=2,column=0,sticky="w",pady=8); year_box=ttk.Combobox(card,textvariable=year_var,state="readonly",width=34); year_box.grid(row=2,column=1,pady=8)
         def refresh_years(*_args):
             company=labels.get(company_var.get()); years=[str(y["year"]) for y in company.get("years",[])] if company else []
-            year_box["values"]=years; year_var.set(years[-1] if years else "")
+            year_box["values"]=years
+            selected=str(getattr(self,"current_fiscal_year","")) if company and company.get("id")==getattr(self,"current_company",{}).get("id") else ""
+            year_var.set(selected if selected in years else (years[-1] if years else ""))
         company_box.bind("<<ComboboxSelected>>",refresh_years); refresh_years()
+        previous=getattr(self,"current_company",None)
+        if previous:
+            choice=next((label for label,entry in labels.items() if entry["id"]==previous.get("id")),None)
+            if choice: company_var.set(choice); refresh_years()
         def open_company():
             company=labels.get(company_var.get())
             if not company or not year_var.get(): return messagebox.showwarning("Companies","Select a company and fiscal year")
             if not company.get("active",True): return messagebox.showwarning("Companies","This company is inactive")
+            old_company,old_year=self.client.company_id,self.client.fiscal_year
             try:
                 year=int(year_var.get())
                 self.client.select_company_year(company["id"],year)
+                self.client.dashboard()  # Verify the selected year's data before replacing the current screen.
                 self.current_company=company; self.current_fiscal_year=year
                 self.journal_view_year.set(str(year))
                 for name in ("pnl_from_date", "report_from_date", "trial_from_date", "journal_from_date"):
@@ -223,6 +236,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                 self.close_year.set(str(year))
                 self.main_screen()
             except Exception as exc:
+                self.client.company_id,self.client.fiscal_year=old_company,old_year
                 traceback.print_exc()
                 messagebox.showerror("Switch Company / Year",f"Could not open {company['name']} · {year_var.get()}: {exc}")
         tk.Button(card,text="Open Company",command=open_company,bg=GOLD,fg=NAVY,font=("Segoe UI",10,"bold"),border=0,padx=25,pady=8).grid(row=3,column=0,columnspan=2,pady=(18,6))
@@ -850,7 +864,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.sales_items=[]; self.sales_edit_id=None
         header=tk.LabelFrame(self.sales_tab,text="Sales Invoice",bg=LIGHT,padx=6,pady=2)
         header.pack(fill="x",padx=10,pady=(2,1))
-        self.sales_no=tk.StringVar(); self.sales_date=tk.StringVar(value=datetime.now().strftime("%d-%m-%Y"))
+        self.sales_no=tk.StringVar(); self.sales_date=tk.StringVar(value=self.fiscal_today())
         self.sales_party=tk.StringVar(); self.sales_kind=tk.StringVar(value="sales"); self.sales_currency=tk.StringVar(value="USD")
         self.sales_supplier_account=tk.StringVar(value="")
         self.sales_vat_account=tk.StringVar(value="4427")
@@ -949,22 +963,17 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         totals=tk.Frame(bottom,bg=LIGHT); totals.pack(side="right",fill="y",padx=(8,0))
         box=tk.Frame(totals,bg="#dfe6ee",padx=8,pady=2); box.pack(side="top",fill="x")
         self.sales_total_labels={}
-        for row,(key,caption) in enumerate((("Total","Total"),),start=1):
-            label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key=="Total HT" else "normal"))
-            label.grid(row=row,column=0,sticky="e",padx=4)
-            value=tk.Label(box,text="0.00",bg="#dfe6ee",width=16,anchor="e",font=("Segoe UI",9,"bold" if key=="Total HT" else "normal"))
-            value.grid(row=row,column=1,sticky="e"); self.sales_total_labels[key]=value
-        discount=tk.Frame(box,bg="#dfe6ee"); discount.grid(row=2,column=0,columnspan=2,sticky="e",pady=(2,2))
+        for key,caption,row,column in (("Total","Total",0,0),("Discount","Discount",0,1),("Total HT","Total HT (after discount)",0,2),
+                                       ("VAT","VAT 11%",1,0),("TOTAL","TOTAL TTC",1,1)):
+            label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key=="TOTAL" else "normal"))
+            label.grid(row=row,column=column*2,sticky="e",padx=(8,3),pady=1)
+            if key=="VAT": self.sales_vat_caption=label
+            value=tk.Label(box,text="0.00",bg="#dfe6ee",width=12,anchor="e",font=("Segoe UI",10 if key=="TOTAL" else 9,"bold" if key=="TOTAL" else "normal"))
+            value.grid(row=row,column=column*2+1,sticky="e",padx=(0,6)); self.sales_total_labels[key]=value
+        discount=tk.Frame(box,bg="#dfe6ee"); discount.grid(row=1,column=4,columnspan=2,sticky="e",pady=1)
         tk.Label(discount,text="Discount %",bg="#dfe6ee").pack(side="left"); e1=tk.Entry(discount,textvariable=self.sales_discount_percent,width=5); e1.pack(side="left",padx=2)
         tk.Label(discount,text="or amount",bg="#dfe6ee").pack(side="left"); e2=tk.Entry(discount,textvariable=self.sales_discount_amount,width=9); e2.pack(side="left",padx=2)
         for entry in (e1,e2): entry.bind("<KeyRelease>",lambda _event:self.update_sales_totals())
-        for row,(key,caption) in enumerate((("Discount","Discount"),("Total HT","Total HT (after discount)"),("VAT","VAT 11%"),("TOTAL","TOTAL TTC")),start=3):
-            if caption:
-                label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key=="TOTAL" else "normal"))
-                label.grid(row=row,column=0,sticky="e",padx=4)
-                if key=="VAT": self.sales_vat_caption=label
-            value=tk.Label(box,text="0.00",bg="#dfe6ee",width=16,anchor="e",font=("Segoe UI",10 if key=="TOTAL" else 9,"bold" if key=="TOTAL" else "normal"))
-            value.grid(row=row,column=1,sticky="e"); self.sales_total_labels[key]=value
         self.sales_totals=tk.Label(totals,text="",bg=LIGHT,fg=NAVY); self.sales_totals.pack(side="top",anchor="e",padx=8,pady=3)
         self.sales_words=tk.Label(bottom,text="",bg=LIGHT,fg="#5f6b76",anchor="w",justify="left",wraplength=560)
         self.sales_words.pack(side="left",fill="x",expand=True,padx=4,pady=(3,0))
@@ -1133,7 +1142,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.sales_category_box["values"]=["Goods","Products","Services"]
         self.sales_revenue_caption.config(text="Revenue Account")
         self.sales_supplier_side.set("D - Debit"); self.sales_vat_side.set("C - Credit"); self.sales_expense_side.set("C - Credit")
-        self.sales_payment_method.set("On Account (Not Cash)"); self.sales_date.set(datetime.now().strftime("%d-%m-%Y"))
+        self.sales_payment_method.set("On Account (Not Cash)"); self.sales_date.set(self.fiscal_today())
         self.sales_department.set("(none)"); self.sales_project.set("(none)"); self.sales_treatment.set("Taxable 11%")
         self.sales_discount_percent.set("0"); self.sales_discount_amount.set("0")
         self.sales_category_changed()

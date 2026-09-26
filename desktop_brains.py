@@ -129,7 +129,7 @@ class BrainsScreensMixin:
         for text, fmt in (("Excel", "xlsx"), ("PDF", "pdf"), ("Print", "print")):
             tk.Button(bar, text=text, command=lambda f=fmt: self.manual_entry_report(f), bg="white", fg=NAVY, border=0, padx=10).pack(side="right", padx=2, pady=4)
         header = tk.Frame(page, bg=LIGHT); header.pack(fill="x", padx=10, pady=6)
-        self.manual_type = tk.StringVar(value=VOUCHER_TYPES[0]); self.manual_no = tk.StringVar(); self.manual_date = tk.StringVar(value=datetime.now().strftime("%d-%m-%Y"))
+        self.manual_type = tk.StringVar(value=VOUCHER_TYPES[0]); self.manual_no = tk.StringVar(); self.manual_date = tk.StringVar(value=self.fiscal_today())
         self.manual_currency = tk.StringVar(value="USD"); self.manual_find = tk.StringVar()
         tk.Label(header, text="Type", bg=LIGHT).pack(side="left"); ttk.Combobox(header, textvariable=self.manual_type, values=VOUCHER_TYPES, state="readonly", width=17).pack(side="left", padx=(4, 8))
         tk.Label(header, text="Number", bg=LIGHT).pack(side="left")
@@ -334,7 +334,7 @@ class BrainsScreensMixin:
     def new_manual_voucher(self, confirm=True):
         if confirm and self.voucher_lines() and not self.editing_voucher_id and not messagebox.askyesno("Journal Voucher", "Start a new voucher? Lines that are not saved will be cleared."): return
         self.editing_voucher_id = None; self.voucher_sheet.clear(); self.manual_details.delete("1.0", "end"); self.manual_find.set("")
-        self.manual_type.set(VOUCHER_TYPES[0]); self.manual_currency.set("USD"); self.manual_date.set(datetime.now().strftime("%d-%m-%Y"))
+        self.manual_type.set(VOUCHER_TYPES[0]); self.manual_currency.set("USD"); self.manual_date.set(self.fiscal_today())
         self._account_cache = None; self.set_next_manual_voucher_number()
         for _ in range(2): self.voucher_sheet.insert(self.new_voucher_line())
         self.update_manual_totals(); self.manual_line_info.config(text="New voucher")
@@ -393,13 +393,14 @@ class BrainsScreensMixin:
             return messagebox.showerror("Unbalanced Journal Voucher", f"Debit: {debit:,.2f}\nCredit: {credit:,.2f}\nStill needed: {needed} {self.manual_currency.get()}\n\nDebit must equal Credit before saving.")
         details = self.manual_details.get("1.0", "end").strip()
         if not details: details = f"Journal Voucher {self.manual_no.get().strip()}"
+        detail_lines=details.splitlines()
         try: entry_date = datetime.strptime(self.manual_date.get().strip(), "%d-%m-%Y").strftime("%d-%m-%Y")
         except ValueError: return messagebox.showwarning("Journal Voucher", "Enter the date as 8 digits: DDMMYYYY")
         voucher = {"entry_number": self.manual_no.get().strip(), "entry_date": entry_date, "description": details, "currency": self.manual_currency.get(),
                    "branch": self.manual_branch.get(), "voucher_type": self.manual_type.get()[:2]}
         payload = [{"account_code": r["account"], "line_currency": r["line_currency"], "side": r["side"], "amount": r["amount"], "rate_lbp": r["rate_lbp"], "rate_usd": r["rate_usd"],
                     "due_date": r.get("due_date") or "", "reference": r.get("reference") or "", "department": r.get("department") or "", "project": r.get("project") or "",
-                    "description": (r.get("description") or details.splitlines()[0])[:120]} for r in lines]
+                    "description": (r.get("description") or detail_lines[min(index,len(detail_lines)-1)])[:120]} for index,r in enumerate(lines)]
         try: saved = self.client.save_journal_voucher(voucher, payload, self.editing_voucher_id)
         except Exception as exc: return messagebox.showerror("Journal Voucher", str(exc))
         messagebox.showinfo("Journal Voucher", f'Voucher {saved["voucher"]["entry_number"]} saved')
