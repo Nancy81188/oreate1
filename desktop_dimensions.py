@@ -141,7 +141,7 @@ class DimensionsMixin:
         bar = tk.Frame(page, bg=LIGHT); bar.pack(fill="x", padx=10, pady=8)
         tk.Label(bar, text="Year", bg=LIGHT).pack(side="left"); tk.Entry(bar, textvariable=self.budget_year, width=6).pack(side="left", padx=(4, 10))
         tk.Label(bar, text="Currency", bg=LIGHT).pack(side="left")
-        ttk.Combobox(bar, textvariable=self.budget_currency, values=["USD", "LBP", "EUR", "AED"], state="readonly", width=6).pack(side="left", padx=(4, 10))
+        ttk.Combobox(bar, textvariable=self.budget_currency, values=self.currency_codes, state="readonly", width=6).pack(side="left", padx=(4, 10))
         self.dimension_selectors(bar, self.budget_department, self.budget_project)
         tk.Button(bar, text="Load", command=self.load_budget, bg=GOLD, fg=NAVY, border=0, padx=14, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
         tk.Button(bar, text="Save Budget", command=self.save_budget, bg=NAVY, fg="white", border=0, padx=14, pady=6).pack(side="left", padx=3)

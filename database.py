@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import shutil
 import sqlite3
@@ -128,6 +129,9 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
  id INTEGER PRIMARY KEY, rate_date TEXT NOT NULL, from_currency TEXT NOT NULL, to_currency TEXT NOT NULL,
  rate TEXT NOT NULL, created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL,
  UNIQUE(rate_date,from_currency,to_currency)
+);
+CREATE TABLE IF NOT EXISTS currencies (
+ code TEXT PRIMARY KEY, name TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS employees (
  id INTEGER PRIMARY KEY, employee_number TEXT NOT NULL UNIQUE, full_name TEXT NOT NULL,
@@ -285,6 +289,8 @@ class Database:
     def initialize(self, admin_password):
         with self.connect() as db:
             db.executescript(SCHEMA)
+            db.executemany("INSERT OR IGNORE INTO currencies(code,name) VALUES(?,?)",
+                           (("USD","US Dollar"),("LBP","Lebanese Pound"),("EUR","Euro"),("AED","UAE Dirham")))
             invoice_columns = {row["name"] for row in db.execute("PRAGMA table_info(invoices)")}
             if "currency_issue" not in invoice_columns:
                 db.execute("ALTER TABLE invoices ADD COLUMN currency_issue TEXT NOT NULL DEFAULT ''")
@@ -732,9 +738,27 @@ class Database:
     def settings(self):
         with self.connect() as db: return {row["key"]:row["value"] for row in db.execute("SELECT key,value FROM app_settings")}
 
+    def currencies(self):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT code,name FROM currencies ORDER BY CASE code WHEN 'USD' THEN 0 WHEN 'LBP' THEN 1 WHEN 'EUR' THEN 2 WHEN 'AED' THEN 3 ELSE 4 END,code")]
+
+    def currency_codes(self):
+        return {item["code"] for item in self.currencies()}
+
+    def save_currency(self, code, name, user_id):
+        code=str(code or "").strip().upper(); name=str(name or "").strip()
+        if not re.fullmatch(r"[A-Z]{3}",code): raise ValueError("Currency code must be three letters")
+        if not name or len(name)>80: raise ValueError("Enter a currency name up to 80 characters")
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM currencies WHERE code=?",(code,)).fetchone(): raise ValueError(f"Currency {code} already exists")
+            db.execute("INSERT INTO currencies(code,name) VALUES(?,?)",(code,name))
+            db.execute("INSERT INTO audit_log(user_id,action,entity,details,created_at) VALUES(?,?,?,?,?)",
+                       (user_id,"create","currency",json.dumps({"code":code,"name":name}),utcnow()))
+        return {"code":code,"name":name}
+
     def save_settings(self, values, user_id):
         allowed={"base_currency","backup_interval_hours","company_name","company_address","company_phone","company_mof","company_nssf","company_email","company_website","company_logo","company_vat_registered","company_vat_date"}
-        if str(values.get("base_currency") or "USD") not in ("USD","EUR","LBP","AED"): raise ValueError("Invalid base currency")
+        if str(values.get("base_currency") or "USD") not in self.currency_codes(): raise ValueError("Invalid base currency")
         try: hours=int(values.get("backup_interval_hours",24))
         except Exception as exc: raise ValueError("Backup interval must be a number") from exc
         if hours<1 or hours>720: raise ValueError("Backup interval must be between 1 and 720 hours")
@@ -1026,7 +1050,7 @@ class Database:
         date=str(item.get("entry_date") or "").strip(); self._assert_period_open(date)
         description=str(item.get("description") or "").strip() or f"Journal Voucher {str(item.get('entry_number') or '').strip() or 'Entry'}"
         currency=str(item.get("currency") or "USD").upper()
-        if not date or not description or currency not in ("USD","EUR","LBP","AED"): raise ValueError("Enter voucher date, description, and currency")
+        if not date or not description or currency not in self.currency_codes(): raise ValueError("Enter voucher date, description, and currency")
         if not isinstance(lines,list) or len(lines)<2: raise ValueError("Journal Voucher requires at least two lines")
         normalized=[]; total_debit=Decimal("0"); total_credit=Decimal("0")
         voucher_type=str(item.get("voucher_type") or "01").strip()[:2] or "01"
@@ -1084,7 +1108,7 @@ class Database:
         side=str(line.get("side")).strip().upper()[:1]
         if side not in ("D","C"): raise ValueError(f"Line {index}: D/C must be D or C")
         currency=str(line.get("line_currency") or voucher_currency).upper()
-        if currency not in ("USD","EUR","LBP","AED"): raise ValueError(f"Line {index}: invalid currency")
+        if currency not in self.currency_codes(): raise ValueError(f"Line {index}: invalid currency")
         try:
             amount=Decimal(str(line.get("amount")).replace(",","")); suggested=self.suggested_rates(currency,date)
             rate_lbp=Decimal(str(line.get("rate_lbp") or suggested["rate_lbp"]).replace(",","")); rate_usd=Decimal(str(line.get("rate_usd") or suggested["rate_usd"]).replace(",",""))
@@ -1129,7 +1153,7 @@ class Database:
         self._assert_period_open(item.get("invoice_date"))
         entry_type=self._entry_type(item); kind = "sale" if entry_type=="sales" else "purchase"
         currency = str(item["currency"]).upper()
-        if currency not in ("USD", "EUR", "LBP", "AED"):
+        if currency not in self.currency_codes():
             raise ValueError("Currency must be USD, EUR, LBP, or AED")
         try:
             raw_subtotal=Decimal(str(item.get("subtotal") or 0))
@@ -1402,7 +1426,7 @@ class Database:
         document_date=str(item.get("document_date") or "").strip(); self._assert_period_open(document_date)
         party_id=int(item.get("party_id") or 0)
         currency=str(item.get("currency") or "USD").upper()
-        if currency not in ("USD","EUR","LBP","AED"): raise ValueError("Invalid currency")
+        if currency not in self.currency_codes(): raise ValueError("Invalid currency")
         amounts={key:Decimal(str(item.get(key) or 0)) for key in ("supplier_invoice_amount","freight","insurance","customs_duties","import_vat","broker_fees")}
         if min(amounts.values())<0: raise ValueError("Case amounts cannot be negative")
         if case_type!="customs":
@@ -1544,7 +1568,7 @@ class Database:
         mof_number=str(item.get("mof_number") or "").strip() or None; address=str(item.get("address") or "").strip() or None; contact_number=str(item.get("contact_number") or "").strip() or None
         requested_account=str(item.get("account_number") or "").strip() or None
         if requested_account and (not requested_account.isdigit() or len(requested_account) not in (4,9)): raise ValueError("Enter the first 4 digits for automatic numbering, or the full 9-digit account number")
-        if not name or kind not in ("customer","supplier","both") or currency not in ("USD","EUR","LBP","AED"):
+        if not name or kind not in ("customer","supplier","both") or currency not in self.currency_codes():
             raise ValueError("Enter a valid name, type, and currency")
         with self.connect() as db:
             if requested_account and len(requested_account)==4:
@@ -1706,7 +1730,7 @@ class Database:
         if (end-start).days>3660: raise ValueError("Exchange-rate period cannot exceed 10 years")
         source=str(item.get("from_currency") or "").upper(); target=str(item.get("to_currency") or "").upper()
         rate=Decimal(str(item.get("rate") or 0))
-        if source not in ("USD","EUR","LBP","AED") or target not in ("USD","EUR","LBP","AED") or source==target or rate<=0:
+        if source not in self.currency_codes() or target not in self.currency_codes() or source==target or rate<=0:
             raise ValueError("Enter two different currencies and a positive rate")
         with self.connect() as db:
             rows=[]; current=start
@@ -1843,15 +1867,18 @@ class Database:
                 return Decimal("1")/Decimal(str(row["rate"])) if row and Decimal(str(row["rate"])) else None
         direct=find_rate(source,target)
         if direct is not None: return amount*direct
-        if source=="USD" and target=="LBP": return amount*Decimal("89500")
-        if source=="LBP" and target=="USD": return amount/Decimal("89500")
-        if source=="EUR" and target=="USD": return amount
-        if source=="EUR" and target=="LBP": return amount*Decimal("89500")
-        if source=="AED" and target=="USD": return amount/Decimal("3.6725")
-        if source=="AED" and target=="LBP": return amount/Decimal("3.6725")*Decimal("89500")
-        if source!="USD" and target!="USD":
-            first=find_rate(source,"USD"); second=find_rate("USD",target)
-            if first is not None and second is not None: return amount*first*second
+        usd_rates={"USD":Decimal("1"),"LBP":Decimal("1")/Decimal("89500"),
+                   "EUR":find_rate("EUR","USD") or Decimal("1"),
+                   "AED":Decimal("1")/Decimal("3.6725")}
+        if source in usd_rates and target in usd_rates:
+            to_usd=find_rate(source,"USD") or usd_rates[source]
+            from_usd=find_rate("USD",target)
+            if from_usd is None: from_usd=Decimal("1")/usd_rates[target]
+            return amount*to_usd*from_usd
+        first=find_rate(source,"USD") if source!="USD" else Decimal("1")
+        second=find_rate("USD",target) if target!="USD" else Decimal("1")
+        if second is None and target in usd_rates: second=Decimal("1")/usd_rates[target]
+        if first is not None and second is not None: return amount*first*second
         raise ValueError(f"No exchange rate available for {source} to {target} on {rate_date}")
 
     def statement_of_account(self, party_id, from_date=None, to_date=None, currency=None, include_opening=True, display_currency=None, branch_id=None):
@@ -2240,7 +2267,7 @@ class Database:
         elif not number: number=self.next_employee_number("1000")
         elif len(number)!=9: raise ValueError("Employee number must contain 9 digits (or enter a 4-digit prefix)")
         currency=str(item.get("currency") or "LBP").upper()
-        if currency not in ("USD","LBP","EUR","AED"): raise ValueError("Invalid employee currency")
+        if currency not in self.currency_codes(): raise ValueError("Invalid employee currency")
         children=max(0,int(item.get("children") or 0)); spouse_works=1 if item.get("spouse_works",False) else 0; active=1 if item.get("active",True) else 0
         employee_group=str(item.get("employee_group") or "employee").lower()
         if employee_group not in ("employee","manager"): raise ValueError("Employee group must be Employee or Manager")
@@ -2703,7 +2730,7 @@ class Database:
     def save_budget(self, item, user_id):
         year = int(item.get("year") or 0); currency = str(item.get("currency") or "USD").upper()
         if year < 2000 or year > 2100: raise ValueError("Enter a valid budget year")
-        if currency not in ("USD", "EUR", "LBP", "AED"): raise ValueError("Invalid budget currency")
+        if currency not in self.currency_codes(): raise ValueError("Invalid budget currency")
         lines = item.get("lines")
         if not isinstance(lines, list): raise ValueError("Budget lines are missing")
         with self.connect() as db:

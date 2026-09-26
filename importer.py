@@ -66,10 +66,11 @@ def _detected_currencies(*values):
                 found.add(currency)
     return found
 
-def _currency(values, columns, default_currency, number_formats=()):
+def _currency(values, columns, default_currency, number_formats=(), allowed_currencies=None):
     """Detect currency from price cells first, then use other evidence."""
     default = str(default_currency or "USD").strip().upper()
-    if default not in SUPPORTED_CURRENCIES:
+    allowed=set(allowed_currencies or SUPPORTED_CURRENCIES)
+    if default not in allowed:
         default = "USD"
 
     currency_cell = ""
@@ -77,8 +78,9 @@ def _currency(values, columns, default_currency, number_formats=()):
     if currency_index is not None and currency_index < len(values):
         currency_cell = str(values[currency_index] or "").strip()
     explicit = _detected_currencies(currency_cell)
+    if currency_cell.upper() in allowed: explicit.add(currency_cell.upper())
 
-    votes = {code: 0 for code in SUPPORTED_CURRENCIES}
+    votes = {code: 0 for code in allowed}
     field_currencies = {}
 
     # The symbols/codes printed in monetary cells are the primary source.
@@ -90,6 +92,9 @@ def _currency(values, columns, default_currency, number_formats=()):
         if index < len(number_formats):
             evidence.append(number_formats[index])
         detected = _detected_currencies(*evidence)
+        for value in evidence:
+            for code in allowed-set(SUPPORTED_CURRENCIES):
+                if re.search(rf"\b{re.escape(code)}\b",str(value),re.IGNORECASE): detected.add(code)
         field_currencies[field] = detected
         for code in detected:
             votes[code] += 1
@@ -132,12 +137,14 @@ def _currency(values, columns, default_currency, number_formats=()):
         return default, "unsupported:" + currency_cell
     return default, "missing_defaulted_to_" + default.lower()
 
-def _decimal(value):
+def _decimal(value, allowed_currencies=None):
     if value in (None, ""):
         return None
     if isinstance(value, str):
         negative = value.strip().startswith("(") and value.strip().endswith(")")
         value = re.sub(r"(?i)USD|EUR|LBP|AED", "", value)
+        for code in allowed_currencies or ():
+            if code not in SUPPORTED_CURRENCIES: value=re.sub(rf"(?i)\b{re.escape(code)}\b","",value)
         value = re.sub(r"L\s*\.\s*L\s*\.?", "", value, flags=re.IGNORECASE)
         value = re.sub(r"[ل]\s*\.\s*[ل]|[د]\s*\.\s*[إ]", "", value)
         value = value.replace("$", "").replace("€", "").replace(",", "").replace(" ", "").strip("() ")
@@ -161,7 +168,7 @@ def _date(value):
             pass
     return text
 
-def read_invoices(path: str | Path, sheet_name: str | None = None, default_currency="USD", default_kind="purchase"):
+def read_invoices(path: str | Path, sheet_name: str | None = None, default_currency="USD", default_kind="purchase", allowed_currencies=None):
     """Read invoices without deleting duplicates; completely blank rows are ignored.
 
     Currency is detected from the Currency and monetary columns. Missing currency
@@ -190,14 +197,14 @@ def read_invoices(path: str | Path, sheet_name: str | None = None, default_curre
             def get(field, default=None):
                 idx = columns.get(field)
                 return values[idx] if idx is not None and idx < len(values) else default
-            subtotal, vat, total = _decimal(get("subtotal")), _decimal(get("vat")), _decimal(get("total"))
+            subtotal, vat, total = (_decimal(get(field),allowed_currencies) for field in ("subtotal","vat","total"))
             if subtotal is not None and vat is None:
                 vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             if total is None and subtotal is not None and vat is not None:
                 total = subtotal + vat
             invoice_number = str(get("invoice_number") or row_number).strip()
             kind = str(get("kind") or default_kind).strip().lower()
-            currency, currency_issue = _currency(values, columns, default_currency, number_formats)
+            currency, currency_issue = _currency(values, columns, default_currency, number_formats, allowed_currencies)
             invoices.append({
                 "invoice_number": invoice_number,
                 "invoice_date": _date(get("date")),

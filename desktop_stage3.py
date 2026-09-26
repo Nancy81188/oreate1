@@ -60,11 +60,11 @@ class Stage3Mixin:
         tk.Label(bar, text="Type", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
         ttk.Combobox(bar, textvariable=self.import_type, values=list(TYPES), state="readonly", width=11).pack(side="left", padx=(4, 10))
         tk.Label(bar, text="Default currency", bg=LIGHT).pack(side="left")
-        ttk.Combobox(bar, textvariable=self.currency, values=["USD", "LBP", "EUR", "AED"], state="readonly", width=6).pack(side="left", padx=(4, 10))
+        ttk.Combobox(bar, textvariable=self.currency, values=self.currency_codes, state="readonly", width=6).pack(side="left", padx=(4, 10))
         tk.Button(bar, text="Choose Excel File", command=self.choose_import, bg=NAVY, fg="white", border=0, padx=14, pady=7).pack(side="left", padx=3)
         tk.Button(bar, text="Choose PDF Invoice(s)", command=self.choose_import_pdfs, bg=NAVY, fg="white", border=0, padx=14, pady=7).pack(side="left", padx=3)
         tk.Label(bar, text="Show", bg=LIGHT).pack(side="left", padx=(12, 2))
-        ttk.Combobox(bar, textvariable=self.import_view_currency, values=["All Currencies", "USD", "EUR", "LBP", "AED"], state="readonly", width=13).pack(side="left")
+        ttk.Combobox(bar, textvariable=self.import_view_currency, values=["All Currencies"]+self.currency_codes, state="readonly", width=13).pack(side="left")
         tk.Button(bar, text="Apply", command=self.populate_import_preview, bg=GOLD, fg=NAVY, border=0, padx=10, pady=5).pack(side="left", padx=4)
         self.file_label = tk.Label(page, text="No file selected. Excel: one invoice per row. PDF: each file becomes one invoice and is attached to it.", bg=LIGHT, fg=MUTED, anchor="w")
         self.file_label.pack(fill="x", padx=12)
@@ -88,7 +88,7 @@ class Stage3Mixin:
             row[key] = value
             if key in ("subtotal", "vat") and row.get("subtotal") is not None and row.get("vat") is not None: row["total"] = round(row["subtotal"] + row["vat"], 2)
         elif key == "currency":
-            if text.upper() not in ("USD", "LBP", "EUR", "AED"): messagebox.showwarning("Import", "Currency must be USD, LBP, EUR or AED"); return False
+            if text.upper() not in self.currency_codes: messagebox.showwarning("Import", "Choose a currency from Settings"); return False
             row[key] = text.upper()
         elif key == "invoice_date": row[key] = _dd(text)
         else: row[key] = text
@@ -104,7 +104,7 @@ class Stage3Mixin:
                          "subtotal": r["with_vat_subtotal"] + r["without_vat_subtotal"], "vat": r["vat"], "total": r["with_vat_subtotal"] + r["without_vat_subtotal"] + r["vat"],
                          "source": f"Excel row {r['source_row']}", "_expense": r} for r in read_expenses(path)]
             else:
-                rows = [{**r, "source": f"Excel row {r['source_row']}"} for r in read_invoices(path, default_currency=self.currency.get(), default_kind=kind)]
+                rows = [{**r, "source": f"Excel row {r['source_row']}"} for r in read_invoices(path, default_currency=self.currency.get(), default_kind=kind,allowed_currencies=self.currency_codes)]
         except Exception as exc: return messagebox.showerror("Import", f"The Excel file could not be read: {exc}")
         self.import_mode = "excel"; self.import_rows = rows; self.file_label.config(text=f"Excel: {path}", fg=NAVY); self.populate_import_preview()
 
@@ -205,7 +205,7 @@ class Stage3Mixin:
         form["party_box"] = ttk.Combobox(row, textvariable=v["party"], width=24); form["party_box"].pack(side="left", padx=(4, 10))
         form["party_box"].bind("<KeyRelease>", lambda e: self.filter_payment_parties(form, e)); form["party_box"].bind("<<ComboboxSelected>>", lambda _e: self.payment_party_chosen(form))
         tk.Label(row, text="Currency", bg=LIGHT).pack(side="left")
-        ttk.Combobox(row, textvariable=v["currency"], values=["USD", "LBP", "EUR", "AED"], state="readonly", width=6).pack(side="left", padx=(4, 10))
+        ttk.Combobox(row, textvariable=v["currency"], values=self.currency_codes, state="readonly", width=6).pack(side="left", padx=(4, 10))
         tk.Label(row, text="Amount", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left"); tk.Entry(row, textvariable=v["amount"], width=14, font=("Segoe UI", 10, "bold")).pack(side="left", padx=4)
         row2 = tk.Frame(box, bg=LIGHT); row2.pack(fill="x", pady=(6, 0))
         tk.Label(row2, text="Method", bg=LIGHT).pack(side="left"); ttk.Combobox(row2, textvariable=v["method"], values=METHODS, state="readonly", width=13).pack(side="left", padx=(4, 10))
@@ -419,15 +419,16 @@ class Stage3Mixin:
         nested = ttk.Notebook(self.purchases_tab); nested.pack(fill="both", expand=True, padx=8, pady=8)
         purchases_outer=tk.Frame(nested,bg=LIGHT)
         purchase_totals=tk.Frame(purchases_outer,bg=LIGHT); purchase_totals.pack(side="bottom",fill="x")
-        purchase_scroll,purchases=self.scrollable_page(purchases_outer)
-        purchase_scroll.pack(side="top",fill="both",expand=True)
+        purchase_costs=tk.Frame(nested,bg=LIGHT)
         expenses_outer, expenses = self.scrollable_page(nested)
-        nested.add(purchases_outer, text="Purchases"); nested.add(expenses_outer, text="Expenses")
-        self.build_purchases_page(purchases,purchase_totals); self.build_expenses_page(expenses)
+        nested.add(purchases_outer, text="Purchase Invoice")
+        nested.add(purchase_costs,text="Cost on Purchase")
+        nested.add(expenses_outer, text="Expenses")
+        self.build_purchases_page(purchases_outer,purchase_totals,purchase_costs); self.build_expenses_page(expenses)
         self.load_purchases(); self.load_expenses()
 
     # ---- purchases
-    def build_purchases_page(self, page, totals_parent=None):
+    def build_purchases_page(self, page, totals_parent=None, cost_parent=None):
         f = {"id": None, "pdf": None, "vars": {k: tk.StringVar() for k in ("supplier", "number", "date", "due", "currency", "type", "taxable", "exempt", "rate", "vat", "account", "vat_account")}}
         v = f["vars"]; v["date"].set(self.fiscal_today()); v["currency"].set("USD"); v["type"].set("Purchases"); v["rate"].set("11"); v["account"].set("601100000"); v["vat_account"].set("44210")
         f["department"] = tk.StringVar(); f["project"] = tk.StringVar(); f["vat_typed"] = False; self.purchase_form = f
@@ -441,7 +442,7 @@ class Stage3Mixin:
         tk.Label(r1, text="Supplier Invoice No.", bg=LIGHT).pack(side="left"); tk.Entry(r1, textvariable=v["number"], width=14).pack(side="left", padx=(4, 8))
         tk.Label(r1, text="Date", bg=LIGHT).pack(side="left"); self.date_entry(r1, v["date"], 11).pack(side="left", padx=(4, 8))
         tk.Label(r1, text="Due", bg=LIGHT).pack(side="left"); self.date_entry(r1, v["due"], 11).pack(side="left", padx=(4, 8))
-        ttk.Combobox(r1, textvariable=v["currency"], values=["USD", "LBP", "EUR", "AED"], state="readonly", width=5).pack(side="left", padx=4)
+        ttk.Combobox(r1, textvariable=v["currency"], values=self.currency_codes, state="readonly", width=5).pack(side="left", padx=4)
         ttk.Combobox(r1, textvariable=v["type"], values=["Purchases", "Assets"], state="readonly", width=9).pack(side="left", padx=4)
         accounts_row = tk.Frame(box, bg=LIGHT); accounts_row.pack(fill="x", pady=(5, 0))
         tk.Label(accounts_row, text="Cost / Asset A/C", bg=LIGHT).pack(side="left"); self.account_search_box(accounts_row, v["account"], 18).pack(side="left", padx=(4, 12))
@@ -474,7 +475,7 @@ class Stage3Mixin:
         self.action_button(find, "Import Excel", self.import_purchases_excel).pack(side="left", padx=(12, 3))
         self.action_button(find, "Excel Template", lambda: self.save_invoice_template("purchases")).pack(side="left", padx=3)
         items = tk.LabelFrame(page, text="Purchase Invoice Items · F2 to find an item · double-click a cell to edit", bg=LIGHT, padx=6, pady=2)
-        items.pack(fill="x", padx=8, pady=2, after=box)
+        items.pack(fill="both",expand=True,padx=8,pady=2,after=box)
         if totals_parent is not None: totals_box.pack(fill="x", padx=8, pady=(2,4))
         else: totals_box.pack(fill="x", padx=8, pady=(2,4), after=items)
         wh = tk.Frame(items, bg=LIGHT); wh.pack(fill="x"); f["warehouse"] = tk.StringVar()
@@ -486,7 +487,7 @@ class Stage3Mixin:
             ("unit", "Unit", 60, "center"), ("unit_cost", "Unit Price", 95, "e"), ("discount_percent", "Discount %", 85, "e"), ("total", "Net", 105, "e")],
             ["item_code", "name", "quantity", "unit", "unit_cost", "discount_percent"], self.purchase_item_changed, height=9)
         f["items_sheet"].tree.bind("<F2>", lambda _e: self.purchase_item_lookup())
-        f["items_sheet"].tree.master.pack_configure(expand=False, fill="x")
+        f["items_sheet"].tree.master.pack_configure(expand=True,fill="both")
         r4 = tk.Frame(box, bg=LIGHT); r4.pack(fill="x", pady=(5, 0))
         f["pdf_label"] = tk.Label(r4, text="No PDF", bg=LIGHT, fg=MUTED)
         self.action_button(r4, "New", self.new_purchase).pack(side="left", padx=(0, 3))
@@ -496,7 +497,7 @@ class Stage3Mixin:
         self.action_button(r4, "AI Read PDF", self.ai_read_purchase_pdf).pack(side="left", padx=3)
         self.action_button(r4, "Attachments", lambda: self.purchase_attachments()).pack(side="left", padx=3)
         f["pdf_label"].pack(side="left", padx=8)
-        cost = tk.LabelFrame(page, text="Cost on Purchase (customs / freight / insurance) for the selected purchase", bg=LIGHT, padx=8, pady=4); cost.pack(fill="x", padx=8, pady=3)
+        cost = tk.LabelFrame(cost_parent or page, text="Cost on Purchase (customs / freight / insurance) for the selected purchase", bg=LIGHT, padx=8, pady=4); cost.pack(fill="x", padx=8, pady=3)
         f["lc"] = {k: tk.StringVar() for k in ("freight", "insurance", "customs_duties", "broker_fees", "other_costs", "import_vat", "customs_declaration_no", "party_name")}
         f["lc"]["party_name"].set("Lebanese Customs")
         c1 = tk.Frame(cost, bg=LIGHT); c1.pack(fill="x")
@@ -922,7 +923,7 @@ class Stage3Mixin:
         tk.Label(r1, text="Date", bg=LIGHT).pack(side="left"); self.date_entry(r1, v["date"], 11).pack(side="left", padx=(4, 8))
         tk.Label(r1, text="Description", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left"); tk.Entry(r1, textvariable=v["description"], width=32).pack(side="left", padx=(4, 8))
         tk.Label(r1, text="Category", bg=LIGHT).pack(side="left"); tk.Entry(r1, textvariable=v["category"], width=13).pack(side="left", padx=(4, 8))
-        ttk.Combobox(r1, textvariable=v["currency"], values=["USD", "LBP", "EUR", "AED"], state="readonly", width=5).pack(side="left", padx=4)
+        ttk.Combobox(r1, textvariable=v["currency"], values=self.currency_codes, state="readonly", width=5).pack(side="left", padx=4)
         tk.Label(r1, text="Reference", bg=LIGHT).pack(side="left"); tk.Entry(r1, textvariable=v["reference"], width=13).pack(side="left", padx=4)
         r2 = tk.Frame(box, bg=LIGHT); r2.pack(fill="x", pady=(5, 0))
         for label, key, width in (("With VAT (before VAT)", "with_vat", 12), ("Without VAT", "without_vat", 11), ("VAT", "vat", 10)):

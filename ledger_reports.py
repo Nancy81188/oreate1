@@ -13,7 +13,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from database import display_date, iso_date
 
 ZERO = Decimal("0")
-CURRENCY_CHOICES = ("account", "LBP", "USD")
+CURRENCY_CHOICES = ("account", "LBP", "USD", "EUR", "AED")
 CLASS_NAMES = {"1": "Capital accounts", "2": "Fixed assets", "3": "Inventory", "4": "Third-party accounts", "5": "Financial accounts",
                "6": "Expenses", "7": "Revenues", "8": "Special results", "9": "Analytical accounts"}
 
@@ -89,6 +89,17 @@ def _load_lines(db, options):
                     try: rate_cache[key] = db._converted_amount(Decimal("1"), row["currency"], target, row["iso_date"])
                     except ValueError: rate_cache[key] = None
                 row["signed"][target] = signed * rate_cache[key] if rate_cache[key] is not None else ZERO
+        for target in (options.get("first_column"),options.get("second_column")):
+            if target in (None,"account","LBP","USD","none") or target in row["signed"]: continue
+            if row["account_currency"] == target:
+                row["signed"][target] = row["signed"]["account"]
+            elif signed == ZERO:
+                row["signed"][target] = ZERO
+            else:
+                key=(row["account_currency"],target,row["iso_date"])
+                if key not in rate_cache:
+                    rate_cache[key]=db._converted_amount(Decimal("1"),row["account_currency"],target,row["iso_date"])
+                row["signed"][target]=row["signed"]["account"]*rate_cache[key]
         row["due"] = row.get("due_date") or row.get("invoice_due_date") or ""
         row["ref"] = row.get("reference") or (row.get("invoice_number") if row.get("invoice_number") and row["invoice_number"] != row["entry_number"] else "") or ""
         kept.append(row)
@@ -105,8 +116,9 @@ def build_account_report(db, options):
     date_to = iso_date(options["date_to"]) if options.get("date_to") else "9999-12-31"
     if date_from > date_to: raise ValueError("Date From cannot be after Date To")
     first = options.get("first_column", "account"); second = options.get("second_column", "LBP")
-    if first not in CURRENCY_CHOICES: raise ValueError("1st column must be account currency, LBP or USD")
-    if second not in CURRENCY_CHOICES + ("none",): raise ValueError("2nd column must be account currency, LBP, USD or none")
+    available={"account",*db.currency_codes()}
+    if first not in available: raise ValueError("Choose a valid 1st column currency")
+    if second not in available|{"none"}: raise ValueError("Choose a valid 2nd column currency")
     if second == first: second = "none"
     columns = [first] + ([second] if second != "none" else [])
     detailed = _truthy(options.get("detailed", False)); summary = _truthy(options.get("summary", False))
@@ -156,7 +168,7 @@ def build_account_report(db, options):
     items = [a for a in accounts.values() if not (non_zero and all(abs(a["closing"][c]) < Decimal("0.005") for c in columns))
              and (a["lines"] or any(a["opening"][c] for c in columns))]
     items.sort(key=lambda a: (a["currency"], a["name"].casefold()) if by_description else (a["currency"], _key(a["code"])))
-    label = {"account": "", "LBP": " (LBP)", "USD": " (USD)"}
+    label = {"account": "", **{code:f" ({code})" for code in db.currency_codes()}}
     def money_headers(prefix=""):
         result = []
         for c in columns:

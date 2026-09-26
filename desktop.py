@@ -83,9 +83,12 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.5.1")
+        self.title("Saber Accounting 2.8.0")
         self.geometry("1180x720")
         self.minsize(940, 600)
+        if sys.platform == "win32":
+            try: self.state("zoomed")
+            except tk.TclError: pass
         self.configure(bg=LIGHT)
         self.language = tk.StringVar(value="en")
         self.client = None
@@ -302,6 +305,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                      "sio_sheet","pc_sheet","pc_find_box","sio_wh_box","pc_wh_box","cat_tree","item_boxes","ir_subcategory_box","ir_unit_box","ir_supplier_box","_all_accounts"):
             self.__dict__.pop(name,None)
         self.clear(); lang=self.language.get()
+        try: self.currency_codes=[row["code"] for row in self.client.currencies()]
+        except Exception: self.currency_codes=["USD","LBP","EUR","AED"]
         top=tk.Frame(self,bg=NAVY,height=58); top.pack(fill="x"); top.pack_propagate(False)
         try:
             self.header_logo = tk.PhotoImage(file=str(resource_path("assets/Saber_for_Audit_logo.png"))).subsample(18, 18)
@@ -309,7 +314,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         except Exception:
             pass
         tk.Label(top,text=tr(lang,"title"),bg=NAVY,fg="white",font=("Segoe UI",16,"bold")).pack(side="left",padx=8,pady=12)
-        tk.Label(top,text="11% VAT  |  USD · LBP · EUR · AED",bg=NAVY,fg=GOLD,font=("Segoe UI",10,"bold")).pack(side="right",padx=28)
+        tk.Label(top,text="11% VAT  |  " + " · ".join(self.currency_codes[:5]),bg=NAVY,fg=GOLD,font=("Segoe UI",10,"bold")).pack(side="right",padx=28)
         tk.Button(top,text="Switch Company / Year",command=self.company_selection_screen,bg=GOLD,fg=NAVY,border=0,padx=10,pady=5).pack(side="right",padx=5)
         self.alerts_button=tk.Button(top,text="Document Alerts",command=self.show_document_alerts,bg=NAVY,fg="white",border=1,padx=10,pady=5)
         self.alerts_button.pack(side="right",padx=5)
@@ -342,7 +347,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         notebook.bind("<<NotebookTabChanged>>",lambda _event:self.highlight_main_tab())
         self.highlight_main_tab()
         tk.Label(filter_bar,text="Show currency:",bg=LIGHT,font=("Segoe UI",10,"bold")).pack(side="left")
-        currency_filter=ttk.Combobox(filter_bar,textvariable=self.view_currency,values=["All Currencies","USD","EUR","LBP","AED"],state="readonly",width=16)
+        currency_filter=ttk.Combobox(filter_bar,textvariable=self.view_currency,values=["All Currencies"]+self.currency_codes,state="readonly",width=16)
         currency_filter.pack(side="left",padx=8); currency_filter.bind("<<ComboboxSelected>>",lambda _event:self.currency_changed())
         builders=[self.build_dashboard,self.build_invoices,self.build_sales_invoice,self.build_manual,self.build_import,self.build_parties,self.build_transactions,self.build_purchases_expenses,self.build_inventory]
         if self.can_use("payroll"): builders.append(self.build_payroll)
@@ -489,13 +494,15 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         return tree
 
     def build_dashboard(self):
-        self.dashboard_tree=self.table(self.dashboard_tab,[("currency","Currency",85),("sales","Sales",120),("purchases","Purchases",120),("expenses","Expenses",120),("profit","Net Profit",120),("receivables","Receivables",120),("payables","Payables",120),("overdue","Overdue",80)])
-        self.dashboard_chart=tk.Canvas(self.dashboard_tab,height=150,bg="white",highlightthickness=0); self.dashboard_chart.pack(fill="x",padx=10,pady=(0,8))
-        actions=tk.Frame(self.dashboard_tab,bg=LIGHT); actions.pack(pady=(0,10))
+        actions=tk.Frame(self.dashboard_tab,bg=LIGHT); actions.pack(fill="x",padx=12,pady=(8,6))
+        tk.Label(actions,text="Company overview",bg=LIGHT,fg=NAVY,font=("Segoe UI",12,"bold")).pack(side="left",padx=(0,16))
         self.action_button(actions,tr(self.language.get(),"refresh"),self.load_dashboard).pack(side="left",padx=4)
         self.action_button(actions,"Export Excel",lambda:self.export_report("dashboard","xlsx")).pack(side="left",padx=4)
         self.action_button(actions,"Export PDF",lambda:self.export_report("dashboard","pdf")).pack(side="left",padx=4)
         self.action_button(actions,"Print",lambda:self.export_report("dashboard","print")).pack(side="left",padx=4)
+        self.dashboard_cards=tk.Frame(self.dashboard_tab,bg=LIGHT); self.dashboard_cards.pack(fill="x",padx=12)
+        self.dashboard_chart=tk.Canvas(self.dashboard_tab,height=105,bg="white",highlightthickness=0)
+        self.dashboard_chart.pack(fill="x",padx=12,pady=(8,4))
         self.load_dashboard()
 
     def load_dashboard(self):
@@ -503,17 +510,31 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         except Exception as exc: return messagebox.showerror("Error",str(exc))
         selected=self.view_currency.get()
         rows=[r for r in rows if selected=="All Currencies" or r["currency"]==selected]
-        self.dashboard_rows=rows; self.dashboard_tree.delete(*self.dashboard_tree.get_children())
-        for r in rows: self.dashboard_tree.insert("", "end", values=(r["currency"],f'{r["sales"]:,.2f}',f'{r["purchases"]:,.2f}',f'{r["expenses"]:,.2f}',f'{r["profit"]:,.2f}',f'{r["receivables"]:,.2f}',f'{r["payables"]:,.2f}',r["overdue"]))
+        self.dashboard_rows=rows
+        for child in self.dashboard_cards.winfo_children(): child.destroy()
+        if not rows:
+            tk.Label(self.dashboard_cards,text="No activity for this currency yet.",bg=LIGHT,fg="#506274",font=("Segoe UI",10)).pack(anchor="w",padx=10,pady=12)
+        labels=(("sales","Sales"),("purchases","Purchases"),("expenses","Expenses"),("profit","Net profit"),
+                ("receivables","Receivables"),("payables","Payables"),("overdue","Overdue invoices"))
+        for index,r in enumerate(rows):
+            card=tk.LabelFrame(self.dashboard_cards,text=r["currency"],bg="white",fg=NAVY,font=("Segoe UI",10,"bold"),padx=10,pady=6)
+            card.grid(row=index//2,column=index%2,sticky="ew",padx=4,pady=3)
+            for col,(key,title) in enumerate(labels):
+                line=tk.Frame(card,bg="white"); line.grid(row=col//4,column=col%4,sticky="ew",padx=5,pady=3)
+                tk.Label(line,text=title,bg="white",fg="#506274",font=("Segoe UI",8)).pack(anchor="w")
+                value=str(r[key]) if key=="overdue" else f'{r[key]:,.2f}'
+                tk.Label(line,text=value,bg="white",fg=NAVY,font=("Segoe UI",10,"bold"),anchor="w").pack(anchor="w")
+            for col in range(4): card.grid_columnconfigure(col,weight=1)
+        for col in range(2): self.dashboard_cards.grid_columnconfigure(col,weight=1)
         self.draw_dashboard_chart([r for r in data.get("monthly",[]) if selected=="All Currencies" or r["currency"]==selected])
 
     def draw_dashboard_chart(self,rows):
-        canvas=self.dashboard_chart; canvas.delete("all"); canvas.update_idletasks(); width=max(canvas.winfo_width(),700); height=145
-        values=[float(row["amount"] or 0) for row in rows[-12:]]; maximum=max(values or [1])
+        canvas=self.dashboard_chart; canvas.delete("all"); canvas.update_idletasks(); width=max(canvas.winfo_width(),700); height=100
+        values=[float(row["amount"] or 0) for row in rows[-12:]]; maximum=max([1,*values])
         canvas.create_text(10,10,anchor="nw",text="Monthly Sales / Purchases",fill=NAVY,font=("Segoe UI",10,"bold"))
         for index,row in enumerate(rows[-12:]):
             x=20+index*max(48,(width-40)//max(1,min(12,len(rows))))
-            bar_height=(float(row["amount"] or 0)/maximum)*90
+            bar_height=(float(row["amount"] or 0)/maximum)*56
             color="#1F6E8C" if row["kind"]=="sale" else GOLD
             canvas.create_rectangle(x,height-25-bar_height,x+24,height-25,fill=color,outline="")
             canvas.create_text(x+12,height-12,text=str(row["month"])[5:],font=("Segoe UI",7))
@@ -644,7 +665,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             if key=="kind":
                 widget=ttk.Combobox(window,textvariable=variables[key],values=["assets","expenses","purchases","sales"],state="readonly",width=24)
             elif key=="currency":
-                widget=ttk.Combobox(window,textvariable=variables[key],values=["USD","EUR","LBP","AED"],state="readonly",width=24)
+                widget=ttk.Combobox(window,textvariable=variables[key],values=self.currency_codes,state="readonly",width=24)
             elif key=="status":
                 widget=ttk.Combobox(window,textvariable=variables[key],values=["posted","review"],state="readonly",width=24)
             elif key=="payment_method":
@@ -834,7 +855,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             rr=index//2; cc=(index%2)*2
             tk.Label(window,text=label,bg=LIGHT).grid(row=rr,column=cc,sticky="w",padx=(14,5),pady=7)
             if key=="kind": widget=ttk.Combobox(window,textvariable=variables[key],values=["assets","expenses","purchases","sales"],state="readonly",width=24)
-            elif key=="currency": widget=ttk.Combobox(window,textvariable=variables[key],values=["USD","EUR","LBP","AED"],state="readonly",width=24)
+            elif key=="currency": widget=ttk.Combobox(window,textvariable=variables[key],values=self.currency_codes,state="readonly",width=24)
             elif key=="payment_method": widget=ttk.Combobox(window,textvariable=variables[key],values=["Cash","Bank Transfer","Cheque","Card","Other"],state="readonly",width=24)
             elif key=="branch": widget=self.branch_selector(window,variables[key],24,False)
             elif key in ("supplier_account","vat_account","expense_account","expense_no_vat_account"): widget=self.account_search_box(window,variables[key],24)
@@ -920,7 +941,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(top,text="Client Account",bg=LIGHT).pack(side="left",padx=(0,4))
         tk.Entry(top,textvariable=self.sales_supplier_account,width=12).pack(side="left",padx=(0,10))
         tk.Label(top,text="Currency",bg=LIGHT).pack(side="left")
-        ttk.Combobox(top,textvariable=self.sales_currency,values=["USD","EUR","LBP","AED"],state="readonly",width=6).pack(side="left",padx=(4,8))
+        ttk.Combobox(top,textvariable=self.sales_currency,values=self.currency_codes,state="readonly",width=6).pack(side="left",padx=(4,8))
         account_fields=[("Client Account",self.sales_supplier_account,self.sales_supplier_side),("VAT Account",self.sales_vat_account,self.sales_vat_side),("Revenue Account",self.sales_expense_account,self.sales_expense_side)]
         accounts_grid=tk.Frame(account_details,bg=LIGHT); accounts_grid.pack(anchor="w",fill="x",pady=1)
         for col,(label,var,side) in enumerate(account_fields):
@@ -979,26 +1000,30 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             ("gross_amount","Total Amount",105),("discount_percent","Discount %",80),("vat_rate","VAT %",60),("total","Net",105)]
         self.sales_sheet=ttk.Treeview(sheet_frame,columns=[c[0] for c in self.sales_columns],show="headings",height=9,style="Sales.Treeview")
         for key,label,width in self.sales_columns: self.sales_sheet.heading(key,text=label); self.sales_sheet.column(key,width=width,anchor="w" if key=="description" else "e")
-        scroll=ttk.Scrollbar(sheet_frame,orient="vertical",command=self.sales_sheet.yview); self.sales_sheet.configure(yscrollcommand=scroll.set)
-        self.sales_sheet.pack(side="left",fill="both",expand=True); scroll.pack(side="right",fill="y")
+        scroll=ttk.Scrollbar(sheet_frame,orient="vertical",command=self.sales_sheet.yview)
+        xscroll=ttk.Scrollbar(sheet_frame,orient="horizontal",command=self.sales_sheet.xview)
+        self.sales_sheet.configure(yscrollcommand=scroll.set,xscrollcommand=xscroll.set)
+        self.sales_sheet.grid(row=0,column=0,sticky="nsew"); scroll.grid(row=0,column=1,sticky="ns")
+        xscroll.grid(row=1,column=0,sticky="ew")
+        sheet_frame.grid_rowconfigure(0,weight=1); sheet_frame.grid_columnconfigure(0,weight=1)
         self.sales_sheet.bind("<Double-1>",self.edit_sales_cell); self.sales_sheet.bind("<Return>",self.edit_sales_cell)
         self.sales_sheet.bind("<Delete>",lambda _event:self.remove_sales_item())
         totals=tk.Frame(bottom,bg=LIGHT); totals.pack(side="right",fill="y",padx=(8,0))
-        box=tk.Frame(totals,bg="#dfe6ee",padx=8,pady=2); box.pack(side="top",fill="x")
+        box=tk.Frame(totals,bg="#dfe6ee",padx=6,pady=3); box.pack(side="top",fill="x")
         self.sales_total_labels={}
-        for key,caption,row,column in (("Total","Total",0,0),("Discount","Discount",0,1),("Total HT","Total HT (after discount)",0,2),
+        for key,caption,row,column in (("Total","Total",0,0),("Discount","Discount",0,1),("Total HT","Total HT",0,2),
                                        ("VAT","VAT 11%",1,0),("TOTAL","TOTAL TTC",1,1)):
             label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key=="TOTAL" else "normal"))
-            label.grid(row=row,column=column*2,sticky="e",padx=(8,3),pady=1)
+            label.grid(row=row,column=column*2,sticky="e",padx=(6,2),pady=1)
             if key=="VAT": self.sales_vat_caption=label
-            value=tk.Label(box,text="0.00",bg="#dfe6ee",width=12,anchor="e",font=("Segoe UI",10 if key=="TOTAL" else 9,"bold" if key=="TOTAL" else "normal"))
-            value.grid(row=row,column=column*2+1,sticky="e",padx=(0,6)); self.sales_total_labels[key]=value
+            value=tk.Label(box,text="0.00",bg="#dfe6ee",width=10,anchor="e",font=("Segoe UI",12 if key=="TOTAL" else 10,"bold"))
+            value.grid(row=row,column=column*2+1,sticky="e",padx=(0,4)); self.sales_total_labels[key]=value
         discount=tk.Frame(box,bg="#dfe6ee"); discount.grid(row=1,column=4,columnspan=2,sticky="e",pady=1)
         tk.Label(discount,text="Discount %",bg="#dfe6ee").pack(side="left"); e1=tk.Entry(discount,textvariable=self.sales_discount_percent,width=5); e1.pack(side="left",padx=2)
         tk.Label(discount,text="or amount",bg="#dfe6ee").pack(side="left"); e2=tk.Entry(discount,textvariable=self.sales_discount_amount,width=9); e2.pack(side="left",padx=2)
         for entry in (e1,e2): entry.bind("<KeyRelease>",lambda _event:self.update_sales_totals())
         self.sales_totals=tk.Label(totals,text="",bg=LIGHT,fg=NAVY); self.sales_totals.pack(side="top",anchor="e",padx=8,pady=3)
-        self.sales_words=tk.Label(bottom,text="",bg=LIGHT,fg="#5f6b76",anchor="w",justify="left",wraplength=560)
+        self.sales_words=tk.Label(bottom,text="",bg=LIGHT,fg="#5f6b76",anchor="w",justify="left",wraplength=380,font=("Segoe UI",8))
         self.sales_words.pack(side="left",fill="x",expand=True,padx=4,pady=(3,0))
         self.new_sales_invoice(confirm=False)
 
@@ -1282,7 +1307,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             if iid and self.sales_sheet.exists(iid): self.sales_sheet.item(iid,values=self.sales_row_values(item))
         self.sales_calculation=result; currency=self.sales_currency.get()
         if hasattr(self,"sales_total_labels"):
-            values={"Total":result["total"],"Discount":-result["discount"],"Total HT":result["total_ht"],"VAT":result["vat"],"TOTAL":result["grand_total"]}
+            values={"Total":result["total"],"Discount":-result["discount"] if result["discount"] else 0,
+                    "Total HT":result["total_ht"],"VAT":result["vat"],"TOTAL":result["grand_total"]}
             for key,label in self.sales_total_labels.items():
                 label.config(text=f"{values[key]:,.2f} {currency}" if key=="TOTAL" else f"{values[key]:,.2f}",fg=NAVY)
             self.sales_vat_caption.config(text="VAT 11%" if not export else f"VAT 11%  ({self.sales_treatment.get()})",font=("Segoe UI",9,"overstrike") if export else ("Segoe UI",9))
@@ -1481,7 +1507,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         kind_box.bind("<<ComboboxSelected>>",lambda _event:self.suggest_party_prefix())
         tk.Label(form,text="Name",bg=LIGHT).grid(row=1,column=2,sticky="w",padx=4); tk.Entry(form,textvariable=self.party_name,width=32).grid(row=1,column=3,sticky="w",padx=4)
         tk.Label(form,text="Currency",bg=LIGHT).grid(row=1,column=4,sticky="w",padx=4)
-        ttk.Combobox(form,textvariable=self.party_currency,values=["USD","EUR","LBP","AED"],state="readonly",width=7).grid(row=1,column=5,sticky="w",padx=4)
+        ttk.Combobox(form,textvariable=self.party_currency,values=self.currency_codes,state="readonly",width=7).grid(row=1,column=5,sticky="w",padx=4)
         for index,(label,var,width) in enumerate((("Tax Number",self.party_tax,16),("MOF Number",self.party_mof,16),("Address",self.party_address,32),("Contact Number",self.party_contact,16))):
             tk.Label(form,text=label,bg=LIGHT).grid(row=2+index//2,column=(index%2)*2,sticky="w",padx=4,pady=4)
             tk.Entry(form,textvariable=var,width=width).grid(row=2+index//2,column=(index%2)*2+1,sticky="w",padx=4,pady=4)
@@ -1646,7 +1672,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             (self.date_entry(window,fields[key],28) if key in ("hire_date","leave_date") else tk.Entry(window,textvariable=fields[key],width=28)).grid(row=row,column=column+1,padx=10,pady=5)
         tk.Label(window,text="Marital Status",bg=LIGHT).grid(row=7,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=marital,values=["single","married"],state="readonly",width=25).grid(row=7,column=1)
         tk.Label(window,text="Children",bg=LIGHT).grid(row=8,column=0,padx=10,pady=5,sticky="w"); tk.Entry(window,textvariable=children,width=28).grid(row=8,column=1)
-        tk.Label(window,text="Currency",bg=LIGHT).grid(row=7,column=2,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=currency,values=["LBP","USD","EUR","AED"],state="readonly",width=25).grid(row=7,column=3)
+        tk.Label(window,text="Currency",bg=LIGHT).grid(row=7,column=2,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=currency,values=self.currency_codes,state="readonly",width=25).grid(row=7,column=3)
         tk.Checkbutton(window,text="Spouse Works",variable=spouse_works,bg=LIGHT).grid(row=8,column=2,sticky="w")
         tk.Checkbutton(window,text="Active",variable=active,bg=LIGHT).grid(row=8,column=3,sticky="w")
         tk.Label(window,text="Payroll Group",bg=LIGHT).grid(row=9,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=employee_group,values=["employee","manager"],state="readonly",width=25).grid(row=9,column=1)
@@ -2174,12 +2200,21 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.rate_date=tk.StringVar(value=datetime.now().strftime("%d-%m-%Y")); self.rate_date_to=tk.StringVar(value=datetime.now().strftime("%d-%m-%Y")); self.rate_from=tk.StringVar(value="USD"); self.rate_to=tk.StringVar(value="LBP"); self.rate_value=tk.StringVar(value="1")
         tk.Label(rate_controls,text="Date From",bg=LIGHT).pack(side="left"); self.date_entry(rate_controls,self.rate_date,12).pack(side="left",padx=4)
         tk.Label(rate_controls,text="Date To",bg=LIGHT).pack(side="left"); self.date_entry(rate_controls,self.rate_date_to,12).pack(side="left",padx=4)
-        ttk.Combobox(rate_controls,textvariable=self.rate_from,values=["USD","EUR","LBP","AED"],state="readonly",width=7).pack(side="left",padx=4)
+        self.rate_from_box=ttk.Combobox(rate_controls,textvariable=self.rate_from,values=self.currency_codes,state="readonly",width=7); self.rate_from_box.pack(side="left",padx=4)
         tk.Label(rate_controls,text="to",bg=LIGHT).pack(side="left")
-        ttk.Combobox(rate_controls,textvariable=self.rate_to,values=["USD","EUR","LBP","AED"],state="readonly",width=7).pack(side="left",padx=4)
+        self.rate_to_box=ttk.Combobox(rate_controls,textvariable=self.rate_to,values=self.currency_codes,state="readonly",width=7); self.rate_to_box.pack(side="left",padx=4)
         tk.Entry(rate_controls,textvariable=self.rate_value,width=14).pack(side="left",padx=4)
         self.action_button(rate_controls,"Save Rate",self.save_exchange_rate).pack(side="left",padx=5)
         self.action_button(rate_controls,"Restore EUR Rates 2024-Today",self.restore_euro_rates).pack(side="left",padx=5)
+        currency_controls=tk.Frame(rates,bg=LIGHT); currency_controls.pack(fill="x",padx=12,pady=(0,6))
+        self.new_currency_code=tk.StringVar(); self.new_currency_name=tk.StringVar()
+        tk.Label(currency_controls,text="Create currency",bg=LIGHT,font=("Segoe UI",9,"bold")).pack(side="left",padx=(0,6))
+        tk.Entry(currency_controls,textvariable=self.new_currency_code,width=7).pack(side="left")
+        tk.Label(currency_controls,text="Code (3 letters)",bg=LIGHT).pack(side="left",padx=(3,12))
+        tk.Entry(currency_controls,textvariable=self.new_currency_name,width=22).pack(side="left")
+        tk.Label(currency_controls,text="Name",bg=LIGHT).pack(side="left",padx=(3,8))
+        self.action_button(currency_controls,"Add Currency",self.create_currency).pack(side="left",padx=4)
+        tk.Label(currency_controls,text="Set a rate before using it in another currency's report.",bg=LIGHT,fg="#5f6b76").pack(side="left",padx=8)
         self.rates_tree=self.table(rates,[("date","Date",110),("from","From",80),("to","To",80),("rate","Rate",150),("created","Saved",180)])
         self.rates_tree.bind("<Double-1>",lambda _event:self.edit_selected_exchange_rate())
         branch_controls=tk.Frame(branches,bg=LIGHT); branch_controls.pack(fill="x",padx=10,pady=10)
@@ -2189,7 +2224,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.base_currency=tk.StringVar(value="USD"); self.backup_hours=tk.StringVar(value="24")
         self.company_fields={key:tk.StringVar() for key in ("company_name","company_address","company_phone","company_mof","company_nssf","company_email","company_website","company_logo")}
         tk.Label(general,text="Base Currency",bg=LIGHT).grid(row=0,column=0,padx=14,pady=14,sticky="w")
-        ttk.Combobox(general,textvariable=self.base_currency,values=["USD","EUR","LBP","AED"],state="readonly",width=15).grid(row=0,column=1,padx=14,pady=14)
+        self.base_currency_box=ttk.Combobox(general,textvariable=self.base_currency,values=self.currency_codes,state="readonly",width=15); self.base_currency_box.grid(row=0,column=1,padx=14,pady=14)
 
         for row,(key,label) in enumerate((("company_name","Company Name"),("company_address","Address"),("company_phone","Phone"),("company_mof","MOF / VAT Number"),("company_nssf","NSSF Employer Number"),("company_email","Email"),("company_website","Website"),("company_logo","Logo File Path")),2):
             tk.Label(general,text=label,bg=LIGHT).grid(row=row,column=0,padx=14,pady=7,sticky="w")
@@ -2270,6 +2305,28 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         try: self.client.save_exchange_rate({"date_from":self.rate_date.get(),"date_to":self.rate_date_to.get(),"from_currency":self.rate_from.get(),"to_currency":self.rate_to.get(),"rate":self.rate_value.get()})
         except Exception as exc: return messagebox.showerror("Exchange Rates",str(exc))
         self.load_settings_pages(); messagebox.showinfo("Exchange Rates","Rate saved successfully")
+
+    def create_currency(self):
+        try: item=self.client.save_currency(self.new_currency_code.get(),self.new_currency_name.get())
+        except Exception as exc: return messagebox.showerror("Currencies",str(exc))
+        previous=set(self.currency_codes)
+        self.currency_codes=[row["code"] for row in self.client.currencies()]
+        def refresh(widget):
+            if isinstance(widget,ttk.Combobox):
+                choices=list(widget["values"])
+                existing=set(choices)
+                if existing==previous: widget["values"]=self.currency_codes
+                elif existing==previous|{"All Currencies"}: widget["values"]=["All Currencies"]+self.currency_codes
+                elif existing==previous|{"account"}: widget["values"]=["account"]+self.currency_codes
+                elif existing==previous|{"account","none"}: widget["values"]=["account"]+self.currency_codes+["none"]
+            for child in widget.winfo_children(): refresh(child)
+        refresh(self)
+        for state in (getattr(self,"trial_state",None),getattr(self,"statement_state",None)):
+            if state and item["code"] not in state["currencies"]:
+                var=tk.BooleanVar(value=True); state["currencies"][item["code"]]=var
+                tk.Checkbutton(state["dimension_row"],text=item["code"],variable=var,bg=LIGHT).pack(side="left")
+        self.new_currency_code.set(""); self.new_currency_name.set("")
+        messagebox.showinfo("Currencies",f'{item["code"]} added. Set its exchange rate before using cross-currency reports.')
 
     def edit_selected_exchange_rate(self):
         selected=self.rates_tree.selection()

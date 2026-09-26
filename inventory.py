@@ -58,7 +58,7 @@ def settings(database):
 
 def save_settings(database, item, user_id):
     currency = str(item.get("currency") or "USD").upper(); method = str(item.get("method") or "average").lower()
-    if currency not in ("USD", "LBP", "EUR", "AED") or method not in ("average", "fifo"): raise ValueError("Choose USD/LBP/EUR/AED and Average or FIFO")
+    if currency not in database.currency_codes() or method not in ("average", "fifo"): raise ValueError("Choose a listed currency and Average or FIFO")
     with database.connect() as db:
         for key, value in (("inventory_currency", currency), ("inventory_method", method)):
             db.execute("INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))

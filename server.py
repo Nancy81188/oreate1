@@ -283,6 +283,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path == "/api/backups":
             return self._json(200,{"items":self.db.list_backups()})
         if path == "/api/settings": return self._json(200,self.db.settings())
+        if path == "/api/currencies": return self._json(200,{"items":self.db.currencies()})
         if path == "/api/exchange-rates": return self._json(200,{"items":self.db.list_exchange_rates()})
         if path == "/api/trial-balance":
             query = parse_qs(parsed.query)
@@ -448,6 +449,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             try: result=self.db.save_settings(body,user["id"])
             except Exception as exc: return self._json(400,{"error":str(exc)})
             return self._json(200,result)
+        if path == "/api/currencies":
+            if user["role"]!="admin": return self._json(403,{"error":"Administrator permission required"})
+            try: currency=self.db.save_currency(body.get("code"),body.get("name"),user["id"])
+            except Exception as exc: return self._json(400,{"error":str(exc)})
+            return self._json(201,{"currency":currency})
         if path == "/api/exchange-rates":
             try: self.db.save_exchange_rate(body,user["id"])
             except Exception as exc: return self._json(400,{"error":str(exc)})

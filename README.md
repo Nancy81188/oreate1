@@ -14,6 +14,9 @@ Saber Accounting is a Windows desktop accounting application with a central shar
 - Journal Voucher Find searches each line's detail; each line detail can be edited in its own table column.
 - Bank commissions on receipts and payments post to the nine-digit account 673900000.
 - Stock Card accepts an item and From Date / To Date and includes the range in the report heading.
+- Stock Ageing groups the on-hand value by receipt date in configurable ageing buckets, as of the selected To Date.
+- Trial Balance can show EUR and AED equivalents as either reporting column. Add a three-letter currency under Security / Backup / Rates → Exchange Rates, then enter its exchange rate before cross-currency reporting.
+- The dashboard uses compact currency summaries; purchase invoice entry keeps the items and totals on one page, while landed costs have a separate tab.
 - Optional AI buttons suggest expense accounts and preview page 1 of a PDF invoice. The existing local account suggestion and PDF reader work without AI. For online assistance enter an OpenAI API key when prompted (kept in memory for that session), or set `SABER_AI_API_KEY` before starting the app. Each request needs confirmation, sends the description or first PDF page to OpenAI, may incur API charges, and never saves an invoice automatically. Review all amounts and the account before Save.
 - Automatic 11% VAT per item, with editable VAT rate and VAT amount
 - Editable total before VAT per item with automatic invoice totals

@@ -126,6 +126,10 @@ class BrainsScreensMixin:
         tk.Button(bar, text="New", command=self.new_manual_voucher, bg="white", fg=NAVY, border=0, padx=12).pack(side="left", padx=(12, 2), pady=4)
         tk.Button(bar, text="Save", command=self.save_manual_invoice, bg=GOLD, fg=NAVY, border=0, padx=14, font=("Segoe UI", 9, "bold")).pack(side="left", padx=2, pady=4)
         tk.Button(bar, text="Delete", command=self.delete_current_voucher, bg=RED, fg="white", border=0, padx=12).pack(side="left", padx=2, pady=4)
+        self.action_button(bar,"Add Line",self.add_manual_item).pack(side="left",padx=(14,2),pady=4)
+        self.action_button(bar,"Insert Line",self.insert_manual_item).pack(side="left",padx=2,pady=4)
+        tk.Button(bar,text="Delete Line",command=self.remove_manual_item,bg=RED,fg="white",border=0,padx=10).pack(side="left",padx=2,pady=4)
+        self.action_button(bar,"Show Rates",self.toggle_voucher_rates).pack(side="left",padx=(8,2),pady=4)
         for text, fmt in (("Excel", "xlsx"), ("PDF", "pdf"), ("Print", "print")):
             tk.Button(bar, text=text, command=lambda f=fmt: self.manual_entry_report(f), bg="white", fg=NAVY, border=0, padx=10).pack(side="right", padx=2, pady=4)
         header = tk.Frame(page, bg=LIGHT); header.pack(fill="x", padx=10, pady=6)
@@ -136,7 +140,7 @@ class BrainsScreensMixin:
         tk.Entry(header, textvariable=self.manual_no, width=15, state="readonly", readonlybackground="white", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(4, 8))
         tk.Label(header, text="Date", bg=LIGHT).pack(side="left"); self.date_entry(header, self.manual_date, 12).pack(side="left", padx=(4, 12))
         tk.Label(header, text="Currency", bg=LIGHT).pack(side="left")
-        ttk.Combobox(header, textvariable=self.manual_currency, values=["USD", "LBP", "EUR", "AED"], state="readonly", width=6).pack(side="left", padx=(4, 12))
+        ttk.Combobox(header, textvariable=self.manual_currency, values=self.currency_codes, state="readonly", width=6).pack(side="left", padx=(4, 12))
         tk.Label(header, text="Branch", bg=LIGHT).pack(side="left"); self.branch_selector(header, self.manual_branch, 12, False).pack(side="left", padx=(4, 8))
         tk.Label(header, text="Find", bg=LIGHT).pack(side="left")
         self.manual_find_box = ttk.Combobox(header, textvariable=self.manual_find, width=24); self.manual_find_box.pack(side="left", padx=4)
@@ -144,12 +148,12 @@ class BrainsScreensMixin:
         self.manual_find_box.bind("<Return>", lambda _e: self.open_found_voucher())
         self.manual_currency.trace_add("write", lambda *_a: self.update_manual_totals())
         self.manual_date.trace_add("write", lambda *_a: self.voucher_date_changed())
-        columns = [("line", "#", 45, "center"), ("account", "Account No.", 110, "w"), ("description", "Line Detail", 190, "w"), ("line_currency", "Currency", 70, "center"), ("side", "D/C", 45, "center"),
+        columns = [("line", "#", 45, "center"), ("account", "Account No.", 110, "w"), ("description", "Line Detail", 330, "w"), ("line_currency", "Currency", 70, "center"), ("side", "D/C", 45, "center"),
                    ("amount", "Amount (Account Currency)", 165, "e"), ("amount_lbp", "Amount LBP", 145, "e"), ("amount_usd", "Amount USD", 120, "e"),
                    ("due_date", "Due Date", 95, "center"), ("reference", "Reference", 110, "w"), ("department", "Dep.", 60, "center"), ("project", "Project", 85, "center"),
                    ("rate_lbp", "Rate LBP", 95, "e"), ("rate_usd", "Rate USD", 95, "e")]
         bottom = tk.Frame(page, bg=LIGHT); bottom.pack(side="bottom", fill="x", padx=10, pady=(2, 6))
-        totals = tk.LabelFrame(bottom, text="Totals", bg=LIGHT, padx=10, pady=4); totals.pack(side="right")
+        totals = tk.LabelFrame(bottom, text="Totals", bg=LIGHT, padx=10, pady=2); totals.pack(side="right")
         tk.Label(totals, text="", bg=LIGHT).grid(row=0, column=0)
         for column, text in enumerate(("LBP", "USD", "Voucher Cur."), 1): tk.Label(totals, text=text, bg=LIGHT, font=("Segoe UI", 9, "bold")).grid(row=0, column=column, padx=6)
         self.voucher_total_labels = {}
@@ -158,20 +162,18 @@ class BrainsScreensMixin:
             for column, key in enumerate(("lbp", "usd", "voucher"), 1):
                 label = tk.Label(totals, text="0.00", bg="#dfe6ee", width=15, anchor="e", font=("Segoe UI", 9, "bold")); label.grid(row=row, column=column, padx=3, pady=2)
                 self.voucher_total_labels[(name, key)] = label
-        left = tk.Frame(bottom, bg=LIGHT); left.pack(side="left", fill="both", expand=True)
-        tk.Label(left, text="Details", bg=LIGHT, font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="nw", padx=(0, 6))
-        self.manual_details = tk.Text(left, width=48, height=4, font=("Segoe UI", 9), wrap="word", undo=True)
-        self.manual_details.grid(row=0, column=1, sticky="w")
-        self.manual_details.bind("<Return>", lambda _e: (self.manual_details.insert("insert", "\n"), "break")[1])
-        line_buttons = tk.Frame(left, bg=LIGHT); line_buttons.grid(row=1, column=1, sticky="w", pady=3)
-        self.action_button(line_buttons, "Add Line", self.add_manual_item).pack(side="left", padx=(0, 4))
-        tk.Button(line_buttons, text="Delete Line", command=self.remove_manual_item, bg=RED, fg="white", border=0, padx=12, pady=7).pack(side="left", padx=4)
-        self.action_button(line_buttons, "Insert Line", self.insert_manual_item).pack(side="left", padx=4)
-        tk.Label(left, text="Double-click a cell to type · F2 = account list · D/C: D or C · Currency: USD, LBP, EUR, AED", bg=LIGHT, fg=MUTED, wraplength=420, justify="left").grid(row=2, column=0, columnspan=2, sticky="w")
+        # Voucher details come from the editable Line Detail cells; retain the hidden
+        # backing widget for opening older vouchers and existing export code.
+        self.manual_details=tk.Text(page,height=1)
+        tk.Label(bottom,text="Double-click Line Detail to type · F2 = account list",bg=LIGHT,fg=MUTED).pack(side="left",padx=4)
         self.manual_line_info = tk.Label(page, text="", bg="#dfe6ee", fg=NAVY, anchor="w", font=("Segoe UI", 9, "bold"), padx=8)
         self.manual_line_info.pack(side="bottom", fill="x", padx=10)
         self.voucher_sheet = EditableSheet(self, page, columns, ["account", "description", "line_currency", "side", "amount", "due_date", "reference", "department", "project", "rate_lbp", "rate_usd"],
                                            self.voucher_cell_changed, self.voucher_line_selected, height=6, lookup_column="account")
+        for key in ("rate_lbp","rate_usd"):
+            self.voucher_sheet.tree.column(key,width=0,minwidth=0,stretch=False)
+        self.voucher_sheet.editable=[key for key in self.voucher_sheet.editable if key not in ("rate_lbp","rate_usd")]
+        self.voucher_rates_visible=False
         self.manual_items = []; self.manual_tree = self.voucher_sheet.tree
         self.load_manual_vouchers(); self.new_manual_voucher(confirm=False)
 
@@ -182,6 +184,14 @@ class BrainsScreensMixin:
             try: self.voucher_rates[key] = self.client.suggested_rates(currency, key[1] if len(key[1]) == 10 else None)
             except Exception: self.voucher_rates[key] = {"rate_lbp": 1 if currency == "LBP" else 89500, "rate_usd": 89500 if currency == "LBP" else 1}
         return self.voucher_rates[key]
+
+    def toggle_voucher_rates(self):
+        self.voucher_rates_visible=not self.voucher_rates_visible
+        for key in ("rate_lbp","rate_usd"):
+            self.voucher_sheet.tree.column(key,width=100 if self.voucher_rates_visible else 0,
+                                           minwidth=90 if self.voucher_rates_visible else 0,stretch=False)
+        if self.voucher_rates_visible: self.voucher_sheet.editable.extend(("rate_lbp","rate_usd"))
+        else: self.voucher_sheet.editable=[key for key in self.voucher_sheet.editable if key not in ("rate_lbp","rate_usd")]
 
     def voucher_date_changed(self):
         if len(self.manual_date.get()) == 10 and not self.editing_voucher_id: self.set_next_manual_voucher_number()
@@ -214,7 +224,7 @@ class BrainsScreensMixin:
             currency = text.upper() or self.manual_currency.get()
             if currency in ("01", "1"): currency = "LBP"
             if currency in ("02", "2"): currency = "USD"
-            if currency not in ("USD", "LBP", "EUR", "AED"): messagebox.showwarning("Journal Voucher", "Currency must be USD, LBP, EUR or AED"); return False
+            if currency not in self.currency_codes: messagebox.showwarning("Journal Voucher", "Choose a currency from Settings"); return False
             rates = self.voucher_rates_for(currency); row.update(line_currency=currency, rate_lbp=rates["rate_lbp"], rate_usd=rates["rate_usd"])
         elif key == "side":
             side = text.upper()[:1]
@@ -391,8 +401,8 @@ class BrainsScreensMixin:
         if abs(debit - credit) >= 0.005:
             needed = f"Credit {debit - credit:,.2f}" if debit > credit else f"Debit {credit - debit:,.2f}"
             return messagebox.showerror("Unbalanced Journal Voucher", f"Debit: {debit:,.2f}\nCredit: {credit:,.2f}\nStill needed: {needed} {self.manual_currency.get()}\n\nDebit must equal Credit before saving.")
-        details = self.manual_details.get("1.0", "end").strip()
-        if not details: details = f"Journal Voucher {self.manual_no.get().strip()}"
+        details = "\n".join(str(row.get("description") or "").strip() for row in lines if str(row.get("description") or "").strip())
+        if not details: details = self.manual_details.get("1.0", "end").strip() or f"Journal Voucher {self.manual_no.get().strip()}"
         detail_lines=details.splitlines()
         try: entry_date = datetime.strptime(self.manual_date.get().strip(), "%d-%m-%Y").strftime("%d-%m-%Y")
         except ValueError: return messagebox.showwarning("Journal Voucher", "Enter the date as 8 digits: DDMMYYYY")
@@ -462,7 +472,7 @@ class BrainsScreensMixin:
         flags = {name: tk.BooleanVar(value=default) for name, default in (("summary", False), ("by_due_date", False), ("reference", statement), ("with_branch", False),
                  ("detailed", statement), ("include_zero", False), ("order_by_description", False), ("non_zero_only", False), ("chapters", False), ("sub_chapters", False),
                  ("balance_sheet_only", False), ("profit_loss_only", False), ("balance_format", False), ("carry_forward", True), ("monthly", False))}
-        currencies = {code: tk.BooleanVar(value=True) for code in ("LBP", "USD", "EUR", "AED")}
+        currencies = {code: tk.BooleanVar(value=True) for code in self.currency_codes}
         box = tk.LabelFrame(page, text="Statement of Account - options" if statement else "Balance des Comptes - options", bg=LIGHT, padx=8, pady=6)
         box.pack(fill="x", padx=10, pady=(8, 4))
         row0 = tk.Frame(box, bg=LIGHT); row0.pack(fill="x")
@@ -498,10 +508,10 @@ class BrainsScreensMixin:
                 digits = tk.Frame(frame, bg=LIGHT); digits.pack(anchor="w")
                 tk.Label(digits, text="Summary digits", bg=LIGHT).pack(side="left"); ttk.Combobox(digits, textvariable=v["summary_digits"], values=["1", "2", "3", "4", "5", "6"], width=3, state="readonly").pack(side="left", padx=3)
         row3 = tk.Frame(box, bg=LIGHT); row3.pack(fill="x", pady=(4, 0))
-        for title, key, choices in (("1st Column", "first_column", (("account", "Account Currency"), ("LBP", "LBP"), ("USD", "USD"))),
-                                    ("2nd Column", "second_column", (("account", "Account Currency"), ("LBP", "LBP"), ("USD", "USD"), ("none", "None")))):
+        for title, key, choices in (("1st Column", "first_column", (("account", "Account Currency"),)+tuple((code,code) for code in self.currency_codes)),
+                                    ("2nd Column", "second_column", (("account", "Account Currency"),)+tuple((code,code) for code in self.currency_codes)+(("none", "None"),))):
             frame = tk.LabelFrame(row3, text=title, bg=LIGHT, padx=4); frame.pack(side="left", padx=(0, 6))
-            for value, label in choices: tk.Radiobutton(frame, text=label, value=value, variable=v[key], bg=LIGHT).pack(side="left")
+            ttk.Combobox(frame,textvariable=v[key],values=[value for value,_label in choices],state="readonly",width=12).pack(side="left",padx=4,pady=3)
         actions = tk.Frame(row3, bg=LIGHT); actions.pack(side="right", padx=6)
         state = {"vars": v, "flags": flags, "currencies": currencies, "statement": statement, "result": None}
         self.add_dimension_options(state, box)
@@ -634,7 +644,7 @@ class BrainsScreensMixin:
                        currencies=[code for code, var in state["currencies"].items() if var.get()], statement=state["statement"],
                        posting_status={"Posted only": "posted", "Posted + Review": "all", "Review only": "review"}[v["posting"].get()],
                        department=self.dimension_code(v["department"].get()), project=self.dimension_code(v["project"].get()))
-        if len(options["currencies"]) == 4: options["currencies"] = []
+        if len(options["currencies"]) == len(state["currencies"]): options["currencies"] = []
         branch = self.selected_branch_id(v["branch"])
         if branch: options["branch_id"] = branch
         for key in ("date_from", "date_to", "print_date"):

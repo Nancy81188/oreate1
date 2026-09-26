@@ -154,6 +154,8 @@ class ApiClient:
     def settings(self): return self.request("GET","/api/settings")
     def save_settings(self,item): return self.request("POST","/api/settings",item)
     def exchange_rates(self): return self.request("GET","/api/exchange-rates")["items"]
+    def currencies(self): return self.request("GET","/api/currencies")["items"]
+    def save_currency(self,code,name): return self.request("POST","/api/currencies",{"code":code,"name":name})["currency"]
     def save_exchange_rate(self,item): return self.request("POST","/api/exchange-rates",item)
     def restore_euro_rates(self): return self.request("POST","/api/exchange-rates/restore-euro",{})
     def employees(self): return self.request("GET","/api/employees")["items"]
@@ -248,4 +250,3 @@ class ApiClient:
     def backup_folder(self): return self.request("GET","/api/backups/folder")["folder"]
     def business_report(self,report,options): return self.request("GET","/api/reports/business?"+urlencode({"report":report,"options":json.dumps(options)}))
     def delete_payroll_period(self,date_from): return self.request("POST","/api/payroll/delete-period",{"date_from":date_from})["items"]
-
