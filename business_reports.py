@@ -93,8 +93,9 @@ def ageing(db, options):
         days = (as_of_date - datetime.strptime(due, "%Y-%m-%d")).days
         index = 0 if days <= 0 else next((i + 1 for i, limit in enumerate(limits) if days <= limit), len(limits) + 1)
         value = convert(open_amount, inv["currency"], day)
-        party = parties.setdefault(inv["party_id"], {"name": inv["party_name"] or "-", "account": inv.get("account_number") or "", "buckets": [ZERO] * len(labels), "unallocated": ZERO, "invoices": []})
+        party = parties.setdefault(inv["party_id"], {"name": inv["party_name"] or "-", "account": inv.get("account_number") or "", "buckets": [ZERO] * len(labels), "unallocated": ZERO, "invoices": [], "due_by": ZERO})
         party["buckets"][index] += value
+        if days >= 0: party["due_by"] += value
         party["invoices"].append([inv["invoice_number"], display_date(day), display_date(due), inv["currency"], _money(open_amount), max(days, 0), labels[index], _money(value)])
     for pay in payments:
         try: day = iso_date(pay["payment_date"])
@@ -113,6 +114,8 @@ def ageing(db, options):
                 [_money(grand), _money(total_unallocated), _money(grand - total_unallocated), f"{(sum(totals[1:], ZERO) / grand * 100):.0f}%" if grand > 0 else ""])
     summary = [[label, _money(value), f"{(value / grand * 100):.1f}%" if grand else "0.0%"] for label, value in zip(labels, totals)]
     summary += [["TOTAL OPEN", _money(grand), "100.0%" if grand else "0.0%"], ["Less: receipts / payments not allocated", _money(total_unallocated), ""], ["NET BALANCE", _money(grand - total_unallocated), ""]]
+    due_by = sum((party["due_by"] for party in parties.values()), ZERO)
+    summary.append([f"Due by {display_date(as_of)}", _money(max(ZERO, due_by - total_unallocated)), "After unallocated receipts / payments"])
     who = "Customer" if kind == "sale" else "Supplier"
     sections = [{"heading": "Ageing summary", "headers": ["Age", f"Amount ({basis})", "% of open"], "rows": summary, "total_rows": [len(labels), len(labels) + 2]},
                 {"heading": f"{'Receivables' if kind == 'sale' else 'Payables'} ageing by {who.lower()} at {display_date(as_of)} (days after the due date)",
@@ -123,6 +126,14 @@ def ageing(db, options):
             detail += [[party["name"]] + line for line in sorted(party["invoices"], key=lambda l: l[2])]
         sections.append({"heading": "Open documents", "headers": [who, "Document", "Date", "Due Date", "Currency", "Open Amount", "Days Overdue", "Bucket", f"Open ({basis})"],
                          "rows": detail or [["No open documents"] + [""] * 8], "total_rows": []})
+    outlook = []
+    for party in sorted(parties.values(), key=lambda p: p["name"]):
+        outstanding = max(ZERO, party["due_by"] - party["unallocated"])
+        outlook.append([party["name"], party["account"], _money(party["due_by"]), _money(party["unallocated"]), _money(outstanding)])
+    outlook.append(["TOTAL", "", _money(due_by), _money(total_unallocated), _money(max(ZERO, due_by - total_unallocated))])
+    sections.append({"heading": f"Expected {'collection' if kind == 'sale' else 'payment'} due by {display_date(as_of)} (based on recorded open invoices)",
+                     "headers": [who, "Account", f"Invoice balance due by date ({basis})", "Unallocated", f"Expected due ({basis})"],
+                     "rows": outlook, "total_rows": [len(outlook) - 1]})
     company = db.settings()
     meta = [f"Company: {company.get('company_name') or '-'}   Amounts in {basis} (converted at each document date)", f"Situation at {display_date(as_of)}"]
     return {"title": "Receivables Ageing" if kind == "sale" else "Payables Ageing", "meta": meta, "sections": sections}

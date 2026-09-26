@@ -38,6 +38,9 @@ class DueAndInventoryTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT due_date FROM invoices WHERE invoice_number='client-special'").fetchone()[0], "10-09-2026")
         result = ageing(self.db, {"side": "receivables", "date_to": "26-09-2026"})
         self.assertTrue(any("client" in str(section["rows"]) for section in result["sections"]))
+        current = result["sections"][-1]["rows"][-1][-1]
+        future = ageing(self.db, {"side": "receivables", "date_to": "26-10-2026"})["sections"][-1]["rows"][-1][-1]
+        self.assertEqual((current, future), (111, 222))
         with self.assertRaisesRegex(ValueError, "Due days"):
             self.db.save_party({"name": "Wrong", "due_days": -1}, self.user)
 
@@ -53,6 +56,14 @@ class DueAndInventoryTest(unittest.TestCase):
         result = build_report(self.db, "count_variances", {"date_from": "01-09-2026", "date_to": "26-09-2026"})
         row = result["sections"][0]["rows"][0]
         self.assertEqual((row[5], row[6], row[7], row[8]), (10, 8, -2, -4))
+        by_warehouse = build_report(self.db, "analysis3d", {"date_from": "01-09-2026", "date_to": "26-09-2026",
+                                                              "rows": "item", "columns": "warehouse", "measure": "quantity"})
+        self.assertEqual(by_warehouse["sections"][0]["rows"][0][1], 8)
+        by_month = build_report(self.db, "analysis3d", {"date_from": "01-09-2026", "date_to": "26-09-2026",
+                                                          "rows": "category", "columns": "month", "measure": "value"})
+        self.assertEqual(by_month["sections"][0]["rows"][0][1], 16)
+        health = build_report(self.db, "health", {"date_to": "26-09-2026", "days": "30"})
+        self.assertTrue(any(row[0] == "No supplier" for row in health["sections"][0]["rows"]))
 
     def test_daily_exchange_rate_is_average_of_entries(self):
         data = {"date_from": "20-09-2026", "from_currency": "EUR", "to_currency": "USD"}

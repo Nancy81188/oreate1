@@ -1,5 +1,14 @@
 # Saber Accounting MVP
 
+## Version 2.8.2
+
+- Purchase Invoice actions sit beside the shorter entry form; the item table has more height and a wider description column.
+- In Inventory Reports, Stock Card has Item From / Item To selectors and the existing date From / To fields. The Ageing buckets entry box is removed; Stock Ageing uses its standard ageing buckets.
+- The main navigation takes less space above the working area.
+- Customer / Supplier Ageing lists invoice due dates and overdue days. Business Reports has Today and +30 days shortcuts and an expected collection/payment summary due by the chosen as-of date.
+- Inventory Analysis (3D) compares item/category/supplier by warehouse or month, using quantity or cost value. Inventory Health lists stock issues needing review, including reorder levels, missing supplier or unit cost, and no recent issue.
+- The Customers / Suppliers page links directly to Customer / Supplier Ageing and Client Items: Qty & Value; the latter lists each client's purchased items, quantity, sales before VAT, VAT, and TTC.
+
 ## Version 2.8.1
 
 - Customer and supplier files include **Due days from invoice**. New invoices automatically use invoice date plus the saved term when Due Date is blank; an explicit Due Date takes precedence. Existing invoices keep their saved due dates.

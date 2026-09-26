@@ -10,7 +10,7 @@ from desktop_brains import EditableSheet
 NAVY, GOLD, LIGHT = "#071b2e", "#c9a96a", "#f3f6f8"
 RED, MUTED = "#8B1E1E", "#5f6b76"
 DOC_TYPES = {"Opening Stock": "opening", "Stock Receipt": "receipt", "Stock Issue": "issue", "Adjustment +": "adjustment_in", "Adjustment -": "adjustment_out", "Transfer": "transfer"}
-REPORTS = {"Inventory Summary": "summary", "Stock Ageing": "ageing", "Stock Valuation": "valuation", "Stock Card": "stock_card", "Stock Movements": "movements", "Stock Turnover": "turnover", "Stock by Supplier": "supplier_stock", "Physical Count Variances": "count_variances", "Sales Margin (COGS)": "margin", "Reorder Report": "reorder", "Slow-moving Stock": "slow"}
+REPORTS = {"Inventory Summary": "summary", "Stock Ageing": "ageing", "Inventory Analysis (3D)": "analysis3d", "Inventory Health": "health", "Stock Valuation": "valuation", "Stock Card": "stock_card", "Stock Movements": "movements", "Stock Turnover": "turnover", "Stock by Supplier": "supplier_stock", "Physical Count Variances": "count_variances", "Sales Margin (COGS)": "margin", "Reorder Report": "reorder", "Slow-moving Stock": "slow"}
 
 
 def _num(value):
@@ -54,7 +54,8 @@ class InventoryMixin:
             if box is not None and box.winfo_exists(): box["values"] = names
         if hasattr(self, "ir_warehouse_box"): self.ir_warehouse_box["values"] = ["All"] + names
         items = [f'{i["sku"]} - {i["name"]}' for i in self.inventory_rows]
-        if hasattr(self, "ir_item_box"): self.ir_item_box["values"] = [""] + items
+        for box in (getattr(self, "ir_item_box", None), getattr(self, "ir_item_to_box", None)):
+            if box is not None: box["values"] = [""] + items
         categories = sorted({i.get("category") for i in self.inventory_rows if i.get("category")})
         if hasattr(self, "ir_category_box"): self.ir_category_box["values"] = ["All"] + categories
         if hasattr(self, "warehouses_tree"):
@@ -124,7 +125,17 @@ class InventoryMixin:
         selected = self.items_tree.selection()
         if not selected: return messagebox.showwarning("Stock Card", "Select an item first")
         item = next(i for i in self.inventory_rows if str(i["id"]) == selected[0])
-        self.ir_report.set("Stock Card"); self.ir_item.set(f'{item["sku"]} - {item["name"]}')
+        self.ir_report.set("Stock Card"); self.ir_item.set(f'{item["sku"]} - {item["name"]}'); self.ir_item_to.set("")
+        self.inventory_report_selected()
+        analysis_bar = tk.Frame(page, bg=LIGHT); self.ir_analysis_bar = analysis_bar
+        self.ir_3d_rows = tk.StringVar(value="Item"); self.ir_3d_columns = tk.StringVar(value="Warehouse"); self.ir_3d_measure = tk.StringVar(value="Quantity")
+        tk.Label(analysis_bar, text="3D rows", bg=LIGHT).pack(side="left")
+        ttk.Combobox(analysis_bar, textvariable=self.ir_3d_rows, values=["Item", "Category", "Supplier"], state="readonly", width=13).pack(side="left", padx=(4, 12))
+        tk.Label(analysis_bar, text="columns", bg=LIGHT).pack(side="left")
+        ttk.Combobox(analysis_bar, textvariable=self.ir_3d_columns, values=["Warehouse", "Month"], state="readonly", width=13).pack(side="left", padx=(4, 12))
+        tk.Label(analysis_bar, text="measure", bg=LIGHT).pack(side="left")
+        ttk.Combobox(analysis_bar, textvariable=self.ir_3d_measure, values=["Quantity", "Value"], state="readonly", width=12).pack(side="left", padx=(4, 12))
+        tk.Label(analysis_bar, text="Warehouse: stock at To date  |  Month: net movement during From / To", bg=LIGHT, fg=MUTED).pack(side="left")
         self.inventory_notebook_select("Inventory Reports"); self.run_inventory_report()
 
     def inventory_notebook_select(self, name):
@@ -294,20 +305,26 @@ class InventoryMixin:
     def build_inventory_reports_page(self, page):
         bar = tk.Frame(page, bg=LIGHT); bar.pack(fill="x", padx=8, pady=6); year = getattr(self, "current_fiscal_year", datetime.now().year)
         self.ir_report = tk.StringVar(value="Stock Valuation"); self.ir_from = tk.StringVar(value=f"01-01-{year}"); self.ir_to = tk.StringVar(value=f"31-12-{year}")
-        self.ir_warehouse = tk.StringVar(value="All"); self.ir_item = tk.StringVar(); self.ir_method = tk.StringVar(value="Company setting"); self.ir_days = tk.StringVar(value="90")
+        self.ir_warehouse = tk.StringVar(value="All"); self.ir_item = tk.StringVar(); self.ir_item_to = tk.StringVar(); self.ir_method = tk.StringVar(value="Company setting"); self.ir_days = tk.StringVar(value="90")
         self.ir_category = tk.StringVar(value="All"); self.ir_zero = tk.BooleanVar(value=False)
-        ttk.Combobox(bar, textvariable=self.ir_report, values=list(REPORTS), state="readonly", width=20).pack(side="left", padx=(0, 8))
+        self.ir_report_box = ttk.Combobox(bar, textvariable=self.ir_report, values=list(REPORTS), state="readonly", width=22)
+        self.ir_report_box.pack(side="left", padx=(0, 8))
+        self.ir_report_box.bind("<<ComboboxSelected>>", self.inventory_report_selected)
         tk.Label(bar, text="From Date", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.ir_from, 11).pack(side="left", padx=(4, 6))
         tk.Label(bar, text="To Date / As of", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.ir_to, 11).pack(side="left", padx=(4, 6))
         tk.Label(bar, text="Warehouse", bg=LIGHT).pack(side="left")
         self.ir_warehouse_box = ttk.Combobox(bar, textvariable=self.ir_warehouse, state="readonly", width=16); self.ir_warehouse_box.pack(side="left", padx=(4, 6))
         tk.Label(bar, text="Costing", bg=LIGHT).pack(side="left")
         ttk.Combobox(bar, textvariable=self.ir_method, values=["Company setting", "Weighted average", "FIFO"], state="readonly", width=15).pack(side="left", padx=4)
-        bar2 = tk.Frame(page, bg=LIGHT); bar2.pack(fill="x", padx=8)
-        tk.Label(bar2, text="Item (Stock Card / Ageing)", bg=LIGHT).pack(side="left")
-        self.ir_item_box = ttk.Combobox(bar2, textvariable=self.ir_item, width=30); self.ir_item_box.pack(side="left", padx=(4, 8))
-        self.ir_item_box.bind("<KeyRelease>", self.filter_report_items)
-        self.ir_item_box.bind("<Return>", self.select_report_item)
+        item_row = tk.Frame(page, bg=LIGHT); self.ir_item_row = item_row
+        tk.Label(item_row, text="Stock Card Item From", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.ir_item_box = ttk.Combobox(item_row, textvariable=self.ir_item, width=29); self.ir_item_box.pack(side="left", padx=(4, 12))
+        tk.Label(item_row, text="Item To", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.ir_item_to_box = ttk.Combobox(item_row, textvariable=self.ir_item_to, width=29); self.ir_item_to_box.pack(side="left", padx=(4, 8))
+        for widget, variable in ((self.ir_item_box, self.ir_item), (self.ir_item_to_box, self.ir_item_to)):
+            widget.bind("<KeyRelease>", lambda event, box=widget, var=variable: self.filter_report_items(event, box, var))
+            widget.bind("<Return>", lambda event, box=widget, var=variable: self.select_report_item(event, box, var))
+        bar2 = tk.Frame(page, bg=LIGHT); bar2.pack(fill="x", padx=8); self.ir_controls_row = bar2
         tk.Label(bar2, text="Category", bg=LIGHT).pack(side="left")
         self.ir_category_box = ttk.Combobox(bar2, textvariable=self.ir_category, state="readonly", width=14); self.ir_category_box.pack(side="left", padx=(4, 8))
         self.ir_subcategory = tk.StringVar(value="All"); self.ir_unit = tk.StringVar(value="All"); self.ir_supplier = tk.StringVar(value="All")
@@ -315,8 +332,7 @@ class InventoryMixin:
         tk.Label(bar3, text="Subcategory", bg=LIGHT).pack(side="left"); self.ir_subcategory_box = ttk.Combobox(bar3, textvariable=self.ir_subcategory, state="readonly", width=14); self.ir_subcategory_box.pack(side="left", padx=(4, 8))
         tk.Label(bar3, text="Unit", bg=LIGHT).pack(side="left"); self.ir_unit_box = ttk.Combobox(bar3, textvariable=self.ir_unit, state="readonly", width=8); self.ir_unit_box.pack(side="left", padx=(4, 8))
         tk.Label(bar3, text="Supplier", bg=LIGHT).pack(side="left"); self.ir_supplier_box = ttk.Combobox(bar3, textvariable=self.ir_supplier, state="readonly", width=22); self.ir_supplier_box.pack(side="left", padx=(4, 8))
-        self.ir_buckets = tk.StringVar(value="30,60,90,180,365")
-        tk.Label(bar3, text="Ageing buckets (days)", bg=LIGHT).pack(side="left", padx=(6, 2)); tk.Entry(bar3, textvariable=self.ir_buckets, width=16).pack(side="left", padx=4)
+        self.inventory_report_selected()
         tk.Label(bar2, text="Slow-moving days", bg=LIGHT).pack(side="left"); tk.Entry(bar2, textvariable=self.ir_days, width=5).pack(side="left", padx=4)
         tk.Checkbutton(bar2, text="Include zero stock", variable=self.ir_zero, bg=LIGHT).pack(side="left", padx=6)
         tk.Button(bar2, text="Show", command=self.run_inventory_report, bg=GOLD, fg=NAVY, border=0, padx=18, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=6)
@@ -324,23 +340,40 @@ class InventoryMixin:
         self.ir_info = tk.Label(page, text="", bg=LIGHT, fg=NAVY, anchor="w"); self.ir_info.pack(fill="x", padx=10)
         self.ir_viewer = self.report_viewer(page)
 
-    def filter_report_items(self, event=None):
+    def filter_report_items(self, event=None, box=None, variable=None):
         from desktop import row_matches_search
         if event is not None and event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
+        box = box or self.ir_item_box; variable = variable or self.ir_item
         choices=[f'{item["sku"]} - {item["name"]}' for item in getattr(self,"inventory_rows",[])]
-        self.ir_item_box["values"]=[choice for choice in choices if row_matches_search((choice,),self.ir_item.get())]
+        box["values"]=[choice for choice in choices if row_matches_search((choice,),variable.get())]
 
-    def select_report_item(self, _event=None):
-        matches=list(self.ir_item_box["values"])
-        if len(matches)==1: self.ir_item.set(matches[0])
+    def select_report_item(self, _event=None, box=None, variable=None):
+        box = box or self.ir_item_box; variable = variable or self.ir_item
+        matches=list(box["values"])
+        if len(matches)==1: variable.set(matches[0])
+
+    def inventory_report_selected(self, _event=None):
+        if self.ir_report.get() == "Stock Card":
+            self.ir_item_row.pack(fill="x", padx=8, pady=(2, 0), before=self.ir_controls_row)
+        else:
+            self.ir_item_row.pack_forget()
+        if hasattr(self, "ir_analysis_bar"):
+            if self.ir_report.get() == "Inventory Analysis (3D)": self.ir_analysis_bar.pack(fill="x", padx=8, pady=(2, 0), before=self.ir_info)
+            else: self.ir_analysis_bar.pack_forget()
 
     def inventory_report_options(self):
-        options = {"date_from": self.ir_from.get().strip(), "date_to": self.ir_to.get().strip(), "days": self.ir_days.get().strip() or "90", "include_zero": self.ir_zero.get(),
-                   "buckets": self.ir_buckets.get().strip() if hasattr(self, "ir_buckets") else ""}
+        options = {"date_from": self.ir_from.get().strip(), "date_to": self.ir_to.get().strip(), "days": self.ir_days.get().strip() or "90", "include_zero": self.ir_zero.get()}
+        if self.ir_report.get() == "Inventory Analysis (3D)":
+            options.update(rows=self.ir_3d_rows.get().lower(), columns=self.ir_3d_columns.get().lower(), measure=self.ir_3d_measure.get().lower())
         if self.ir_warehouse.get() not in ("", "All"):
             code = self.ir_warehouse.get().split(" - ", 1)[0]; options["warehouse_id"] = next(w["id"] for w in self.warehouse_rows if w["code"] == code)
         item = self.item_by_code(self.ir_item.get())
-        if item: options["item_id"] = item["id"]
+        if item and self.ir_report.get() == "Stock Card":
+            options["item_id"] = item["id"]
+            if self.ir_item_to.get().strip():
+                to_item = self.item_by_code(self.ir_item_to.get())
+                if not to_item: raise ValueError("Choose a valid Stock Card Item To")
+                options["item_to_id"] = to_item["id"]
         if self.ir_category.get() not in ("", "All"): options["category"] = self.ir_category.get()
         if self.ir_subcategory.get() not in ("", "All"): options["subcategory"] = self.ir_subcategory.get()
         if self.ir_unit.get() not in ("", "All"): options["unit"] = self.ir_unit.get()

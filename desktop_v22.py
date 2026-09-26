@@ -190,12 +190,12 @@ class V22Mixin:
         search.trace_add("write", fill); tree.bind("<Double-1>", choose); tree.bind("<Return>", choose); fill()
 
     # ------------------------------------------------------------ business reports (ageing, item sales, 3D, top)
-    BUSINESS_REPORTS = {"Receivables Ageing (customers)": "receivables", "Payables Ageing (suppliers)": "payables", "Item Sales by Client": "item_sales_client",
+    BUSINESS_REPORTS = {"Receivables Ageing (customers)": "receivables", "Payables Ageing (suppliers)": "payables", "Client Items: Qty & Value": "item_sales_client",
                         "Client Quantities by Item": "item_sales_item", "Sales Analysis (3D pivot)": "analysis", "Top Clients (HT + VAT = TTC)": "top_clients",
                         "Top Suppliers (HT + VAT = TTC)": "top_suppliers"}
 
     def build_business_reports_page(self, nested):
-        page = tk.Frame(nested, bg=LIGHT); nested.add(page, text="Business Reports")
+        page = tk.Frame(nested, bg=LIGHT); nested.add(page, text="Business Reports"); self.business_reports_page=page
         year = getattr(self, "current_fiscal_year", datetime.now().year)
         self.br = {k: tk.StringVar(value=v) for k, v in (("report", "Receivables Ageing (customers)"), ("from", f"01-01-{year}"), ("to", f"31-12-{year}"), ("basis", "USD"),
                    ("only", "All currencies"), ("buckets", "30,60,90,180"), ("top", "20"), ("rows", "client"), ("columns", "month"), ("measure", "ht"))}
@@ -203,7 +203,9 @@ class V22Mixin:
         bar = tk.Frame(page, bg=LIGHT); bar.pack(fill="x", padx=8, pady=(8, 2))
         ttk.Combobox(bar, textvariable=self.br["report"], values=list(self.BUSINESS_REPORTS), state="readonly", width=30).pack(side="left", padx=(0, 8))
         tk.Label(bar, text="From", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.br["from"], 11).pack(side="left", padx=(4, 6))
-        tk.Label(bar, text="To / As of", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.br["to"], 11).pack(side="left", padx=(4, 6))
+        tk.Label(bar, text="As of", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.br["to"], 11).pack(side="left", padx=(4, 6))
+        self.action_button(bar, "Today", lambda: self.set_business_as_of(0)).pack(side="left", padx=2)
+        self.action_button(bar, "+30 days", lambda: self.set_business_as_of(30)).pack(side="left", padx=(2, 6))
         tk.Label(bar, text="Amounts in", bg=LIGHT).pack(side="left"); ttk.Combobox(bar, textvariable=self.br["basis"], values=["USD", "LBP"], state="readonly", width=5).pack(side="left", padx=(4, 6))
         tk.Label(bar, text="Only", bg=LIGHT).pack(side="left"); ttk.Combobox(bar, textvariable=self.br["only"], values=["All currencies", "USD", "LBP", "EUR", "AED"], state="readonly", width=12).pack(side="left", padx=4)
         bar2 = tk.Frame(page, bg=LIGHT); bar2.pack(fill="x", padx=8, pady=2)
@@ -217,9 +219,15 @@ class V22Mixin:
         tk.Button(bar3, text="Show", command=self.run_business_report, bg=GOLD, fg=NAVY, border=0, padx=22, pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
         for text, fmt in (("Print Preview", "preview"), ("Print", "print"), ("Excel", "xlsx"), ("PDF", "pdf")):
             tk.Button(bar3, text=text, command=lambda f=fmt: self.export_business_report(f), bg=NAVY, fg="white", border=0, padx=12, pady=5).pack(side="left", padx=2)
-        tk.Label(bar3, text="Ageing uses the due date (or the invoice date); amounts are converted at each document date; credit notes are deducted.", bg=LIGHT, fg="#5f6b76").pack(side="left", padx=10)
+        tk.Label(bar3, text="Ageing shows invoice due dates, days overdue, and expected amounts due by the selected date.", bg=LIGHT, fg="#5f6b76").pack(side="left", padx=10)
         self.br_info = tk.Label(page, text="Choose a report and press Show.", bg=LIGHT, fg="#5f6b76", anchor="w"); self.br_info.pack(fill="x", padx=10)
         self.br_viewer = self.report_viewer(page, [170, 150, 110, 110, 110, 110, 110, 110, 110, 110, 110, 90])
+
+    def set_business_as_of(self, days):
+        from datetime import timedelta
+        self.br["to"].set((datetime.now() + timedelta(days=days)).strftime("%d-%m-%Y"))
+        if self.BUSINESS_REPORTS.get(self.br["report"].get()) in ("receivables", "payables"):
+            self.run_business_report()
 
     def business_options(self):
         options = {k: v.get().strip() for k, v in self.br.items() if k not in ("report",)}
@@ -236,4 +244,3 @@ class V22Mixin:
         if not getattr(self, "business_result", None): self.run_business_report()
         result = getattr(self, "business_result", None)
         if result: self.output_sections(result["title"], result["meta"], result["sections"], result["title"].replace(" ", "_").replace("(", "").replace(")", ""), mode)
-

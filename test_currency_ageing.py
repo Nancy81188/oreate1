@@ -45,6 +45,17 @@ class CurrencyAgeingTest(unittest.TestCase):
         warehouse = build_report(self.db, "ageing", {"date_to": "26-09-2026", "warehouse_id": 1})["sections"][1]
         self.assertEqual(next(row for row in warehouse["rows"] if row[0] == "DEMO")[4], 10)
 
+    def test_stock_card_item_range(self):
+        first = save_item(self.db, {"sku": "A-001", "name": "First"}, self.user)
+        save_item(self.db, {"sku": "B-002", "name": "Second"}, self.user)
+        last = save_item(self.db, {"sku": "C-003", "name": "Last"}, self.user)
+        result = build_report(self.db, "stock_card", {"item_id": first["id"], "item_to_id": last["id"],
+                                                      "date_from": "01-01-2026", "date_to": "26-09-2026"})
+        self.assertEqual(len(result["sections"]), 3)
+        self.assertIn("B-002", result["sections"][1]["heading"])
+        with self.assertRaisesRegex(ValueError, "before Item To"):
+            build_report(self.db, "stock_card", {"item_id": last["id"], "item_to_id": first["id"]})
+
 
 
 if __name__ == "__main__":

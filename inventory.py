@@ -348,6 +348,10 @@ def build_report(database, report, options):
         return True
     if report in ("turnover", "supplier_stock", "count_variances"):
         return additional_inventory_report(database, report, options, items, warehouses, in_category, currency, method, date_from, date_to, warehouse, company)
+    if report == "analysis3d":
+        return inventory_analysis(database, options, items, warehouses, in_category, currency, method, date_from, date_to, warehouse, company)
+    if report == "health":
+        return inventory_health(database, options, items, in_category, currency, method, date_to, warehouse, company)
     if report == "valuation":
         state = run_costing(database, date_to, method)
         headers = ["Item Code", "Item", "Category", "Unit", "Quantity", f"Unit Cost ({currency})", f"Stock Value ({currency})", "Sales Price", "Value at Sales Price", "Reorder Level", "Status"]
@@ -376,28 +380,37 @@ def build_report(database, report, options):
             by_wh = [[w["code"], w["name"], sum((data["by_warehouse"].get(wid, ZERO) * data["avg"] for data in state.values()), ZERO).quantize(Decimal("0.01"))] for wid, w in warehouses.items()]
             sections.append({"heading": "Value by warehouse", "headers": ["Warehouse", "Name", f"Value ({currency})"], "rows": by_wh, "total_rows": []})
     elif report == "stock_card":
-        if not options.get("item_id"): raise ValueError("Choose the item for the stock card")
-        item_id = int(options["item_id"]); lines = []; opening = {"qty": ZERO, "value": ZERO}
+        first = items.get(int(options.get("item_id") or 0))
+        if not first: raise ValueError("Choose Stock Card Item From")
+        last = items.get(int(options.get("item_to_id") or options["item_id"]))
+        if not last: raise ValueError("Choose a valid Stock Card Item To")
+        if first["sku"] > last["sku"]: raise ValueError("Stock Card Item From must be before Item To")
+        selected = [item_id for item_id, item in sorted(items.items(), key=lambda pair: pair[1]["sku"])
+                    if first["sku"] <= item["sku"] <= last["sku"] and in_category(item_id)]
+        cards = {item_id: {"opening_qty": ZERO, "opening_value": ZERO, "lines": []} for item_id in selected}
         def record(row, unit, value):
-            if row["item_id"] != item_id or (warehouse and row["warehouse_id"] != warehouse): return
+            card = cards.get(row["item_id"])
+            if card is None or (warehouse and row["warehouse_id"] != warehouse): return
             qty = _d(row["quantity"]); cost_value = qty * (_d(row["unit_cost"]) if qty > 0 and row["doc_type"] != "transfer" else unit)
-            if row["doc_date"] < date_from: opening["qty"] += qty; opening["value"] += cost_value; return
-            lines.append([display_date(row["doc_date"]), row["number"], DOC_TYPES[row["doc_type"]][1], row.get("warehouse_code") or "", row.get("party_name") or row.get("reference") or "",
-                          qty if qty > 0 else "", -qty if qty < 0 else "", (unit if qty < 0 or row["doc_type"] == "transfer" else _d(row["unit_cost"])).quantize(Decimal("0.0001")), cost_value.quantize(Decimal("0.01"))])
+            if row["doc_date"] < date_from:
+                card["opening_qty"] += qty; card["opening_value"] += cost_value; return
+            card["lines"].append([display_date(row["doc_date"]), row["number"], DOC_TYPES[row["doc_type"]][1], row.get("warehouse_code") or "", row.get("party_name") or row.get("reference") or "",
+                                  qty if qty > 0 else "", -qty if qty < 0 else "", (unit if qty < 0 or row["doc_type"] == "transfer" else _d(row["unit_cost"])).quantize(Decimal("0.0001")), cost_value.quantize(Decimal("0.01"))])
         run_costing(database, date_to, method, record)
-        rows = [["", "", "Opening balance", "", "", "", "", "", opening["value"].quantize(Decimal("0.01"))]]; qty_balance = opening["qty"]; value_balance = opening["value"]
-        rows[0].insert(9, qty_balance); rows[0].append(value_balance.quantize(Decimal("0.01")))
-        total_in = ZERO; total_out = ZERO
-        for line in lines:
-            qty = _d(line[5] or 0) - _d(line[6] or 0); qty_balance += qty; value_balance += line[8]
-            total_in += _d(line[5] or 0); total_out += _d(line[6] or 0)
-            rows.append(line + [qty_balance, value_balance.quantize(Decimal("0.01"))])
-        rows.append(["", "", "TOTAL / CLOSING", "", "", total_in, total_out, "", "", qty_balance, value_balance.quantize(Decimal("0.01"))])
-        title = "Stock Card"
-        item = items[item_id]
-        sections.append({"heading": f"{item['sku']} - {item['name']} ({item['unit']}) | {display_date(date_from)} to {display_date(date_to)}" + (f" - {warehouses[warehouse]['code']}" if warehouse else ""),
-                         "headers": ["Date", "Document", "Type", "Warehouse", "Party / Reference", "In", "Out", f"Unit Cost ({currency})", "Value", "Balance Qty", "Balance Value"],
-                         "rows": rows, "total_rows": [0, len(rows) - 1]})
+        for item_id in selected:
+            card = cards[item_id]; qty_balance = card["opening_qty"]; value_balance = card["opening_value"]
+            rows = [["", "", "Opening balance", "", "", "", "", "", value_balance.quantize(Decimal("0.01")), qty_balance, value_balance.quantize(Decimal("0.01"))]]
+            total_in = ZERO; total_out = ZERO
+            for line in card["lines"]:
+                qty = _d(line[5] or 0) - _d(line[6] or 0); qty_balance += qty; value_balance += line[8]
+                total_in += _d(line[5] or 0); total_out += _d(line[6] or 0)
+                rows.append(line + [qty_balance, value_balance.quantize(Decimal("0.01"))])
+            rows.append(["", "", "TOTAL / CLOSING", "", "", total_in, total_out, "", "", qty_balance, value_balance.quantize(Decimal("0.01"))])
+            item = items[item_id]
+            sections.append({"heading": f"{item['sku']} - {item['name']} ({item['unit']}) | {display_date(date_from)} to {display_date(date_to)}" + (f" - {warehouses[warehouse]['code']}" if warehouse else ""),
+                             "headers": ["Date", "Document", "Type", "Warehouse", "Party / Reference", "In", "Out", f"Unit Cost ({currency})", "Value", "Balance Qty", "Balance Value"],
+                             "rows": rows, "total_rows": [0, len(rows) - 1]})
+        title = "Stock Cards" if options.get("item_to_id") else "Stock Card"
     elif report == "movements":
         rows = []
         def record(row, unit, value):
@@ -609,6 +622,76 @@ def list_counts(database):
 
 
 # ---------------------------------------------------------------- ageing and summary
+def inventory_analysis(database, options, items, warehouses, in_category, currency, method, date_from, date_to, warehouse, company):
+    """Pivot items/categories/suppliers against warehouses or months, by quantity or cost value."""
+    row_dim = options.get("rows") or "item"; col_dim = options.get("columns") or "warehouse"; measure = options.get("measure") or "quantity"
+    if row_dim not in ("item", "category", "supplier") or col_dim not in ("warehouse", "month") or measure not in ("quantity", "value"):
+        raise ValueError("Choose Item, Category or Supplier, Warehouse or Month, and Quantity or Value")
+    with database.connect() as db:
+        suppliers = {str(r["id"]): r["name"] for r in db.execute("SELECT id,name FROM parties")}
+    def group(item):
+        if row_dim == "item": return f"{item['sku']} - {item['name']}"
+        if row_dim == "category": return item.get("category") or "(No category)"
+        return suppliers.get(str(item.get("supplier_id") or ""), "(No supplier)")
+    pivot = {}; columns = set()
+    def add(item_id, column, quantity, unit_cost):
+        item = items.get(item_id)
+        if not item or not in_category(item_id): return
+        if options.get("item_id") and item_id != int(options["item_id"]): return
+        value = quantity if measure == "quantity" else quantity * unit_cost
+        label = group(item); cell = pivot.setdefault(label, {}); cell[column] = cell.get(column, ZERO) + value
+        columns.add(column)
+    if col_dim == "warehouse":
+        state = run_costing(database, date_to, method)
+        for item_id, data in state.items():
+            for warehouse_id, qty in data["by_warehouse"].items():
+                if warehouse and warehouse != warehouse_id: continue
+                add(item_id, warehouses[warehouse_id]["code"], qty, data["avg"])
+        for warehouse_id, name in warehouses.items():
+            if not warehouse or warehouse == warehouse_id: columns.add(name["code"])
+    else:
+        def record(row, unit, value):
+            if row["doc_date"] < date_from or row["doc_type"] == "transfer" or (warehouse and warehouse != row["warehouse_id"]): return
+            add(row["item_id"], row["doc_date"][:7], _d(row["quantity"]), unit)
+        run_costing(database, date_to, method, record)
+    ordered = sorted(columns); rows = []; totals = [ZERO] * len(ordered)
+    for label, values in sorted(pivot.items()):
+        amounts = [values.get(col, ZERO) for col in ordered]
+        totals = [a + b for a, b in zip(totals, amounts)]
+        rows.append([label] + [v.quantize(Decimal("0.01")) if measure == "value" else v for v in amounts] + [sum(amounts, ZERO)])
+    rows.append(["TOTAL"] + [v.quantize(Decimal("0.01")) if measure == "value" else v for v in totals] + [sum(totals, ZERO)])
+    return {"title": "Inventory Analysis (3D)", "meta": [f"Company: {company.get('company_name') or '-'}", f"Rows: {row_dim.title()}   Columns: {col_dim.title()}   Measure: {measure.title()} ({currency} cost value when applicable)", f"From {display_date(date_from)} to {display_date(date_to)}"],
+            "sections": [{"heading": "Stock at To Date" if col_dim == "warehouse" else "Net stock movement during period (receipts less issues)", "headers": [row_dim.title()] + ordered + ["Total"], "rows": rows, "total_rows": [len(rows) - 1]}]}
+
+
+def inventory_health(database, options, items, in_category, currency, method, date_to, warehouse, company):
+    """List actionable stock issues with value at cost and item master data."""
+    try: days = int(options.get("days") or 90)
+    except ValueError as exc: raise ValueError("Slow-moving days must be a whole number") from exc
+    if days < 1: raise ValueError("Slow-moving days must be at least 1")
+    cutoff = (datetime.strptime(date_to, "%Y-%m-%d") - timedelta(days=days)).strftime("%Y-%m-%d")
+    state = run_costing(database, date_to, method); rows = []; totals = {}
+    for item_id, item in sorted(items.items(), key=lambda pair: pair[1]["sku"]):
+        if not item["active"] or not in_category(item_id): continue
+        data = state.get(item_id, {}); qty = data.get("by_warehouse", {}).get(warehouse, ZERO) if warehouse else data.get("qty", ZERO)
+        reorder = _d(item.get("reorder_level")); issues = []
+        if qty < 0: issues.append("Negative stock")
+        if reorder > 0 and qty <= reorder: issues.append("Reorder")
+        if qty > 0 and not data.get("avg", ZERO): issues.append("Missing unit cost")
+        if qty > 0 and not item.get("supplier_id"): issues.append("No supplier")
+        if qty > 0 and (not data.get("last_out") or data["last_out"] < cutoff): issues.append(f"No issue in {days} days")
+        if not issues: continue
+        value = (qty * data.get("avg", ZERO)).quantize(Decimal("0.01"))
+        for issue in issues:
+            rows.append([issue, item["sku"], item["name"], item.get("category") or "", qty, reorder, value, display_date(data["last_out"]) if data.get("last_out") else "Never"])
+            count, amount = totals.get(issue, (0, ZERO)); totals[issue] = (count + 1, amount + value)
+    summary = [[issue, count, value.quantize(Decimal("0.01"))] for issue, (count, value) in sorted(totals.items())]
+    return {"title": "Inventory Health", "meta": [f"Company: {company.get('company_name') or '-'}", f"As of {display_date(date_to)}   Slow-moving threshold: {days} days"],
+            "sections": [{"heading": "Action summary", "headers": ["Issue", "Items", f"Stock Value ({currency})"], "rows": summary or [["No inventory exceptions", 0, ZERO]], "total_rows": []},
+                         {"heading": "Items to review (an item may appear for more than one issue)", "headers": ["Issue", "Item Code", "Item", "Category", "On Hand", "Reorder Level", f"Value ({currency})", "Last Issue"],
+                          "rows": rows or [["No inventory exceptions"] + [""] * 7], "total_rows": []}]}
+
+
 def additional_inventory_report(database, report, options, items, warehouses, in_category, currency, method, date_from, date_to, warehouse, company):
     """Turnover, stock by supplier, and saved physical count differences."""
     selected = lambda item_id: item_id in items and in_category(item_id) and (not options.get("item_id") or int(options["item_id"]) == item_id)
