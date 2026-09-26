@@ -137,8 +137,31 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         style.map("Treeview", background=[("selected", "#D6E4ED")], foreground=[("selected", NAVY)])
         style.configure("Treeview.Heading", background=NAVY, foreground="white", font=("Segoe UI", 9, "bold"))
         style.map("Treeview.Heading", background=[("active", NAVY)])
-        style.configure("TCombobox", padding=5)
-        style.configure("Sales.Treeview", rowheight=30, font=("Segoe UI", 9))
+        style.configure("TCombobox", padding=4)
+        style.configure("Sales.Treeview", rowheight=28, font=("Segoe UI", 9))
+        # lighter, calmer look: shorter rows (more lines on screen), soft heading, clean inputs
+        style.configure("Treeview", rowheight=26)
+        style.configure("Treeview.Heading", background="#23405E", relief="flat", padding=(4, 5))
+        style.map("Treeview.Heading", background=[("active", "#2E5277")])
+        style.configure("TLabelframe", background=LIGHT); style.configure("TLabelframe.Label", background=LIGHT, foreground=NAVY, font=("Segoe UI", 9, "bold"))
+        style.configure("Vertical.TScrollbar", arrowsize=12); style.configure("Horizontal.TScrollbar", arrowsize=12)
+        self.option_add("*Font", ("Segoe UI", 9))
+        self.option_add("*Entry.relief", "solid"); self.option_add("*Entry.borderWidth", 1)
+        self.option_add("*Entry.highlightThickness", 1); self.option_add("*Entry.highlightColor", GOLD); self.option_add("*Entry.highlightBackground", "#C9D3DD")
+        self.option_add("*LabelFrame.foreground", NAVY); self.option_add("*LabelFrame.font", ("Segoe UI", 9, "bold"))
+        self.option_add("*Button.cursor", "hand2"); self.option_add("*Button.relief", "flat")
+        # buttons light up under the mouse
+        def hover(event, entering):
+            widget = event.widget
+            try:
+                if entering:
+                    widget._saber_bg = widget.cget("background"); color = widget._saber_bg.lstrip("#")
+                    if len(color) == 6:
+                        lighter = "#" + "".join(f"{min(255, int(color[i:i + 2], 16) + 28):02x}" for i in (0, 2, 4)); widget._saber_hover = lighter; widget.configure(background=lighter)
+                elif getattr(widget, "_saber_bg", None) and str(widget.cget("background")).lower() == str(getattr(widget, "_saber_hover", "")).lower():
+                    widget.configure(background=widget._saber_bg)  # only undo our own highlight
+            except Exception: pass
+        self.bind_class("Button", "<Enter>", lambda e: hover(e, True), add="+"); self.bind_class("Button", "<Leave>", lambda e: hover(e, False), add="+")
 
     def clear(self):
         for child in self.winfo_children(): child.destroy()
@@ -2008,7 +2031,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Button(controls,text="Apply",command=self.load_financial_reports,bg=GOLD,fg=NAVY,border=0,padx=15,pady=6).pack(side="left")
         nested=ttk.Notebook(self.reports_tab); nested.pack(fill="both",expand=True,padx=10,pady=(0,10))
         gl=tk.Frame(nested,bg=LIGHT); bs=tk.Frame(nested,bg=LIGHT); vat=tk.Frame(nested,bg=LIGHT); cash=tk.Frame(nested,bg=LIGHT); aging=tk.Frame(nested,bg=LIGHT); comparative=tk.Frame(nested,bg=LIGHT)
-        nested.add(gl,text="General Ledger"); nested.add(bs,text="Balance Sheet"); nested.add(vat,text="Lebanese VAT Report"); nested.add(cash,text="Cash Flow"); nested.add(aging,text="Receivables / Payables Aging"); nested.add(comparative,text="Comparative P&L"); self.build_budget_page(nested)
+        nested.add(gl,text="General Ledger"); nested.add(bs,text="Balance Sheet"); nested.add(vat,text="Lebanese VAT Report"); nested.add(cash,text="Cash Flow"); nested.add(aging,text="Receivables / Payables Aging"); nested.add(comparative,text="Comparative P&L"); self.build_budget_page(nested); self.build_business_reports_page(nested)
         self.ledger_tree=self.table(gl,[("date","Date",95),("entry","Entry",90),("account","Account",85),("name","Account Name",180),("description","Description",200),("currency","Currency",70),("debit","Debit",105),("credit","Credit",105),("balance","Balance",110)])
         self.report_buttons(gl,"ledger")
         self.balance_tree=self.table(bs,[("currency","Currency",80),("type","Type",90),("account","Account",90),("name","Account Name",280),("debit","Debit",120),("credit","Credit",120),("balance","Balance",130)])

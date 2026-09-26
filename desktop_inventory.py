@@ -10,7 +10,7 @@ from desktop_brains import EditableSheet
 NAVY, GOLD, LIGHT = "#071b2e", "#c9a96a", "#f3f6f8"
 RED, MUTED = "#8B1E1E", "#5f6b76"
 DOC_TYPES = {"Opening Stock": "opening", "Stock Receipt": "receipt", "Stock Issue": "issue", "Adjustment +": "adjustment_in", "Adjustment -": "adjustment_out", "Transfer": "transfer"}
-REPORTS = {"Stock Valuation": "valuation", "Stock Card": "stock_card", "Stock Movements": "movements", "Sales Margin (COGS)": "margin", "Reorder Report": "reorder", "Slow-moving Stock": "slow"}
+REPORTS = {"Inventory Summary": "summary", "Stock Ageing": "ageing", "Stock Valuation": "valuation", "Stock Card": "stock_card", "Stock Movements": "movements", "Sales Margin (COGS)": "margin", "Reorder Report": "reorder", "Slow-moving Stock": "slow"}
 
 
 def _num(value):
@@ -315,7 +315,8 @@ class InventoryMixin:
         tk.Label(bar3, text="Subcategory", bg=LIGHT).pack(side="left"); self.ir_subcategory_box = ttk.Combobox(bar3, textvariable=self.ir_subcategory, state="readonly", width=14); self.ir_subcategory_box.pack(side="left", padx=(4, 8))
         tk.Label(bar3, text="Unit", bg=LIGHT).pack(side="left"); self.ir_unit_box = ttk.Combobox(bar3, textvariable=self.ir_unit, state="readonly", width=8); self.ir_unit_box.pack(side="left", padx=(4, 8))
         tk.Label(bar3, text="Supplier", bg=LIGHT).pack(side="left"); self.ir_supplier_box = ttk.Combobox(bar3, textvariable=self.ir_supplier, state="readonly", width=22); self.ir_supplier_box.pack(side="left", padx=(4, 8))
-        tk.Label(bar3, text="Filters combine: e.g. Category + Supplier + Warehouse", bg=LIGHT, fg=MUTED).pack(side="left", padx=6)
+        self.ir_buckets = tk.StringVar(value="30,60,90,180,365")
+        tk.Label(bar3, text="Ageing buckets (days)", bg=LIGHT).pack(side="left", padx=(6, 2)); tk.Entry(bar3, textvariable=self.ir_buckets, width=16).pack(side="left", padx=4)
         tk.Label(bar2, text="Slow-moving days", bg=LIGHT).pack(side="left"); tk.Entry(bar2, textvariable=self.ir_days, width=5).pack(side="left", padx=4)
         tk.Checkbutton(bar2, text="Include zero stock", variable=self.ir_zero, bg=LIGHT).pack(side="left", padx=6)
         tk.Button(bar2, text="Show", command=self.run_inventory_report, bg=GOLD, fg=NAVY, border=0, padx=18, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=6)
@@ -334,7 +335,8 @@ class InventoryMixin:
         if len(matches)==1: self.ir_item.set(matches[0])
 
     def inventory_report_options(self):
-        options = {"date_from": self.ir_from.get().strip(), "date_to": self.ir_to.get().strip(), "days": self.ir_days.get().strip() or "90", "include_zero": self.ir_zero.get()}
+        options = {"date_from": self.ir_from.get().strip(), "date_to": self.ir_to.get().strip(), "days": self.ir_days.get().strip() or "90", "include_zero": self.ir_zero.get(),
+                   "buckets": self.ir_buckets.get().strip() if hasattr(self, "ir_buckets") else ""}
         if self.ir_warehouse.get() not in ("", "All"):
             code = self.ir_warehouse.get().split(" - ", 1)[0]; options["warehouse_id"] = next(w["id"] for w in self.warehouse_rows if w["code"] == code)
         item = self.item_by_code(self.ir_item.get())

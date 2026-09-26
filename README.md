@@ -249,3 +249,24 @@ F2 opens the list that fits the field: items in item fields, customers / supplie
 - Replacement is refused when payments, stock documents, or a saved VAT return are linked to existing invoices, when a fiscal year is closed, or when existing invoices record amounts paid. Review those records first.
 - Invalid company/year selections return an error. Payment and expense edits are prepared on a database snapshot before replacing the live file. Stock checks no longer temporarily remove saved movements.
 - The PDF import preview scans every page and creates separate preview rows when invoice numbers change. Repeated invoice numbers on following pages are grouped. Scanned pages stay visible for manual entry. Invoices sharing one page still require manual separation and review.
+
+# Version 2.6.0 - review of the ChatGPT changes + inventory reports
+Kept from the ChatGPT changes (all tests pass): initial admin password (10+ characters) instead of admin/admin, safer invoice / payment edits (nothing lost if a save fails), year closing with automatic rollback, stricter company / year checks, local expense-account suggestions (ai_mapper) and optional OpenAI assistance (ai_service - needs an API key; it sends page 1 of the chosen invoice PDF to OpenAI).
+Adjusted: the background daily backup is now an OPTIONAL installer task, unchecked by default (backups are made on request from Backup & Restore); leftover files removed (temp.txt, shortcut).
+
+## Inventory reports
+- **Inventory Summary**: key figures (items, value at cost and at sales price, potential margin, items to reorder, slow-moving and old-stock value), value by category and by warehouse, top 10 items, ageing, items to reorder.
+- **Stock Ageing**: stock on hand by age of receipt (first in - first out): 0-30, 31-60, 61-90, 91-180, 181-365, over 365 days (buckets can be changed), value per bucket, average age, oldest receipt, last issue, % of old stock, category subtotals, ageing summary, and the list of stock older than 180 days to review.
+- **Stock Valuation**: grouped by category with subtotals.
+All with the filters (warehouse, category, subcategory, unit, supplier, costing method) and Excel / PDF / Print.
+
+# Version 2.7.0
+- Merged: the latest ChatGPT changes + version 2.6.0 (stock ageing, inventory summary, valuation by category, optional automatic backup were missing from the upload and are back).
+- **Financial Reports > Business Reports** (Excel, PDF, print, preview):
+  - Receivables Ageing (customers) and Payables Ageing (suppliers): open documents by days after the due date (not due, 1-30, 31-60, 61-90, 91-180, over 180 - buckets can be changed), receipts / payments not allocated, net due, % overdue, detail of open documents.
+  - Item Sales by Client, and Client Quantities by Item: quantity, average price, HT, VAT, TTC.
+  - Sales Analysis (3D pivot): rows (client / item / category) x columns (month / quarter / client / item / category) x measure (quantity / HT / VAT / TTC).
+  - Top Clients and Top Suppliers (purchases and expenses): HT + VAT = TTC, share, cumulative share, number of documents.
+  - Amounts in USD or LBP (converted at each document date) or one currency only; credit notes deducted.
+- **Payroll > Tax & NSSF Settings**: the NSSF ceilings and rates by period (Date From - Date To) are edited directly in the table (double-click), with Add / Delete / Save Periods; a new Date From closes the previous period automatically.
+- Lighter, calmer layout: shorter table rows (more lines on screen), soft headings, clean input borders, buttons that light up under the mouse.

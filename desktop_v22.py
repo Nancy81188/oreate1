@@ -188,3 +188,52 @@ class V22Mixin:
             label = next((v for v in box["values"] if str(v).split(" | ")[0] == party["name"]), party["name"])
             box.set(label); box.event_generate("<<ComboboxSelected>>")
         search.trace_add("write", fill); tree.bind("<Double-1>", choose); tree.bind("<Return>", choose); fill()
+
+    # ------------------------------------------------------------ business reports (ageing, item sales, 3D, top)
+    BUSINESS_REPORTS = {"Receivables Ageing (customers)": "receivables", "Payables Ageing (suppliers)": "payables", "Item Sales by Client": "item_sales_client",
+                        "Client Quantities by Item": "item_sales_item", "Sales Analysis (3D pivot)": "analysis", "Top Clients (HT + VAT = TTC)": "top_clients",
+                        "Top Suppliers (HT + VAT = TTC)": "top_suppliers"}
+
+    def build_business_reports_page(self, nested):
+        page = tk.Frame(nested, bg=LIGHT); nested.add(page, text="Business Reports")
+        year = getattr(self, "current_fiscal_year", datetime.now().year)
+        self.br = {k: tk.StringVar(value=v) for k, v in (("report", "Receivables Ageing (customers)"), ("from", f"01-01-{year}"), ("to", f"31-12-{year}"), ("basis", "USD"),
+                   ("only", "All currencies"), ("buckets", "30,60,90,180"), ("top", "20"), ("rows", "client"), ("columns", "month"), ("measure", "ht"))}
+        self.br_review = tk.BooleanVar(value=False)
+        bar = tk.Frame(page, bg=LIGHT); bar.pack(fill="x", padx=8, pady=(8, 2))
+        ttk.Combobox(bar, textvariable=self.br["report"], values=list(self.BUSINESS_REPORTS), state="readonly", width=30).pack(side="left", padx=(0, 8))
+        tk.Label(bar, text="From", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.br["from"], 11).pack(side="left", padx=(4, 6))
+        tk.Label(bar, text="To / As of", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.br["to"], 11).pack(side="left", padx=(4, 6))
+        tk.Label(bar, text="Amounts in", bg=LIGHT).pack(side="left"); ttk.Combobox(bar, textvariable=self.br["basis"], values=["USD", "LBP"], state="readonly", width=5).pack(side="left", padx=(4, 6))
+        tk.Label(bar, text="Only", bg=LIGHT).pack(side="left"); ttk.Combobox(bar, textvariable=self.br["only"], values=["All currencies", "USD", "LBP", "EUR", "AED"], state="readonly", width=12).pack(side="left", padx=4)
+        bar2 = tk.Frame(page, bg=LIGHT); bar2.pack(fill="x", padx=8, pady=2)
+        tk.Label(bar2, text="Ageing buckets", bg=LIGHT).pack(side="left"); tk.Entry(bar2, textvariable=self.br["buckets"], width=13).pack(side="left", padx=(4, 8))
+        tk.Label(bar2, text="Top", bg=LIGHT).pack(side="left"); tk.Entry(bar2, textvariable=self.br["top"], width=4).pack(side="left", padx=(4, 8))
+        tk.Label(bar2, text="3D: rows", bg=LIGHT).pack(side="left"); ttk.Combobox(bar2, textvariable=self.br["rows"], values=["client", "item", "category"], state="readonly", width=8).pack(side="left", padx=2)
+        tk.Label(bar2, text="columns", bg=LIGHT).pack(side="left"); ttk.Combobox(bar2, textvariable=self.br["columns"], values=["month", "quarter", "client", "item", "category"], state="readonly", width=8).pack(side="left", padx=2)
+        tk.Label(bar2, text="measure", bg=LIGHT).pack(side="left"); ttk.Combobox(bar2, textvariable=self.br["measure"], values=["quantity", "ht", "vat", "ttc"], state="readonly", width=8).pack(side="left", padx=(2, 8))
+        tk.Checkbutton(bar2, text="Include Review", variable=self.br_review, bg=LIGHT).pack(side="left", padx=4)
+        bar3 = tk.Frame(page, bg=LIGHT); bar3.pack(fill="x", padx=8, pady=(2, 4))
+        tk.Button(bar3, text="Show", command=self.run_business_report, bg=GOLD, fg=NAVY, border=0, padx=22, pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
+        for text, fmt in (("Print Preview", "preview"), ("Print", "print"), ("Excel", "xlsx"), ("PDF", "pdf")):
+            tk.Button(bar3, text=text, command=lambda f=fmt: self.export_business_report(f), bg=NAVY, fg="white", border=0, padx=12, pady=5).pack(side="left", padx=2)
+        tk.Label(bar3, text="Ageing uses the due date (or the invoice date); amounts are converted at each document date; credit notes are deducted.", bg=LIGHT, fg="#5f6b76").pack(side="left", padx=10)
+        self.br_info = tk.Label(page, text="Choose a report and press Show.", bg=LIGHT, fg="#5f6b76", anchor="w"); self.br_info.pack(fill="x", padx=10)
+        self.br_viewer = self.report_viewer(page, [170, 150, 110, 110, 110, 110, 110, 110, 110, 110, 110, 90])
+
+    def business_options(self):
+        options = {k: v.get().strip() for k, v in self.br.items() if k not in ("report",)}
+        options.update(date_from=options.pop("from"), date_to=options.pop("to"), include_review=self.br_review.get(),
+                       only_currency="" if options.get("only") == "All currencies" else options.get("only"))
+        options.pop("only", None); return options
+
+    def run_business_report(self):
+        try: result = self.client.business_report(self.BUSINESS_REPORTS[self.br["report"].get()], self.business_options())
+        except Exception as exc: return messagebox.showerror("Business Reports", str(exc))
+        self.business_result = result; self.show_sections(self.br_viewer, result["sections"]); self.br_info.config(text=f'{result["title"]}  |  ' + "   ".join(result["meta"]), fg=NAVY)
+
+    def export_business_report(self, mode):
+        if not getattr(self, "business_result", None): self.run_business_report()
+        result = getattr(self, "business_result", None)
+        if result: self.output_sections(result["title"], result["meta"], result["sections"], result["title"].replace(" ", "_").replace("(", "").replace(")", ""), mode)
+

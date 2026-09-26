@@ -3047,3 +3047,17 @@ class Database:
         with self.connect() as db:
             return [dict(r) for r in db.execute("""SELECT a.invoice_id,i.invoice_number,i.invoice_date,CAST(a.amount AS REAL) amount FROM payment_allocations a
                 JOIN invoices i ON i.id=a.invoice_id WHERE a.payment_id=? ORDER BY a.id""", (int(payment_id),))]
+
+    def delete_payroll_period(self, date_from, user_id):
+        """Remove one Tax & NSSF period; the period before it is extended to cover the gap."""
+        date_from=iso_date(date_from,"Date From")
+        with self.connect() as db:
+            rows=[dict(r) for r in db.execute("SELECT id,date_from,date_to FROM payroll_settings ORDER BY date_from")]
+            if len(rows)<=1: raise ValueError("At least one period must remain")
+            target=next((r for r in rows if r["date_from"]==date_from),None)
+            if not target: raise ValueError("Period not found")
+            index=rows.index(target); db.execute("DELETE FROM payroll_settings WHERE id=?",(target["id"],))
+            if index>0: db.execute("UPDATE payroll_settings SET date_to=? WHERE id=?",(target["date_to"],rows[index-1]["id"]))
+            db.execute("INSERT INTO audit_log(user_id,action,entity,details,created_at) VALUES(?,?,?,?,?)",(user_id,"delete","payroll_period",json.dumps({"date_from":date_from}),utcnow()))
+        return self.list_payroll_settings()
+

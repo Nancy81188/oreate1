@@ -359,9 +359,17 @@ def build_report(database, report, options):
             total += value; sales_total += qty * price
             rows.append([item["sku"], item["name"], item.get("category") or "", item["unit"], qty, data["avg"].quantize(Decimal("0.0001")), value, price, (qty * price).quantize(Decimal("0.01")), reorder,
                          "Reorder" if reorder and qty <= reorder else "OK"])
-        rows.append(["TOTAL", f"{len(rows)} item(s)", "", "", "", "", total, "", sales_total.quantize(Decimal("0.01")), "", ""])
+        # group by category with a subtotal per category
+        grouped = []; totals_index = []
+        for name in sorted({r[2] or "(no category)" for r in rows}):
+            members = [r for r in rows if (r[2] or "(no category)") == name]
+            grouped += members
+            grouped.append([f"Subtotal {name}", f"{len(members)} item(s)", "", "", sum((m[4] for m in members), ZERO), "", sum((m[6] for m in members), ZERO), "",
+                            sum((m[8] for m in members), ZERO), "", ""]); totals_index.append(len(grouped) - 1)
+        count = len(rows); rows = grouped
+        rows.append(["TOTAL", f"{count} item(s)", "", "", "", "", total, "", sales_total.quantize(Decimal("0.01")), "", ""])
         title = "Stock Valuation"; sections.append({"heading": f"Stock valuation at {display_date(date_to)} - {'weighted average' if method != 'fifo' else 'FIFO'}" + (f" - {warehouses[warehouse]['code']}" if warehouse else " - all warehouses"),
-                                                     "headers": headers, "rows": rows, "total_rows": [len(rows) - 1]})
+                                                     "headers": headers, "rows": rows, "total_rows": totals_index + [len(rows) - 1]})
         if not warehouse and len(warehouses) > 1:
             by_wh = [[w["code"], w["name"], sum((data["by_warehouse"].get(wid, ZERO) * data["avg"] for data in state.values()), ZERO).quantize(Decimal("0.01"))] for wid, w in warehouses.items()]
             sections.append({"heading": "Value by warehouse", "headers": ["Warehouse", "Name", f"Value ({currency})"], "rows": by_wh, "total_rows": []})
@@ -415,6 +423,10 @@ def build_report(database, report, options):
         title = "Sales Margin (Cost of Goods Sold)"
         sections.append({"heading": f"Items issued {display_date(date_from)} to {display_date(date_to)} - sales at invoice price, cost at {'FIFO' if method == 'fifo' else 'weighted average'}",
                          "headers": ["Item Code", "Item", "Quantity Sold", f"Sales ({currency})", "Cost of Goods Sold", "Gross Margin", "Margin %"], "rows": rows, "total_rows": [len(rows) - 1]})
+    elif report == "ageing":
+        return ageing_report(database, options, items, warehouses, in_category, currency, method, date_to, company)
+    elif report == "summary":
+        return summary_report(database, options, items, warehouses, in_category, currency, method, date_to, company)
     elif report in ("reorder", "slow"):
         state = run_costing(database, date_to, method); rows = []
         cutoff = (datetime.strptime(date_to, "%Y-%m-%d") - timedelta(days=int(options.get("days") or 90))).strftime("%Y-%m-%d")
@@ -588,3 +600,135 @@ def get_count(database, count_id):
 def list_counts(database):
     with database.connect() as db:
         return [dict(r) for r in db.execute("SELECT c.id,c.number,c.count_date,c.status,c.adjustment_numbers,w.code warehouse_code FROM physical_counts c JOIN warehouses w ON w.id=c.warehouse_id ORDER BY c.id DESC")]
+
+
+# ---------------------------------------------------------------- ageing and summary
+AGEING_BUCKETS = (30, 60, 90, 180, 365)
+
+
+def fifo_layers(database, date_to):
+    """Stock still on hand, split into the receipts it came from (FIFO): {item_id: [[qty, unit_cost, receipt_date], ...]}."""
+    layers = {}
+    for row in _movements(database, date_to):
+        if row["doc_type"] == "transfer": continue
+        qty = _d(row["quantity"]); item = layers.setdefault(row["item_id"], [])
+        if qty > 0: item.append([qty, _d(row["unit_cost"]), row["doc_date"]])
+        else:
+            remaining = -qty
+            while remaining > 0 and item:
+                take = min(item[0][0], remaining); item[0][0] -= take; remaining -= take
+                if item[0][0] <= 0: item.pop(0)
+    return {k: [l for l in v if l[0] > 0] for k, v in layers.items()}
+
+
+def _buckets(options):
+    try: values = sorted({int(v) for v in str(options.get("buckets") or "").replace(" ", "").split(",") if v})
+    except ValueError: raise ValueError("Ageing buckets must be days separated by commas, for example 30,60,90,180,365")
+    return tuple(v for v in values if v > 0) or AGEING_BUCKETS
+
+
+def _bucket_labels(limits):
+    labels = []; start = 0
+    for limit in limits: labels.append(f"{start}-{limit} days"); start = limit + 1
+    return labels + [f"Over {limits[-1]} days"]
+
+
+def _ageing_data(database, options, items, in_category, method, date_to):
+    limits = _buckets(options); as_of = datetime.strptime(date_to, "%Y-%m-%d")
+    state = run_costing(database, date_to, method); layers = fifo_layers(database, date_to)
+    warehouse = options.get("warehouse_id"); warehouse = int(warehouse) if str(warehouse or "").isdigit() else None
+    result = []
+    for item_id, item in sorted(items.items(), key=lambda pair: pair[1]["sku"]):
+        data = state.get(item_id); remaining = layers.get(item_id, [])
+        if not data or data["qty"] <= 0 or not in_category(item_id) or not remaining: continue
+        on_hand = data["by_warehouse"].get(warehouse, ZERO) if warehouse else data["qty"]
+        if on_hand <= 0: continue
+        share = on_hand / data["qty"]  # a warehouse's stock is aged like the item's stock
+        unit_cost = data["avg"]
+        buckets = [[ZERO, ZERO] for _ in range(len(limits) + 1)]; weighted_age = ZERO; oldest = None
+        for qty, layer_cost, day in remaining:
+            age = (as_of - datetime.strptime(day, "%Y-%m-%d")).days; qty = qty * share
+            index = next((i for i, limit in enumerate(limits) if age <= limit), len(limits))
+            value = qty * (layer_cost if method == "fifo" else unit_cost)
+            buckets[index][0] += qty; buckets[index][1] += value; weighted_age += qty * age
+            oldest = day if oldest is None or day < oldest else oldest
+        total_qty = sum((b[0] for b in buckets), ZERO); total_value = sum((b[1] for b in buckets), ZERO)
+        result.append({"item": item, "qty": total_qty, "value": total_value, "buckets": buckets, "avg_age": int(weighted_age / total_qty) if total_qty else 0,
+                       "oldest": oldest, "last_out": data.get("last_out"), "last_in": remaining[-1][2] if remaining else None})
+    return limits, result
+
+
+def ageing_report(database, options, items, warehouses, in_category, currency, method, date_to, company):
+    """Stock ageing: how long the stock on hand has been waiting, by receipt date (FIFO), valued at cost."""
+    limits, data = _ageing_data(database, options, items, in_category, method, date_to)
+    labels = _bucket_labels(limits); money = lambda v: Decimal(v).quantize(Decimal("0.01"))
+    headers = ["Item Code", "Item", "Category", "Unit", "On Hand", f"Value ({currency})", "Avg Age (days)", "Oldest Receipt", "Last Issue"] + labels + [f"% over {limits[-2] if len(limits) > 1 else limits[-1]} days"]
+    risk_from = len(limits) - 1 if len(limits) > 1 else len(limits)
+    rows = []; totals = []; grand = [ZERO] * (len(labels)); grand_qty = ZERO; grand_value = ZERO
+    for name in sorted({(d["item"].get("category") or "(no category)") for d in data}):
+        members = [d for d in data if (d["item"].get("category") or "(no category)") == name]; sub = [ZERO] * len(labels)
+        for d in members:
+            values = [b[1] for b in d["buckets"]]; old_share = sum(values[risk_from:], ZERO) / d["value"] * 100 if d["value"] else ZERO
+            rows.append([d["item"]["sku"], d["item"]["name"], name, d["item"]["unit"], d["qty"].quantize(Decimal("0.001")), money(d["value"]), d["avg_age"],
+                         display_date(d["oldest"]) if d["oldest"] else "", display_date(d["last_out"]) if d.get("last_out") else "never"] + [money(v) for v in values] + [f"{old_share:.0f}%"])
+            sub = [a + b for a, b in zip(sub, values)]
+        sub_value = sum(sub, ZERO)
+        rows.append([f"Subtotal {name}", f"{len(members)} item(s)", "", "", "", money(sub_value), "", "", ""] + [money(v) for v in sub] +
+                    [f"{(sum(sub[risk_from:], ZERO) / sub_value * 100):.0f}%" if sub_value else ""]); totals.append(len(rows) - 1)
+        grand = [a + b for a, b in zip(grand, sub)]; grand_value += sub_value; grand_qty += sum((d["qty"] for d in members), ZERO)
+    rows.append(["TOTAL", f"{len(data)} item(s)", "", "", "", money(grand_value), "", "", ""] + [money(v) for v in grand] +
+                [f"{(sum(grand[risk_from:], ZERO) / grand_value * 100):.0f}%" if grand_value else ""]); totals.append(len(rows) - 1)
+    summary = [[label, money(value), f"{(value / grand_value * 100):.1f}%" if grand_value else "0.0%", sum(1 for d in data if d["buckets"][index][1] > 0)]
+               for index, (label, value) in enumerate(zip(labels, grand))]
+    summary.append(["TOTAL STOCK", money(grand_value), "100.0%" if grand_value else "0.0%", len(data)])
+    old = sorted([d for d in data if sum((b[1] for b in d["buckets"][risk_from:]), ZERO) > 0], key=lambda d: -sum((b[1] for b in d["buckets"][risk_from:]), ZERO))
+    risk = [[d["item"]["sku"], d["item"]["name"], d["item"].get("category") or "", money(sum((b[1] for b in d["buckets"][risk_from:]), ZERO)), d["avg_age"],
+             display_date(d["last_out"]) if d.get("last_out") else "never"] for d in old[:25]]
+    threshold = limits[-2] if len(limits) > 1 else limits[-1]
+    sections = [{"heading": "Ageing summary", "headers": ["Age of stock", f"Value ({currency})", "% of stock value", "Items"], "rows": summary, "total_rows": [len(summary) - 1]},
+                {"heading": f"Stock ageing by item at {display_date(date_to)} (by receipt date, first in - first out)", "headers": headers,
+                 "rows": rows if data else [["No stock on hand"] + [""] * (len(headers) - 1)], "total_rows": totals if data else []},
+                {"heading": f"Stock older than {threshold} days - review for slow-moving or obsolete items", "headers": ["Item Code", "Item", "Category", f"Value over {threshold} days", "Avg Age (days)", "Last Issue"],
+                 "rows": risk or [["No stock older than this"] + [""] * 5], "total_rows": []}]
+    meta = [f"Company: {company.get('company_name') or '-'}   Inventory currency: {currency}   Costing: {'FIFO' if method == 'fifo' else 'Weighted average'}",
+            f"Stock ageing as of {display_date(date_to)}   Buckets: {', '.join(labels)}" + (f"   Warehouse: {warehouses[int(options['warehouse_id'])]['code']}" if str(options.get('warehouse_id') or '').isdigit() else "")]
+    return {"title": "Stock Ageing Report", "meta": meta, "sections": sections}
+
+
+def summary_report(database, options, items, warehouses, in_category, currency, method, date_to, company):
+    """One-page inventory summary: key figures, value by category and warehouse, top items, ageing."""
+    state = run_costing(database, date_to, method); money = lambda v: Decimal(v).quantize(Decimal("0.01"))
+    rows = [(item_id, items[item_id], data) for item_id, data in state.items() if data["qty"] > 0 and item_id in items and in_category(item_id)]
+    total_value = sum((d["value"] for _i, _it, d in rows), ZERO); sales_value = sum((d["qty"] * _d(it.get("sales_price")) for _i, it, d in rows), ZERO)
+    below = [it for _i, it, d in rows if _d(it.get("reorder_level")) > 0 and d["qty"] <= _d(it.get("reorder_level"))]
+    cutoff = (datetime.strptime(date_to, "%Y-%m-%d") - timedelta(days=int(options.get("days") or 90))).strftime("%Y-%m-%d")
+    limits, ageing = _ageing_data(database, options, items, in_category, method, date_to)
+    # slow-moving: in stock for longer than the period AND nothing issued during it (new arrivals are not slow)
+    slow = [(a["item"], state[a["item"]["id"]]) for a in ageing if a["oldest"] and a["oldest"] < cutoff and (not a.get("last_out") or a["last_out"] < cutoff)]
+    old_value = sum((sum((b[1] for b in a["buckets"][len(limits) - 1:]), ZERO) for a in ageing), ZERO)
+    kpis = [["Items in stock", len(rows)], [f"Stock value at cost ({currency})", money(total_value)], [f"Stock value at sales price ({currency})", money(sales_value)],
+            ["Potential gross margin", money(sales_value - total_value)], ["Items at or below reorder level", len(below)],
+            [f"Slow-moving stock value (no issue for {int(options.get('days') or 90)} days)", money(sum((d['value'] for _it, d in slow), ZERO))],
+            [f"Stock value older than {limits[-2] if len(limits) > 1 else limits[-1]} days", money(old_value)],
+            ["Share of old stock in total value", f"{(old_value / total_value * 100):.1f}%" if total_value else "0.0%"]]
+    by_category = {}
+    for _i, it, d in rows: by_category.setdefault(it.get("category") or "(no category)", [0, ZERO]); by_category[it.get("category") or "(no category)"][0] += 1; by_category[it.get("category") or "(no category)"][1] += d["value"]
+    category_rows = [[name, count, money(value), f"{(value / total_value * 100):.1f}%" if total_value else ""] for name, (count, value) in sorted(by_category.items(), key=lambda p: -p[1][1])]
+    warehouse_rows = []
+    for warehouse_id, warehouse in warehouses.items():
+        value = sum((d["by_warehouse"].get(warehouse_id, ZERO) * d["avg"] for _i, _it, d in rows), ZERO)
+        if value: warehouse_rows.append([warehouse["code"], warehouse["name"], money(value), f"{(value / total_value * 100):.1f}%" if total_value else ""])
+    top = sorted(rows, key=lambda r: -r[2]["value"])[:10]
+    top_rows = [[it["sku"], it["name"], it.get("category") or "", d["qty"].quantize(Decimal("0.001")), money(d["avg"]), money(d["value"]), f"{(d['value'] / total_value * 100):.1f}%" if total_value else ""] for _i, it, d in top]
+    labels = _bucket_labels(limits); age_totals = [sum((a["buckets"][i][1] for a in ageing), ZERO) for i in range(len(labels))]
+    sections = [{"heading": "Key figures", "headers": ["Indicator", "Value"], "rows": kpis, "total_rows": [1]},
+                {"heading": "Stock value by category", "headers": ["Category", "Items", f"Value ({currency})", "% of value"], "rows": category_rows or [["-", "", "", ""]], "total_rows": []},
+                {"heading": "Stock value by warehouse", "headers": ["Warehouse", "Name", f"Value ({currency})", "% of value"], "rows": warehouse_rows or [["-", "", "", ""]], "total_rows": []},
+                {"heading": "Top 10 items by value", "headers": ["Item Code", "Item", "Category", "On Hand", "Unit Cost", f"Value ({currency})", "% of value"], "rows": top_rows or [["-"] + [""] * 6], "total_rows": []},
+                {"heading": "Ageing of the stock", "headers": ["Age of stock", f"Value ({currency})", "% of value"],
+                 "rows": [[label, money(value), f"{(value / total_value * 100):.1f}%" if total_value else ""] for label, value in zip(labels, age_totals)], "total_rows": []}]
+    if below: sections.append({"heading": "Items to reorder", "headers": ["Item Code", "Item", "On Hand", "Reorder Level"],
+                               "rows": [[it["sku"], it["name"], state[it["id"]]["qty"].quantize(Decimal("0.001")), _d(it.get("reorder_level"))] for it in below], "total_rows": []})
+    meta = [f"Company: {company.get('company_name') or '-'}   Inventory currency: {currency}   Costing: {'FIFO' if method == 'fifo' else 'Weighted average'}", f"Situation at {display_date(date_to)}"]
+    return {"title": "Inventory Summary", "meta": meta, "sections": sections}
+

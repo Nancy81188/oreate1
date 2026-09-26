@@ -144,6 +144,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/payments/") and path.endswith("/allocations"):
             try: return self._json(200,{"items":self.db.payment_allocations(int(path.split("/")[-2]))})
             except Exception as exc: return self._json(400,{"error":str(exc)})
+        if path == "/api/reports/business":
+            try:
+                import business_reports
+                result=business_reports.build(self.db,self._query(parsed,"report",""),json.loads(self._query(parsed,"options","{}") or "{}"))
+                return self._json(200,ledger_reports.json_ready(result))
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/departments": return self._json(200,{"items":self.db.list_departments()})
         if path == "/api/projects": return self._json(200,{"items":self.db.list_projects()})
         if path == "/api/budgets":
@@ -477,6 +483,10 @@ class ApiHandler(BaseHTTPRequestHandler):
             return self._json(200,{"payroll":result})
         if path == "/api/payroll/nssf-payment":
             try: return self._json(201,self.db.record_nssf_payment(body,user["id"]))
+            except Exception as exc: return self._json(400,{"error":str(exc)})
+        if path == "/api/payroll/delete-period":
+            if user["role"]!="admin": return self._json(403,{"error":"Administrator permission required"})
+            try: return self._json(200,{"items":self.db.delete_payroll_period(body.get("date_from"),user["id"])})
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/payroll/apply-lebanese-rules":
             if user["role"]!="admin": return self._json(403,{"error":"Administrator permission required"})

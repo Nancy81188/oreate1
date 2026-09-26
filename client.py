@@ -246,4 +246,6 @@ class ApiClient:
     def download_backup(self,name):
         result=self.request("GET","/api/backups/download?"+urlencode({"name":name})); result["content"]=base64.b64decode(result["content"]); return result
     def backup_folder(self): return self.request("GET","/api/backups/folder")["folder"]
+    def business_report(self,report,options): return self.request("GET","/api/reports/business?"+urlencode({"report":report,"options":json.dumps(options)}))
+    def delete_payroll_period(self,date_from): return self.request("POST","/api/payroll/delete-period",{"date_from":date_from})["items"]
 

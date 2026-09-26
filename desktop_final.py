@@ -240,35 +240,86 @@ class FinalFeaturesMixin:
         except Exception as exc: return messagebox.showerror(title, f"The file could not be saved: {exc}")
         messagebox.showinfo(title, f"Saved successfully:\n{path}")
 
+    PERIOD_FIELDS = (("date_from", "Date From", 90), ("date_to", "Date To", 90), ("employee_ceiling", "Employee Ceiling", 115), ("medical_ceiling", "Sickness Ceiling", 115),
+                     ("family_ceiling", "Family Ceiling", 110), ("end_service_ceiling", "EOS Ceiling", 95), ("employee_nssf_rate", "Employee %", 80), ("medical_rate", "Employer Sick. %", 100),
+                     ("family_rate", "Family %", 70), ("end_service_rate", "EOS %", 65))
+
     def build_payroll_periods_panel(self, parent, row):
-        frame = tk.LabelFrame(parent, text="Effective periods (rates and ceilings apply From Date to To Date)", bg=LIGHT, padx=6, pady=4)
+        """NSSF ceilings and rates by period (Date From - Date To), edited directly like a spreadsheet."""
+        from desktop_brains import EditableSheet
+        frame = tk.LabelFrame(parent, text="NSSF ceilings and rates by period - double-click a cell to change it (ceilings in LBP / month, rates in %)", bg=LIGHT, padx=6, pady=4)
         frame.grid(row=row, column=0, columnspan=6, padx=10, pady=6, sticky="ew")
-        columns = (("from", "Date From", 90), ("to", "Date To", 90), ("emp", "Employee Rate", 90), ("emp_c", "Employee Ceiling", 115), ("med", "Medical Rate", 85),
-                   ("med_c", "Medical Ceiling", 110), ("fam", "Family Rate", 80), ("fam_c", "Family Ceiling", 105), ("eos", "EOS Rate", 70), ("eos_c", "EOS Ceiling", 100))
-        self.payroll_periods_tree = ttk.Treeview(frame, columns=[c[0] for c in columns], show="headings", height=4)
-        for key, label, width in columns: self.payroll_periods_tree.heading(key, text=label); self.payroll_periods_tree.column(key, width=width, anchor="w")
-        self.payroll_periods_tree.pack(fill="x")
-        self.payroll_periods_tree.bind("<Double-1>", lambda _event: self.load_selected_payroll_period())
-        tk.Label(frame, text="Double-click a period to load it. Saving a new Date From automatically ends the previous period the day before.", bg=LIGHT, fg=MUTED).pack(anchor="w")
+        bar = tk.Frame(frame, bg=LIGHT); bar.pack(fill="x")
+        self.action_button(bar, "Add Period", self.add_payroll_period).pack(side="left", padx=(0, 3))
+        tk.Button(bar, text="Delete Period", command=self.delete_payroll_period, bg=RED, fg="white", border=0, padx=10, pady=5).pack(side="left", padx=3)
+        tk.Button(bar, text="Save Periods", command=self.save_payroll_periods, bg=GOLD, fg=NAVY, border=0, padx=14, pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
+        tk.Label(bar, text="A new Date From ends the previous period the day before. Leave Date To empty for 'until further notice'.", bg=LIGHT, fg=MUTED).pack(side="left", padx=8)
+        self.periods_sheet = EditableSheet(self, frame, [("line", "#", 35, "center")] + [(k, l, w, "e" if "ceiling" in k or "rate" in k else "center") for k, l, w in self.PERIOD_FIELDS],
+                                           [k for k, _l, _w in self.PERIOD_FIELDS], self.payroll_period_changed, height=6)
+        self.payroll_periods_tree = self.periods_sheet.tree
+        self.payroll_periods_tree.bind("<Button-3>", lambda _e: self.load_selected_payroll_period())
         self.load_payroll_periods()
 
+    def period_display(self, row):
+        row["_display"] = {}
+        for key, _label, _w in self.PERIOD_FIELDS:
+            value = row.get(key)
+            if key.startswith("date"): row["_display"][key] = _display(value) if value else ("Open" if key == "date_to" else "")
+            elif key.endswith("rate"): row["_display"][key] = f"{float(value or 0) * 100:g}%"
+            else: row["_display"][key] = "No ceiling" if not float(value or 0) else f"{float(value):,.0f}"
+
     def load_payroll_periods(self):
-        if not hasattr(self, "payroll_periods_tree"): return
+        if not hasattr(self, "periods_sheet"): return
         try: rows = self.client.payroll_settings_list()
         except Exception: return
-        self.payroll_period_rows = {row["date_from"]: row for row in rows}
-        self.payroll_periods_tree.delete(*self.payroll_periods_tree.get_children())
-        def rate(value): return f"{float(value) * 100:g}%"
-        def ceiling(value): return "No ceiling" if not float(value or 0) else f"{float(value):,.0f}"
+        self.payroll_period_rows = {row["date_from"]: row for row in rows}; self.periods_sheet.clear()
         for row in rows:
-            self.payroll_periods_tree.insert("", "end", iid=row["date_from"], values=(_display(row["date_from"]), _display(row.get("date_to")) or "Open",
-                rate(row["employee_nssf_rate"]), ceiling(row["employee_ceiling"]), rate(row["medical_rate"]), ceiling(row["medical_ceiling"]),
-                rate(row["family_rate"]), ceiling(row["family_ceiling"]), rate(row["end_service_rate"]), ceiling(row["end_service_ceiling"])))
+            item = {"original_from": row["date_from"], **{k: row.get(k) for k, _l, _w in self.PERIOD_FIELDS}}; self.period_display(item); self.periods_sheet.insert(item)
+
+    def payroll_period_changed(self, iid, key, text):
+        row = self.periods_sheet.rows[iid]; text = text.strip()
+        try:
+            if key.startswith("date"):
+                if key == "date_to" and text.lower() in ("", "open"): row[key] = None
+                else: row[key] = _user_date(text).strftime("%Y-%m-%d")
+            elif key.endswith("rate"):
+                value = float(text.replace("%", "").replace(",", "")); row[key] = str(value / 100 if value > 1 or "%" in text or value == 1 else value)
+            else:
+                value = float(text.replace(",", "") or 0); row[key] = str(int(value)) if value == int(value) else str(value)
+        except ValueError: messagebox.showwarning("NSSF periods", "Dates as DD-MM-YYYY, rates like 3 or 3%, ceilings as numbers"); return False
+        self.period_display(row)
+
+    def add_payroll_period(self):
+        rows = self.periods_sheet.ordered(); last = dict(rows[-1]) if rows else {}
+        item = {**{k: last.get(k) for k, _l, _w in self.PERIOD_FIELDS}, "original_from": None, "date_from": datetime.now().strftime("%Y-%m-01"), "date_to": None}
+        self.period_display(item); iid = self.periods_sheet.insert(item); self.after(30, lambda: self.periods_sheet.edit(iid, "date_from"))
+
+    def delete_payroll_period(self):
+        iid, row = self.periods_sheet.selected()
+        if not row: return messagebox.showwarning("NSSF periods", "Select a period first")
+        if not row.get("original_from"): self.periods_sheet.delete_selected(); return
+        if not messagebox.askyesno("NSSF periods", f"Delete the period starting {_display(row['original_from'])}? The previous period is extended to cover it."): return
+        try: self.client.delete_payroll_period(row["original_from"])
+        except Exception as exc: return messagebox.showerror("NSSF periods", str(exc))
+        self.load_payroll_periods()
+
+    def save_payroll_periods(self):
+        rows = sorted(self.periods_sheet.ordered(), key=lambda r: r["date_from"] or "")
+        if len({r["date_from"] for r in rows}) != len(rows): return messagebox.showwarning("NSSF periods", "Two periods start on the same date")
+        try:
+            for row in rows:
+                base = self.client.payroll_settings(_display(row["original_from"] or row["date_from"]))
+                if row.get("original_from") and row["original_from"] != row["date_from"]: self.client.delete_payroll_period(row["original_from"])
+                payload = {**base, **{k: row.get(k) for k, _l, _w in self.PERIOD_FIELDS}}
+                payload["date_from"] = _display(row["date_from"]); payload["date_to"] = _display(row["date_to"]) if row.get("date_to") else ""
+                self.client.save_payroll_settings(payload)
+        except Exception as exc: self.load_payroll_periods(); return messagebox.showerror("NSSF periods", str(exc))
+        self.load_payroll_periods(); messagebox.showinfo("NSSF periods", f"{len(rows)} period(s) saved. Each payroll uses the ceilings of its own month.")
 
     def load_selected_payroll_period(self):
-        selected = self.payroll_periods_tree.selection()
-        if not selected: return
-        self.payroll_period.set(_display(selected[0])); self.load_payroll_settings()
+        iid, row = self.periods_sheet.selected() if hasattr(self, "periods_sheet") else (None, None)
+        if not row: return
+        self.payroll_period.set(_display(row["date_from"])); self.load_payroll_settings()
 
     # ------------------------------------------------------------ quarterly VAT return
     def build_vat_return(self):

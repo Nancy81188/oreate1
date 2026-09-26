@@ -822,6 +822,87 @@ class DeleteYearTest(unittest.TestCase):
         self.assertTrue([e for e in fresh.journal() if e["source_type"] == "opening"])
         folder.cleanup()
 
+class InventoryAgeingTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); self.db, self.user = new_db(self.folder.name); u = self.user
+        self.hpl = inventory.save_item(self.db, {"name": "HPL Panel", "category": "Cladding", "sales_price": "120"}, u)
+        self.alu = inventory.save_item(self.db, {"name": "Aluminium Profile", "category": "Profiles", "sales_price": "15"}, u)
+        self.old = inventory.save_item(self.db, {"name": "Old Sealant", "category": "Chemicals", "sales_price": "9"}, u)
+        for day, item, qty, cost in (("05-01-2025", self.hpl, 50, 80), ("10-06-2026", self.hpl, 50, 100), ("01-09-2026", self.alu, 200, 8), ("01-12-2024", self.old, 30, 5)):
+            inventory.save_document(self.db, {"doc_type": "receipt", "doc_date": day, "warehouse_id": "MAIN"}, [{"sku": item["sku"], "quantity": qty, "unit_cost": cost}], u)
+        inventory.save_document(self.db, {"doc_type": "issue", "doc_date": "20-07-2026", "warehouse_id": "MAIN"}, [{"sku": self.hpl["sku"], "quantity": 30}], u)
+
+    def tearDown(self): self.folder.cleanup()
+
+    def test_ageing_buckets_by_receipt_date(self):
+        report = inventory.build_report(self.db, "ageing", {"date_to": "26-09-2026"})
+        summary = {row[0]: float(row[1]) for row in report["sections"][0]["rows"]}
+        self.assertEqual((summary["0-30 days"], summary["91-180 days"], summary["Over 365 days"], summary["TOTAL STOCK"]), (1600, 4500, 1950, 8050))
+        rows = {row[0]: row for row in report["sections"][1]["rows"]}
+        self.assertEqual(rows[self.hpl["sku"]][6], 256)  # (20 x 629 + 50 x 108) / 70 days
+        self.assertEqual([row[0] for row in report["sections"][2]["rows"]], [self.hpl["sku"], self.old["sku"]])
+        fifo = inventory.build_report(self.db, "ageing", {"date_to": "26-09-2026", "method": "fifo"})
+        self.assertEqual(float({r[0]: r for r in fifo["sections"][1]["rows"]}[self.hpl["sku"]][5]), 20 * 80 + 50 * 100)
+        custom = inventory.build_report(self.db, "ageing", {"date_to": "26-09-2026", "buckets": "90,365"})
+        self.assertEqual([r[0] for r in custom["sections"][0]["rows"]], ["0-90 days", "91-365 days", "Over 365 days", "TOTAL STOCK"])
+        with self.assertRaisesRegex(ValueError, "buckets"): inventory.build_report(self.db, "ageing", {"buckets": "a,b"})
+
+    def test_summary_and_valuation_by_category(self):
+        summary = {row[0]: row[1] for row in inventory.build_report(self.db, "summary", {"date_to": "26-09-2026"})["sections"][0]["rows"]}
+        self.assertEqual(float(summary["Stock value at cost (USD)"]), 8050)
+        self.assertEqual(float(summary["Slow-moving stock value (no issue for 90 days)"]), 150)  # new arrivals are not slow
+        valuation = inventory.build_report(self.db, "valuation", {"date_to": "26-09-2026"})["sections"][0]["rows"]
+        self.assertIn("Subtotal Cladding", [r[0] for r in valuation]); self.assertEqual(float(valuation[-1][6]), 8050)
+
+class BusinessReportsTest(unittest.TestCase):
+    def setUp(self):
+        import invoice_calc
+        self.folder = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); self.db, self.user = new_db(self.folder.name); u = self.user
+        for name in ("Client A", "Client B"): self.db.save_party({"kind": "customer", "name": name, "account_category": "client"}, u)
+        self.db.save_party({"kind": "supplier", "name": "Supplier S", "account_category": "supplier"}, u)
+        def sale(day, party, lines, due=None, subtype="invoice"):
+            calc = invoice_calc.calculate(lines); head = {"invoice_date": day, "party_name": party, "kind": "sales", "currency": "USD", "status": "posted", "due_date": due, "doc_subtype": subtype}
+            if subtype == "credit_note": head.update(supplier_side="C - Credit", vat_side="D - Debit", expense_side="D - Debit", invoice_number="CN-1")
+            return self.db.create_manual_invoice(head, calc["lines"], u)
+        self.first = sale("10-03-2026", "Client A", [{"description": "HPL Panel", "quantity": 10, "unit": "sheet", "unit_price": 120}], "10-04-2026")
+        sale("15-05-2026", "Client A", [{"description": "HPL Panel", "quantity": 5, "unit": "sheet", "unit_price": 120}, {"description": "Installation", "quantity": 1, "unit_price": 300}], "15-06-2026")
+        sale("20-08-2026", "Client B", [{"description": "HPL Panel", "quantity": 2, "unit": "sheet", "unit_price": 110}], "19-10-2026")
+        sale("25-08-2026", "Client A", [{"description": "HPL Panel", "quantity": 1, "unit": "sheet", "unit_price": 120}], subtype="credit_note")
+        self.db.create_manual_invoice({"invoice_date": "01-09-2026", "party_name": "Supplier S", "kind": "purchases", "currency": "USD", "status": "posted"}, [{"description": "Goods", "quantity": 1, "unit_price": 2000}], u)
+        payment = self.db.add_payment({"kind": "customer_receipt", "party_id": self.db.list_parties()[0]["id"], "payment_date": "01-05-2026", "currency": "USD", "amount": "500"}, u)
+        self.db.save_allocations(payment, [{"invoice_id": self.first, "amount": 400}], u)
+        self.options = {"date_from": "01-01-2026", "date_to": "26-09-2026", "basis": "USD"}
+
+    def tearDown(self): self.folder.cleanup()
+
+    def test_receivables_ageing(self):
+        import business_reports
+        report = business_reports.build(self.db, "receivables", self.options)
+        rows = {r[0]: r for r in report["sections"][1]["rows"]}
+        self.assertEqual([float(x) for x in rows["Client A"][2:8]], [0, 0, -133.2, 0, 1931, 0])  # 932 + 999 in 91-180 days, credit note 31-60
+        self.assertEqual((float(rows["Client A"][9]), float(rows["Client A"][10])), (100, 1697.8))  # 100 received and not allocated
+        self.assertEqual(float(rows["Client B"][2]), 244.2)  # not due yet
+
+    def test_item_sales_3d_and_top(self):
+        import business_reports
+        by_client = business_reports.build(self.db, "item_sales_client", self.options)
+        client_a = next(s for s in by_client["sections"] if s["heading"] == "Client: Client A")
+        self.assertEqual((client_a["rows"][0][1], float(client_a["rows"][0][3])), ("HPL Panel", 14))  # 10 + 5 - 1 returned
+        by_item = business_reports.build(self.db, "item_sales_item", self.options)
+        self.assertIn("Item: - - HPL Panel (sheet)", [s["heading"] for s in by_item["sections"]])
+        cube = business_reports.build(self.db, "analysis", {**self.options, "rows": "client", "columns": "quarter", "measure": "quantity"})["sections"][0]
+        self.assertEqual(cube["headers"][1:4], ["2026-Q1", "2026-Q2", "2026-Q3"]); self.assertEqual(float(cube["rows"][-1][-2]), 17)  # 10 + 5 + 1 installation + 2 - 1 returned
+        top = business_reports.build(self.db, "top_clients", self.options)["sections"][0]["rows"]
+        self.assertEqual((top[0][1], float(top[0][3]), float(top[0][4]), float(top[0][5])), ("Client A", 1980, 217.8, 2197.8))
+        suppliers = business_reports.build(self.db, "top_suppliers", self.options)["sections"][0]["rows"]
+        self.assertEqual(float(suppliers[0][5]), 2220)
+        with self.assertRaisesRegex(ValueError, "different"): business_reports.build(self.db, "analysis", {**self.options, "rows": "client", "columns": "client"})
+
+    def test_delete_payroll_period_extends_previous(self):
+        periods = self.db.list_payroll_settings(); last = periods[-1]["date_from"]
+        after = self.db.delete_payroll_period(last, self.user)
+        self.assertEqual(len(after), len(periods) - 1); self.assertIsNone(after[-1]["date_to"])
+
 class StandaloneEndToEndTest(unittest.TestCase):
     """Runs the embedded data service exactly as the installed app does and drives it through the API."""
 

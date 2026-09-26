@@ -1,5 +1,5 @@
 #define MyAppName "Saber Accounting"
-#define MyAppVersion "2.5.1"
+#define MyAppVersion "2.7.0"
 #define MyAppPublisher "Saber for Audit"
 
 [Setup]
@@ -27,6 +27,10 @@ UninstallDisplayName={#MyAppName} {#MyAppVersion}
 CloseApplications=yes
 RestartApplications=no
 
+[Tasks]
+; Off by default: backups are made from Backup & Restore when the user asks. Tick it to start a daily background backup of every company and year with Windows.
+Name: "autobackup"; Description: "Start automatic daily backups with Windows (all companies and years)"; Flags: unchecked
+
 [Files]
 Source: "dist\SaberAccounting.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\SaberAccountingBackup.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
@@ -36,7 +40,7 @@ Source: "assets\Fonts\Amiri-OFL.txt"; DestDir: "{app}\assets\fonts"; Flags: igno
 [Icons]
 Name: "{autoprograms}\Saber Accounting"; Filename: "{app}\SaberAccounting.exe"
 Name: "{autodesktop}\Saber Accounting"; Filename: "{app}\SaberAccounting.exe"
-Name: "{commonstartup}\Saber Accounting Backups"; Filename: "{app}\SaberAccountingBackup.exe"; WorkingDir: "{app}"; Check: FileExists(ExpandConstant('{app}\SaberAccountingBackup.exe'))
+Name: "{commonstartup}\Saber Accounting Backups"; Filename: "{app}\SaberAccountingBackup.exe"; WorkingDir: "{app}"; Tasks: autobackup; Check: FileExists(ExpandConstant('{app}\SaberAccountingBackup.exe'))
 
 [Run]
 Filename: "{app}\SaberAccounting.exe"; Description: "Open Saber Accounting"; Flags: nowait postinstall skipifsilent
