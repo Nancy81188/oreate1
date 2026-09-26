@@ -279,6 +279,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         for index,(page,name) in enumerate(zip(self.main_tab_pages,self.tab_names)):
             row,column=divmod(index,per_row)
             tab_nav.grid_columnconfigure(column,weight=1,uniform="main_tabs")
+            tab_nav.grid_rowconfigure(row,weight=1,uniform="main_tab_rows")
             button=tk.Button(tab_nav,text=name,command=lambda p=page:self.select_main_tab(p),bg=NAVY,fg="white",
                 activebackground=GOLD,activeforeground=NAVY,border=0,font=("Segoe UI",9,"bold"),pady=7,wraplength=130,cursor="hand2")
             button.grid(row=row,column=column,sticky="nsew",padx=2,pady=2); self.tab_buttons.append(button)
@@ -827,8 +828,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def build_sales_invoice(self):
         self.sales_items=[]; self.sales_edit_id=None
-        header=tk.LabelFrame(self.sales_tab,text="Sales Invoice",bg=LIGHT,padx=8,pady=4)
-        header.pack(fill="x",padx=10,pady=(4,2))
+        header=tk.LabelFrame(self.sales_tab,text="Sales Invoice",bg=LIGHT,padx=6,pady=2)
+        header.pack(fill="x",padx=10,pady=(2,1))
         self.sales_no=tk.StringVar(); self.sales_date=tk.StringVar(value=datetime.now().strftime("%d-%m-%Y"))
         self.sales_party=tk.StringVar(); self.sales_kind=tk.StringVar(value="sales"); self.sales_currency=tk.StringVar(value="USD")
         self.sales_supplier_account=tk.StringVar(value="")
@@ -850,7 +851,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         details=ttk.Notebook(tabs_row); details.pack(side="left",fill="x",expand=True)
         invoice_details=tk.Frame(details,bg=LIGHT); account_details=tk.Frame(details,bg=LIGHT)
         details.add(invoice_details,text="Invoice details"); details.add(account_details,text="Posting accounts")
-        top=tk.Frame(invoice_details,bg=LIGHT); top.pack(anchor="w",fill="x",pady=(3,0))
+        top=tk.Frame(invoice_details,bg=LIGHT); top.pack(anchor="w",fill="x",pady=(1,0))
         doc_box=ttk.Combobox(top,textvariable=self.sales_doc_type,values=["Invoice","Credit Note"],state="readonly",width=11)
         doc_box.pack(side="left",padx=(0,8)); doc_box.bind("<<ComboboxSelected>>",lambda _event:self.sales_doc_type_changed())
         tk.Label(top,text="Invoice No.",bg=LIGHT,font=("Segoe UI",9,"bold")).pack(side="left",padx=(0,4))
@@ -864,7 +865,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(top,text="Currency",bg=LIGHT).pack(side="left")
         ttk.Combobox(top,textvariable=self.sales_currency,values=["USD","EUR","LBP","AED"],state="readonly",width=6).pack(side="left",padx=(4,8))
         account_fields=[("Client Account",self.sales_supplier_account,self.sales_supplier_side),("VAT Account",self.sales_vat_account,self.sales_vat_side),("Revenue Account",self.sales_expense_account,self.sales_expense_side)]
-        accounts_grid=tk.Frame(account_details,bg=LIGHT); accounts_grid.pack(anchor="w",fill="x",pady=2)
+        accounts_grid=tk.Frame(account_details,bg=LIGHT); accounts_grid.pack(anchor="w",fill="x",pady=1)
         for col,(label,var,side) in enumerate(account_fields):
             cell=tk.Frame(accounts_grid,bg=LIGHT,bd=1,relief="groove"); cell.grid(row=0,column=col,padx=4,pady=2,sticky="nw")
             caption=tk.Label(cell,text=label,bg=LIGHT,anchor="w",font=("Segoe UI",9,"bold")); caption.pack(anchor="w",padx=(6,4),pady=(2,0))
@@ -872,7 +873,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             self.account_search_box(cell,var,26).pack(anchor="w",padx=6,pady=1)
             side_box=ttk.Combobox(cell,textvariable=side,values=["D - Debit","C - Credit"],state="readonly",width=11); side_box.pack(anchor="w",padx=6,pady=(0,3))
             side_box.bind("<<ComboboxSelected>>",lambda _event:self.update_sales_totals())
-        payment=tk.Frame(invoice_details,bg=LIGHT); payment.pack(anchor="w",fill="x",pady=(3,0))
+        payment=tk.Frame(invoice_details,bg=LIGHT); payment.pack(anchor="w",fill="x",pady=(1,0))
         tk.Label(payment,text="Date",bg=LIGHT).pack(side="left"); self.date_entry(payment,self.sales_date,12).pack(side="left",padx=(4,10))
         tk.Label(payment,text="Sales Type",bg=LIGHT).pack(side="left")
         self.sales_category_box=ttk.Combobox(payment,textvariable=self.sales_category,values=["Goods","Products","Services"],state="readonly",width=12)
@@ -884,7 +885,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(payment,text="Due Date",bg=LIGHT).pack(side="left"); self.date_entry(payment,self.sales_due_date,12).pack(side="left",padx=(4,10))
         tk.Label(payment,text="Amount Paid",bg=LIGHT).pack(side="left"); tk.Entry(payment,textvariable=self.sales_amount_paid,width=10).pack(side="left",padx=(4,10))
         tk.Label(payment,text="Branch",bg=LIGHT).pack(side="left"); self.branch_selector(payment,self.sales_branch,14,False).pack(side="left",padx=(4,6))
-        dims=tk.Frame(invoice_details,bg=LIGHT); dims.pack(anchor="w",fill="x",pady=(3,0))
+        dims=tk.Frame(invoice_details,bg=LIGHT); dims.pack(anchor="w",fill="x",pady=(1,0))
         self.sales_department=tk.StringVar(); self.sales_project=tk.StringVar(); self.dimension_selectors(dims,self.sales_department,self.sales_project)
         self.sales_treatment=tk.StringVar(value="Taxable 11%")
         tk.Label(dims,text="VAT Treatment",bg=LIGHT,font=("Segoe UI",9,"bold")).pack(side="left",padx=(6,4))
