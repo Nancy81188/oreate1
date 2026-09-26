@@ -281,8 +281,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             tab_nav.grid_columnconfigure(column,weight=1,uniform="main_tabs")
             tab_nav.grid_rowconfigure(row,weight=1,uniform="main_tab_rows")
             button=tk.Button(tab_nav,text=name,command=lambda p=page:self.select_main_tab(p),bg=NAVY,fg="white",
-                activebackground=GOLD,activeforeground=NAVY,border=0,font=("Segoe UI",9,"bold"),pady=7,wraplength=130,cursor="hand2")
-            button.grid(row=row,column=column,sticky="nsew",padx=2,pady=2); self.tab_buttons.append(button)
+                activebackground=GOLD,activeforeground=NAVY,border=0,font=("Segoe UI",9,"bold"),pady=3,wraplength=130,cursor="hand2")
+            button.grid(row=row,column=column,sticky="nsew",padx=2,pady=1); self.tab_buttons.append(button)
         notebook.bind("<<NotebookTabChanged>>",lambda _event:self.highlight_main_tab())
         self.highlight_main_tab()
         tk.Label(filter_bar,text="Show currency:",bg=LIGHT,font=("Segoe UI",10,"bold")).pack(side="left")
