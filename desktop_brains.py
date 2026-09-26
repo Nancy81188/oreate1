@@ -141,6 +141,7 @@ class BrainsScreensMixin:
         tk.Label(header, text="Find", bg=LIGHT).pack(side="left")
         self.manual_find_box = ttk.Combobox(header, textvariable=self.manual_find, width=24); self.manual_find_box.pack(side="left", padx=4)
         self.manual_find_box.bind("<<ComboboxSelected>>", lambda _e: self.open_found_voucher()); self.manual_find_box.bind("<KeyRelease>", self.search_vouchers)
+        self.manual_find_box.bind("<Return>", lambda _e: self.open_found_voucher())
         self.manual_currency.trace_add("write", lambda *_a: self.update_manual_totals())
         self.manual_date.trace_add("write", lambda *_a: self.voucher_date_changed())
         columns = [("line", "#", 45, "center"), ("account", "Account No.", 110, "w"), ("description", "Line Detail", 190, "w"), ("line_currency", "Currency", 70, "center"), ("side", "D/C", 45, "center"),
@@ -159,7 +160,9 @@ class BrainsScreensMixin:
                 self.voucher_total_labels[(name, key)] = label
         left = tk.Frame(bottom, bg=LIGHT); left.pack(side="left", fill="both", expand=True)
         tk.Label(left, text="Details", bg=LIGHT, font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="nw", padx=(0, 6))
-        self.manual_details = tk.Text(left, width=40, height=3, font=("Segoe UI", 9)); self.manual_details.grid(row=0, column=1, sticky="w")
+        self.manual_details = tk.Text(left, width=48, height=4, font=("Segoe UI", 9), wrap="word", undo=True)
+        self.manual_details.grid(row=0, column=1, sticky="w")
+        self.manual_details.bind("<Return>", lambda _e: (self.manual_details.insert("insert", "\n"), "break")[1])
         line_buttons = tk.Frame(left, bg=LIGHT); line_buttons.grid(row=1, column=1, sticky="w", pady=3)
         self.action_button(line_buttons, "Add Line", self.add_manual_item).pack(side="left", padx=(0, 4))
         tk.Button(line_buttons, text="Delete Line", command=self.remove_manual_item, bg=RED, fg="white", border=0, padx=12, pady=7).pack(side="left", padx=4)
@@ -337,7 +340,11 @@ class BrainsScreensMixin:
         self.update_manual_totals(); self.manual_line_info.config(text="New voucher")
 
     def open_found_voucher(self):
-        entry_id = getattr(self, "voucher_choices", {}).get(self.manual_find.get())
+        choices=getattr(self,"voucher_choices",{})
+        entry_id=choices.get(self.manual_find.get())
+        if not entry_id:
+            matches=list(self.manual_find_box["values"])
+            if len(matches)==1: self.manual_find.set(matches[0]); entry_id=choices.get(matches[0])
         if entry_id: self.open_voucher(entry_id)
 
     def navigate_voucher(self, step):

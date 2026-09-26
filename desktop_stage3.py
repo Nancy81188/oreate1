@@ -406,11 +406,12 @@ class Stage3Mixin:
                 r.get("payment_method") or "", r["cash_account"], r.get("reference") or "", r.get("description") or "", " / ".join(x for x in (r.get("department"), r.get("project")) if x))
 
     def filter_payments(self, form):
-        needle = (form["find"].get() if form.get("find") else "").strip().casefold()
+        from desktop import row_matches_search
+        needle = (form["find"].get() if form.get("find") else "").strip()
         form["tree"].delete(*form["tree"].get_children())
         for r in form.get("rows", {}).values():
             values = self._payment_tree_values(r)
-            if needle and not any(needle in str(x).casefold() for x in values): continue
+            if not row_matches_search(values, needle): continue
             form["tree"].insert("", "end", iid=str(r["id"]), values=values)
 
     # ================================================================ Purchases & Expenses
@@ -465,9 +466,10 @@ class Stage3Mixin:
         tk.Label(find, text="Find purchase (No., supplier, date)", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
         f["find_box"] = ttk.Combobox(find, textvariable=f["find"], width=48); f["find_box"].pack(side="left", padx=6)
         f["find_box"].bind("<<ComboboxSelected>>", lambda _e: self.purchase_found()); f["find_box"].bind("<KeyRelease>", lambda _e: self.filter_found_purchases())
+        f["find_box"].bind("<Return>", lambda _e: self.purchase_found())
         self.action_button(find, "Import Excel", self.import_purchases_excel).pack(side="left", padx=(12, 3))
         self.action_button(find, "Excel Template", lambda: self.save_invoice_template("purchases")).pack(side="left", padx=3)
-        items = tk.LabelFrame(page, text="Items received into stock (optional) - F2 or type the item code or name; a new item is created automatically", bg=LIGHT, padx=6, pady=2)
+        items = tk.LabelFrame(page, text="Purchase Invoice Items · F2 to find an item · double-click a cell to edit", bg=LIGHT, padx=6, pady=2)
         items.pack(fill="x", padx=8, pady=2, after=box)
         totals_box.pack(fill="x", padx=8, pady=(2, 4), after=items)
         wh = tk.Frame(items, bg=LIGHT); wh.pack(fill="x"); f["warehouse"] = tk.StringVar()
@@ -475,11 +477,11 @@ class Stage3Mixin:
         self.action_button(wh, "Add Item Line", lambda: self.purchase_item_line()).pack(side="left", padx=6)
         tk.Button(wh, text="Delete Line", command=lambda: (f["items_sheet"].delete_selected(), self.purchase_items_changed()), bg="#8B1E1E", fg="white", border=0, padx=10, pady=5).pack(side="left", padx=2)
         from desktop_brains import EditableSheet
-        f["items_sheet"] = EditableSheet(self, items, [("line", "#", 35, "center"), ("item_code", "Item Code", 100, "w"), ("name", "Item Name", 240, "w"), ("quantity", "Qty", 70, "e"),
-            ("unit", "Unit", 60, "center"), ("unit_cost", "Unit Cost", 95, "e"), ("discount_percent", "Disc. %", 60, "e"), ("total", "Total", 105, "e")],
-            ["item_code", "name", "quantity", "unit", "unit_cost", "discount_percent"], self.purchase_item_changed, height=6)
+        f["items_sheet"] = EditableSheet(self, items, [("line", "#", 35, "center"), ("item_code", "Item", 100, "w"), ("name", "Description", 240, "w"), ("quantity", "Qty", 70, "e"),
+            ("unit", "Unit", 60, "center"), ("unit_cost", "Unit Price", 95, "e"), ("discount_percent", "Discount %", 85, "e"), ("total", "Net", 105, "e")],
+            ["item_code", "name", "quantity", "unit", "unit_cost", "discount_percent"], self.purchase_item_changed, height=9)
         f["items_sheet"].tree.bind("<F2>", lambda _e: self.purchase_item_lookup())
-        f["items_sheet"].tree.master.pack_configure(expand=False, fill="x")  # leave room for the cost on purchase below
+        f["items_sheet"].tree.master.pack_configure(expand=False, fill="x")
         r4 = tk.Frame(box, bg=LIGHT); r4.pack(fill="x", pady=(5, 0))
         f["pdf_label"] = tk.Label(r4, text="No PDF", bg=LIGHT, fg=MUTED)
         self.action_button(r4, "New", self.new_purchase).pack(side="left", padx=(0, 3))
@@ -567,12 +569,15 @@ class Stage3Mixin:
         search.trace_add("write", fill); tree.bind("<Double-1>", choose); tree.bind("<Return>", choose); fill()
 
     def filter_found_purchases(self):
+        from desktop import row_matches_search
         f = self.purchase_form; typed = f["find"].get().strip(); choices = list(f.get("find_map", {}))
-        if typed.isdigit(): f["find_box"]["values"] = [c for c in choices if typed in c.split(" | ")[0]]
-        else: f["find_box"]["values"] = [c for c in choices if typed.casefold() in c.casefold()] if typed else choices
+        f["find_box"]["values"] = [c for c in choices if row_matches_search((c,),typed)]
 
     def purchase_found(self):
         f = self.purchase_form; invoice_id = f.get("find_map", {}).get(f["find"].get())
+        if not invoice_id:
+            matches=list(f["find_box"]["values"])
+            if len(matches)==1: f["find"].set(matches[0]); invoice_id=f.get("find_map",{}).get(matches[0])
         if not invoice_id: return
         f["tree"].selection_set(str(invoice_id)); self.edit_purchase(); self.purchase_selected()
         f["items_sheet"].clear()
@@ -946,7 +951,8 @@ class Stage3Mixin:
         tk.Label(find, text="Find expense (No., description, date)", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
         f["find_box"] = ttk.Combobox(find, textvariable=f["find"], width=50); f["find_box"].pack(side="left", padx=6)
         f["find_box"].bind("<<ComboboxSelected>>", lambda _e: self.expense_found())
-        f["find_box"].bind("<KeyRelease>", lambda _e: f["find_box"].configure(values=[c for c in f.get("find_map", {}) if f["find"].get().strip().casefold() in c.casefold()]))
+        f["find_box"].bind("<KeyRelease>", lambda _e: self.filter_found_expenses())
+        f["find_box"].bind("<Return>", lambda _e: self.expense_found())
 
     def expense_amounts_changed(self, key):
         f = self.expense_form; v = f["vars"]
@@ -1044,8 +1050,16 @@ class Stage3Mixin:
                 form["account"].set(suggestion["code"])
         self.run_ai_task(lambda key:suggest_account(description,accounts,key),show)
 
+    def filter_found_expenses(self):
+        from desktop import row_matches_search
+        f=self.expense_form
+        f["find_box"]["values"]=[label for label in f.get("find_map",{}) if row_matches_search((label,),f["find"].get())]
+
     def expense_found(self):
         f = self.expense_form; expense_id = f.get("find_map", {}).get(f["find"].get())
+        if not expense_id:
+            matches=list(f["find_box"]["values"])
+            if len(matches)==1: f["find"].set(matches[0]); expense_id=f.get("find_map",{}).get(matches[0])
         if expense_id: f["tree"].selection_set(str(expense_id)); self.edit_expense()
 
     def edit_expense(self):

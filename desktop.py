@@ -209,7 +209,22 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             company=labels.get(company_var.get())
             if not company or not year_var.get(): return messagebox.showwarning("Companies","Select a company and fiscal year")
             if not company.get("active",True): return messagebox.showwarning("Companies","This company is inactive")
-            self.client.select_company_year(company["id"],year_var.get()); self.current_company=company; self.current_fiscal_year=int(year_var.get()); self.journal_view_year.set(str(self.current_fiscal_year)); self.main_screen()
+            try:
+                year=int(year_var.get())
+                self.client.select_company_year(company["id"],year)
+                self.current_company=company; self.current_fiscal_year=year
+                self.journal_view_year.set(str(year))
+                for name in ("pnl_from_date", "report_from_date", "trial_from_date", "journal_from_date"):
+                    variable=getattr(self,name,None)
+                    if variable is not None: variable.set(f"01-01-{year}")
+                for name in ("pnl_to_date", "report_to_date", "trial_to_date", "journal_to_date"):
+                    variable=getattr(self,name,None)
+                    if variable is not None: variable.set(f"31-12-{year}")
+                self.close_year.set(str(year))
+                self.main_screen()
+            except Exception as exc:
+                traceback.print_exc()
+                messagebox.showerror("Switch Company / Year",f"Could not open {company['name']} · {year_var.get()}: {exc}")
         tk.Button(card,text="Open Company",command=open_company,bg=GOLD,fg=NAVY,font=("Segoe UI",10,"bold"),border=0,padx=25,pady=8).grid(row=3,column=0,columnspan=2,pady=(18,6))
         if self.current_user.get("role")=="admin":
             self.action_button(card,"Create Company",self.create_company_dialog).grid(row=4,column=0,padx=4,pady=5)
@@ -925,7 +940,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         sheet_frame=tk.Frame(items_area,bg=LIGHT); sheet_frame.pack(fill="both",expand=True)
         self.sales_columns=[("item_code","Item",90),("description","Description",250),("quantity","Qty",55),("unit","Unit",60),("unit_price","Unit Price",95),
             ("gross_amount","Total Amount",105),("discount_percent","Discount %",80),("vat_rate","VAT %",60),("total","Net",105)]
-        self.sales_sheet=ttk.Treeview(sheet_frame,columns=[c[0] for c in self.sales_columns],show="headings",height=7,style="Sales.Treeview")
+        self.sales_sheet=ttk.Treeview(sheet_frame,columns=[c[0] for c in self.sales_columns],show="headings",height=9,style="Sales.Treeview")
         for key,label,width in self.sales_columns: self.sales_sheet.heading(key,text=label); self.sales_sheet.column(key,width=width,anchor="w" if key=="description" else "e")
         scroll=ttk.Scrollbar(sheet_frame,orient="vertical",command=self.sales_sheet.yview); self.sales_sheet.configure(yscrollcommand=scroll.set)
         self.sales_sheet.pack(side="left",fill="both",expand=True); scroll.pack(side="right",fill="y")

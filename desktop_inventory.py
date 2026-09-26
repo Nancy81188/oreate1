@@ -68,6 +68,10 @@ class InventoryMixin:
         if not code: return None
         return next((i for i in getattr(self, "inventory_rows", []) if i["sku"].upper() == code or (i.get("barcode") or "").upper() == code), None)
 
+    def filter_inventory_find(self, box, variable, map_name):
+        from desktop import row_matches_search
+        box["values"]=[label for label in getattr(self,map_name, {}) if row_matches_search((label,),variable.get())]
+
     # ------------------------------------------------------------ items
     def build_items_page(self, page):
         form = tk.LabelFrame(page, text="Item", bg=LIGHT, padx=8, pady=5); form.pack(fill="x", padx=8, pady=6)
@@ -144,6 +148,8 @@ class InventoryMixin:
         tk.Label(bar, text="Find", bg=LIGHT).pack(side="right")
         self.sd_find_box = ttk.Combobox(bar, textvariable=v["find"], width=26); self.sd_find_box.pack(side="right", padx=4)
         self.sd_find_box.bind("<<ComboboxSelected>>", lambda _e: self.open_stock_document())
+        self.sd_find_box.bind("<KeyRelease>", lambda _e: self.filter_inventory_find(self.sd_find_box, self.sd_vars["find"], "sd_doc_map"))
+        self.sd_find_box.bind("<Return>", lambda _e: self.open_stock_document())
         bar2 = tk.Frame(page, bg=LIGHT); bar2.pack(fill="x", padx=8, pady=2)
         tk.Label(bar2, text="Customer / Supplier", bg=LIGHT).pack(side="left")
         self.sd_party_box = ttk.Combobox(bar2, textvariable=v["party"], width=26); self.sd_party_box.pack(side="left", padx=(4, 8))
@@ -248,6 +254,9 @@ class InventoryMixin:
 
     def open_stock_document(self):
         document_id = getattr(self, "sd_doc_map", {}).get(self.sd_vars["find"].get())
+        if not document_id:
+            matches=list(self.sd_find_box["values"])
+            if len(matches)==1: self.sd_vars["find"].set(matches[0]); document_id=self.sd_doc_map.get(matches[0])
         if not document_id: return
         try: doc = self.client.stock_document(document_id)
         except Exception as exc: return messagebox.showerror("Stock Documents", str(exc))
@@ -297,6 +306,8 @@ class InventoryMixin:
         bar2 = tk.Frame(page, bg=LIGHT); bar2.pack(fill="x", padx=8)
         tk.Label(bar2, text="Item (Stock Card)", bg=LIGHT).pack(side="left")
         self.ir_item_box = ttk.Combobox(bar2, textvariable=self.ir_item, width=30); self.ir_item_box.pack(side="left", padx=(4, 8))
+        self.ir_item_box.bind("<KeyRelease>", self.filter_report_items)
+        self.ir_item_box.bind("<Return>", self.select_report_item)
         tk.Label(bar2, text="Category", bg=LIGHT).pack(side="left")
         self.ir_category_box = ttk.Combobox(bar2, textvariable=self.ir_category, state="readonly", width=14); self.ir_category_box.pack(side="left", padx=(4, 8))
         self.ir_subcategory = tk.StringVar(value="All"); self.ir_unit = tk.StringVar(value="All"); self.ir_supplier = tk.StringVar(value="All")
@@ -311,6 +322,16 @@ class InventoryMixin:
         for text, fmt in (("Print", "print"), ("Excel", "xlsx"), ("PDF", "pdf")): self.action_button(bar2, text, lambda f=fmt: self.export_inventory_report(f)).pack(side="left", padx=2)
         self.ir_info = tk.Label(page, text="", bg=LIGHT, fg=NAVY, anchor="w"); self.ir_info.pack(fill="x", padx=10)
         self.ir_viewer = self.report_viewer(page)
+
+    def filter_report_items(self, event=None):
+        from desktop import row_matches_search
+        if event is not None and event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
+        choices=[f'{item["sku"]} - {item["name"]}' for item in getattr(self,"inventory_rows",[])]
+        self.ir_item_box["values"]=[choice for choice in choices if row_matches_search((choice,),self.ir_item.get())]
+
+    def select_report_item(self, _event=None):
+        matches=list(self.ir_item_box["values"])
+        if len(matches)==1: self.ir_item.set(matches[0])
 
     def inventory_report_options(self):
         options = {"date_from": self.ir_from.get().strip(), "date_to": self.ir_to.get().strip(), "days": self.ir_days.get().strip() or "90", "include_zero": self.ir_zero.get()}
@@ -333,6 +354,8 @@ class InventoryMixin:
             end=datetime.strptime(self.ir_to.get().strip(), "%d-%m-%Y")
             if start>end: raise ValueError("From Date must be on or before To Date")
         except ValueError as exc: return messagebox.showwarning("Inventory Reports",str(exc) if "From Date" in str(exc) else "Enter From Date and To Date as DD-MM-YYYY")
+        if REPORTS[self.ir_report.get()] == "stock_card" and not self.item_by_code(self.ir_item.get()):
+            return messagebox.showwarning("Stock Card", "Choose an item from the list before showing its stock card")
         try: result = self.client.inventory_report(REPORTS[self.ir_report.get()], self.inventory_report_options())
         except Exception as exc: return messagebox.showerror("Inventory Reports", str(exc))
         self.inventory_report_result = result; self.show_sections(self.ir_viewer, result["sections"]); self.ir_info.config(text=f'{result["title"]}  |  ' + "   ".join(result["meta"]))
@@ -513,6 +536,8 @@ class InventoryMixin:
         tk.Button(bar, text="Load Stock on Hand", command=self.load_count_sheet, bg=GOLD, fg=NAVY, border=0, padx=12, pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
         tk.Label(bar, text="Open count", bg=LIGHT).pack(side="left", padx=(12, 2)); self.pc_find_box = ttk.Combobox(bar, textvariable=self.pc_vars["find"], state="readonly", width=34); self.pc_find_box.pack(side="left")
         self.pc_find_box.bind("<<ComboboxSelected>>", lambda _e: self.open_count())
+        self.pc_find_box.bind("<KeyRelease>", lambda _e: self.filter_inventory_find(self.pc_find_box, self.pc_vars["find"], "pc_map"))
+        self.pc_find_box.bind("<Return>", lambda _e: self.open_count())
         bottom = tk.Frame(page, bg=LIGHT); bottom.pack(side="bottom", fill="x", padx=8, pady=6)
         self.action_button(bottom, "Save Count", lambda: self.save_count(False)).pack(side="left", padx=(0, 3))
         tk.Button(bottom, text="Post Differences to Stock", command=lambda: self.save_count(True), bg=GOLD, fg=NAVY, border=0, padx=14, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
@@ -573,6 +598,9 @@ class InventoryMixin:
 
     def open_count(self):
         count_id = getattr(self, "pc_map", {}).get(self.pc_vars["find"].get())
+        if not count_id:
+            matches=list(self.pc_find_box["values"])
+            if len(matches)==1: self.pc_vars["find"].set(matches[0]); count_id=self.pc_map.get(matches[0])
         if not count_id: return
         try: count = self.client.physical_count(count_id); rows = self.client.count_sheet(count["warehouse_id"], count["count_date"])
         except Exception as exc: return messagebox.showerror("Physical Inventory", str(exc))
