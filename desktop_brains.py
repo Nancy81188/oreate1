@@ -143,7 +143,7 @@ class BrainsScreensMixin:
         self.manual_find_box.bind("<<ComboboxSelected>>", lambda _e: self.open_found_voucher()); self.manual_find_box.bind("<KeyRelease>", self.search_vouchers)
         self.manual_currency.trace_add("write", lambda *_a: self.update_manual_totals())
         self.manual_date.trace_add("write", lambda *_a: self.voucher_date_changed())
-        columns = [("line", "#", 45, "center"), ("account", "Account No.", 110, "w"), ("line_currency", "Currency", 70, "center"), ("side", "D/C", 45, "center"),
+        columns = [("line", "#", 45, "center"), ("account", "Account No.", 110, "w"), ("description", "Line Detail", 190, "w"), ("line_currency", "Currency", 70, "center"), ("side", "D/C", 45, "center"),
                    ("amount", "Amount (Account Currency)", 165, "e"), ("amount_lbp", "Amount LBP", 145, "e"), ("amount_usd", "Amount USD", 120, "e"),
                    ("due_date", "Due Date", 95, "center"), ("reference", "Reference", 110, "w"), ("department", "Dep.", 60, "center"), ("project", "Project", 85, "center"),
                    ("rate_lbp", "Rate LBP", 95, "e"), ("rate_usd", "Rate USD", 95, "e")]
@@ -167,7 +167,7 @@ class BrainsScreensMixin:
         tk.Label(left, text="Double-click a cell to type · F2 = account list · D/C: D or C · Currency: USD, LBP, EUR, AED", bg=LIGHT, fg=MUTED, wraplength=420, justify="left").grid(row=2, column=0, columnspan=2, sticky="w")
         self.manual_line_info = tk.Label(page, text="", bg="#dfe6ee", fg=NAVY, anchor="w", font=("Segoe UI", 9, "bold"), padx=8)
         self.manual_line_info.pack(side="bottom", fill="x", padx=10)
-        self.voucher_sheet = EditableSheet(self, page, columns, ["account", "line_currency", "side", "amount", "due_date", "reference", "department", "project", "rate_lbp", "rate_usd"],
+        self.voucher_sheet = EditableSheet(self, page, columns, ["account", "description", "line_currency", "side", "amount", "due_date", "reference", "department", "project", "rate_lbp", "rate_usd"],
                                            self.voucher_cell_changed, self.voucher_line_selected, height=6, lookup_column="account")
         self.manual_items = []; self.manual_tree = self.voucher_sheet.tree
         self.load_manual_vouchers(); self.new_manual_voucher(confirm=False)
@@ -185,7 +185,7 @@ class BrainsScreensMixin:
 
     def new_voucher_line(self, account=""):
         currency = self.manual_currency.get() or "USD"; rates = self.voucher_rates_for(currency)
-        return self.recalculate_voucher_line({"account": account, "line_currency": currency, "side": "D", "amount": "", "due_date": self.manual_date.get(), "reference": "", "department": "", "project": "",
+        return self.recalculate_voucher_line({"account": account, "description": "", "line_currency": currency, "side": "D", "amount": "", "due_date": self.manual_date.get(), "reference": "", "department": "", "project": "",
                                               "rate_lbp": rates["rate_lbp"], "rate_usd": rates["rate_usd"]})
 
     def recalculate_voucher_line(self, row):
@@ -300,7 +300,9 @@ class BrainsScreensMixin:
             except ValueError: return (datetime.min, item["number"])
         self.voucher_order = [item["id"] for item in sorted(grouped.values(), key=key)]
         self.voucher_choices = {f'{v["number"]} | {_date_text(v["date"])} | {v["description"][:40]} | {v["debit"]:,.2f} {v["currency"]}': v["id"] for v in grouped.values()}
-        self.voucher_search = {label: f'{label} {grouped.get(vid, {}).get("description", "")}' for label, vid in self.voucher_choices.items()}
+        line_details = {}
+        for row in rows: line_details.setdefault(row["entry_id"], []).append(str(row.get("line_description") or ""))
+        self.voucher_search = {label: f'{label} {" ".join(line_details.get(vid, []))}' for label, vid in self.voucher_choices.items()}
         self.manual_find_box["values"] = list(self.voucher_choices)
         self.set_next_manual_voucher_number()
 
@@ -363,12 +365,12 @@ class BrainsScreensMixin:
         for line in detail["lines"]:
             side = "D" if float(line.get("debit") or 0) else "C"
             if line.get("line_currency"):
-                row = {"account": line["account_code"], "account_name": line["account_name"], "line_currency": line["line_currency"], "side": side, "amount": line["amount"],
+                row = {"account": line["account_code"], "account_name": line["account_name"], "description": line.get("description") or "", "line_currency": line["line_currency"], "side": side, "amount": line["amount"],
                        "rate_lbp": line["rate_lbp"], "rate_usd": line["rate_usd"], "due_date": line.get("due_date") or "", "reference": line.get("reference") or "",
                        "department": line.get("department") or "", "project": line.get("project") or ""}
             else:
                 rates = self.voucher_rates_for(voucher["currency"])
-                row = {"account": line["account_code"], "account_name": line["account_name"], "line_currency": voucher["currency"], "side": side,
+                row = {"account": line["account_code"], "account_name": line["account_name"], "description": line.get("description") or "", "line_currency": voucher["currency"], "side": side,
                        "amount": float(line.get("debit") or 0) or float(line.get("credit") or 0), "rate_lbp": rates["rate_lbp"], "rate_usd": rates["rate_usd"], "due_date": "", "reference": "",
                        "department": line.get("department") or "", "project": line.get("project") or ""}
             self.voucher_sheet.insert(self.recalculate_voucher_line(row))
@@ -383,14 +385,14 @@ class BrainsScreensMixin:
             needed = f"Credit {debit - credit:,.2f}" if debit > credit else f"Debit {credit - debit:,.2f}"
             return messagebox.showerror("Unbalanced Journal Voucher", f"Debit: {debit:,.2f}\nCredit: {credit:,.2f}\nStill needed: {needed} {self.manual_currency.get()}\n\nDebit must equal Credit before saving.")
         details = self.manual_details.get("1.0", "end").strip()
-        if not details: return messagebox.showwarning("Journal Voucher", "Write the voucher details (description)")
+        if not details: details = f"Journal Voucher {self.manual_no.get().strip()}"
         try: entry_date = datetime.strptime(self.manual_date.get().strip(), "%d-%m-%Y").strftime("%d-%m-%Y")
         except ValueError: return messagebox.showwarning("Journal Voucher", "Enter the date as 8 digits: DDMMYYYY")
         voucher = {"entry_number": self.manual_no.get().strip(), "entry_date": entry_date, "description": details, "currency": self.manual_currency.get(),
                    "branch": self.manual_branch.get(), "voucher_type": self.manual_type.get()[:2]}
         payload = [{"account_code": r["account"], "line_currency": r["line_currency"], "side": r["side"], "amount": r["amount"], "rate_lbp": r["rate_lbp"], "rate_usd": r["rate_usd"],
                     "due_date": r.get("due_date") or "", "reference": r.get("reference") or "", "department": r.get("department") or "", "project": r.get("project") or "",
-                    "description": details.splitlines()[0][:120]} for r in lines]
+                    "description": (r.get("description") or details.splitlines()[0])[:120]} for r in lines]
         try: saved = self.client.save_journal_voucher(voucher, payload, self.editing_voucher_id)
         except Exception as exc: return messagebox.showerror("Journal Voucher", str(exc))
         messagebox.showinfo("Journal Voucher", f'Voucher {saved["voucher"]["entry_number"]} saved')

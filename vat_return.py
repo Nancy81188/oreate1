@@ -70,7 +70,7 @@ def _documents(db, start, end, currency, include_review):
     documents = []; skipped = []; review_excluded = 0
     with db.connect() as connection:
         invoices = [dict(row) for row in connection.execute("""SELECT i.*,p.name party_name FROM invoices i
-            LEFT JOIN parties p ON p.id=i.party_id WHERE i.status<>'cancelled'""")]
+            LEFT JOIN parties p ON p.id=i.party_id WHERE i.status NOT IN ('cancelled','deleted')""")]
         expenses = [dict(row) for row in connection.execute("SELECT * FROM expenses")]
     for row in invoices:
         try: day = iso_date(row["invoice_date"])

@@ -684,7 +684,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif path.startswith("/api/inventory/documents/"): result=inventory.delete_document(self.db,int(path.rsplit("/",1)[-1]),user["id"])
             elif path.startswith("/api/payments/"): result=self.db.delete_payment(int(path.rsplit("/",1)[-1]),user["id"])
             elif path.startswith("/api/expenses/"): result=self.db.delete_expense(int(path.rsplit("/",1)[-1]),user["id"])
-            elif path.startswith("/api/invoices/"): result=self.db.delete_invoice(int(path.rsplit("/",1)[-1]),user["id"])
+            elif path.startswith("/api/invoices/"): result=self.db.mark_invoice_deleted(int(path.rsplit("/",1)[-1]),user["id"])
             elif path.startswith("/api/journal/"): result=self.db.delete_journal_voucher(int(path.rsplit("/",1)[-1]),user["id"])
             elif path.startswith("/api/opening-vouchers/"):
                 if user["role"]!="admin": return self._json(403,{"error":"Administrator permission required"})

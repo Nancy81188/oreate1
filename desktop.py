@@ -467,7 +467,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             canvas.create_text(x+12,height-12,text=str(row["month"])[5:],font=("Segoe UI",7))
 
     def build_invoices(self):
-        l=self.language.get(); self.invoice_tree=self.table(self.invoices_tab,[("no",tr(l,"invoice_no"),90),("date",tr(l,"date"),90),("party",tr(l,"party"),150),("branch","Branch",120),("kind","Type",90),("currency",tr(l,"currency"),60),("deductible","Deductible",95),("non_deductible","Non-Deductible",105),("total",tr(l,"total"),90),("payment_method","Payment Method",110),("paid","Paid Amount",100),("lbp","LBP Eq.",105),("usd","USD Eq.",90),("debit","D",80),("credit","C",80),("vat_status","VAT Deductible",95)])
+        l=self.language.get(); self.invoice_tree=self.table(self.invoices_tab,[("no",tr(l,"invoice_no"),90),("status","Status",85),("date",tr(l,"date"),90),("party",tr(l,"party"),150),("branch","Branch",120),("kind","Type",90),("currency",tr(l,"currency"),60),("deductible","Deductible",95),("non_deductible","Non-Deductible",105),("total",tr(l,"total"),90),("payment_method","Payment Method",110),("paid","Paid Amount",100),("lbp","LBP Eq.",105),("usd","USD Eq.",90),("debit","D",80),("credit","C",80),("vat_status","VAT Deductible",95)])
         invoice_actions=tk.Frame(self.invoices_tab,bg=LIGHT); invoice_actions.pack(pady=(0,10))
         tk.Label(invoice_actions,text="Branch:",bg=LIGHT).pack(side="left"); self.branch_selector(invoice_actions,self.invoice_branch,15,True).pack(side="left",padx=4)
         tk.Label(invoice_actions,text="Sort By:",bg=LIGHT).pack(side="left",padx=(8,2))
@@ -516,7 +516,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.invoice_tree.delete(*self.invoice_tree.get_children())
         for r in rows:
             lbp,usd=self.exchange_equivalents(float(r["total"] or 0),r["currency"],rates)
-            self.invoice_tree.insert("","end",iid=str(r["id"]),values=(r["invoice_number"],r["invoice_date"],r["party_name"],r.get("branch_name") or "Head Office",r.get("entry_type") or r["kind"],r["currency"],r.get("deductible_subtotal",r["subtotal"]),r.get("non_deductible_subtotal",0),r["total"],r.get("payment_method") or "",r.get("amount_paid") or 0,"" if lbp is None else f"{lbp:,.2f}","" if usd is None else f"{usd:,.2f}",r["debit"],r["credit"],("Yes" if r.get("vat_recoverable",1) else "NO") if r.get("kind")=="purchase" and float(r.get("vat") or 0) else ""))
+            self.invoice_tree.insert("","end",iid=str(r["id"]),values=(r["invoice_number"],"DELETED" if r.get("status")=="deleted" else str(r.get("status") or "").title(),r["invoice_date"],r["party_name"],r.get("branch_name") or "Head Office",r.get("entry_type") or r["kind"],r["currency"],r.get("deductible_subtotal",r["subtotal"]),r.get("non_deductible_subtotal",0),r["total"],r.get("payment_method") or "",r.get("amount_paid") or 0,"" if lbp is None else f"{lbp:,.2f}","" if usd is None else f"{usd:,.2f}",r["debit"],r["credit"],("Yes" if r.get("vat_recoverable",1) else "NO") if r.get("kind")=="purchase" and float(r.get("vat") or 0) else ""),tags=("deleted",) if r.get("status")=="deleted" else ())
+        self.invoice_tree.tag_configure("deleted",foreground="#8B1E1E")
 
     def vat_classification_dialog(self):
         selected=self.invoice_tree.selection()
@@ -650,10 +651,10 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
     def delete_selected_invoice(self):
         invoice_id=self.selected_invoice_id()
         if invoice_id is None: return
-        if not messagebox.askyesno("Delete Uploaded Data","Permanently delete the selected row and its journal entry?\nThis action is recorded in the audit log."): return
+        if not messagebox.askyesno("Delete Invoice","Mark this invoice DELETED? Its number and details stay visible; its journal entry is removed."): return
         try: self.client.delete_invoice(invoice_id)
         except Exception as exc: return messagebox.showerror("Delete Uploaded Data",str(exc))
-        self.load_invoices(); self.load_dashboard(); self.load_journal(); self.load_trial(); messagebox.showinfo("Uploaded Data","Selected row deleted")
+        self.load_invoices(); self.load_dashboard(); self.load_journal(); self.load_trial(); messagebox.showinfo("Invoices","Invoice marked DELETED")
 
     def duplicate_selected_invoice(self):
         invoice_id=self.selected_invoice_id()
@@ -908,12 +909,14 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.action_button(toolbar,"Add Line",self.add_sales_item).pack(side="left",padx=2)
         tk.Button(toolbar,text="Delete Line",command=self.remove_sales_item,bg="#8B1E1E",fg="white",border=0,padx=10,pady=4).pack(side="left",padx=2)
         tk.Button(toolbar,text="Save",command=lambda:self.save_sales_invoice(True),bg=NAVY,fg="white",font=("Segoe UI",10,"bold"),border=0,padx=14,pady=4).pack(side="left",padx=(8,2))
+        tk.Button(toolbar,text="Delete",command=self.delete_sales_invoice,bg="#8B1E1E",fg="white",border=0,padx=12,pady=4).pack(side="left",padx=2)
         self.action_button(toolbar,"Duplicate",self.duplicate_sales_invoice).pack(side="left",padx=(8,2))
         for text,command in (("Print Preview",lambda:self.sales_invoice_pdf("preview")),("PDF",lambda:self.sales_invoice_pdf("pdf")),("Print",lambda:self.sales_invoice_pdf("print")),
                              ("Excel",lambda:self.sales_entry_report("xlsx"))):
             tk.Button(toolbar,text=text,command=command,bg=NAVY,fg="white",border=0,padx=10,pady=4).pack(side="left",padx=2)
         for text,command in (("Import Excel",self.import_sales_excel),("Import PDF",self.import_sales_pdf)):
             tk.Button(toolbar,text=text,command=command,bg=GOLD,fg=NAVY,border=0,padx=10,pady=4).pack(side="left",padx=(8 if text=="Import Excel" else 2,2))
+        self.action_button(toolbar,"AI Read PDF",self.ai_read_sales_pdf).pack(side="left",padx=2)
         # Totals bar is pinned to the very bottom of the tab FIRST, so it can never be pushed off-screen by the table
         bottom=tk.Frame(self.sales_tab,bg=LIGHT); bottom.pack(side="bottom",fill="x",padx=10,pady=(0,4))
         body=tk.Frame(self.sales_tab,bg=LIGHT); body.pack(side="top",fill="both",expand=True,padx=10,pady=(2,4))
@@ -931,17 +934,16 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         totals=tk.Frame(bottom,bg=LIGHT); totals.pack(side="right",fill="y",padx=(8,0))
         box=tk.Frame(totals,bg="#dfe6ee",padx=8,pady=2); box.pack(side="top",fill="x")
         self.sales_total_labels={}
-        # Totals order (top to bottom): Total, Total HT, then the discount input row, then Discount value, VAT, VAT LBP, TOTAL
-        for row,(key,caption) in enumerate((("Total","Total"),("Total HT","Total HT (before VAT)")),start=1):
+        for row,(key,caption) in enumerate((("Total","Total"),),start=1):
             label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key=="Total HT" else "normal"))
             label.grid(row=row,column=0,sticky="e",padx=4)
             value=tk.Label(box,text="0.00",bg="#dfe6ee",width=16,anchor="e",font=("Segoe UI",9,"bold" if key=="Total HT" else "normal"))
             value.grid(row=row,column=1,sticky="e"); self.sales_total_labels[key]=value
-        discount=tk.Frame(box,bg="#dfe6ee"); discount.grid(row=3,column=0,columnspan=2,sticky="e",pady=(2,2))
+        discount=tk.Frame(box,bg="#dfe6ee"); discount.grid(row=2,column=0,columnspan=2,sticky="e",pady=(2,2))
         tk.Label(discount,text="Discount %",bg="#dfe6ee").pack(side="left"); e1=tk.Entry(discount,textvariable=self.sales_discount_percent,width=5); e1.pack(side="left",padx=2)
         tk.Label(discount,text="or amount",bg="#dfe6ee").pack(side="left"); e2=tk.Entry(discount,textvariable=self.sales_discount_amount,width=9); e2.pack(side="left",padx=2)
         for entry in (e1,e2): entry.bind("<KeyRelease>",lambda _event:self.update_sales_totals())
-        for row,(key,caption) in enumerate((("Discount",""),("VAT","VAT 11%"),("TOTAL","TOTAL")),start=4):
+        for row,(key,caption) in enumerate((("Discount","Discount"),("Total HT","Total HT (after discount)"),("VAT","VAT 11%"),("TOTAL","TOTAL TTC")),start=3):
             if caption:
                 label=tk.Label(box,text=caption,bg="#dfe6ee",font=("Segoe UI",9,"bold" if key=="TOTAL" else "normal"))
                 label.grid(row=row,column=0,sticky="e",padx=4)
@@ -1228,7 +1230,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             if hasattr(self,"sales_total_labels"): self.sales_total_labels["TOTAL"].config(text=str(exc),fg="#8B1E1E")
             return
         for item,calculated in zip(lines,result["lines"]):
-            for key in ("deductible_subtotal","non_deductible_subtotal","vat","subtotal","total","gross_amount","discount_amount","vat_rate"): item[key]=calculated[key]
+            for key in ("deductible_subtotal","non_deductible_subtotal","vat","subtotal","total","gross_amount","discount_amount","discount_percent","vat_rate"): item[key]=calculated[key]
+            iid=item.get("_iid")
+            if iid and self.sales_sheet.exists(iid): self.sales_sheet.item(iid,values=self.sales_row_values(item))
         self.sales_calculation=result; currency=self.sales_currency.get()
         if hasattr(self,"sales_total_labels"):
             values={"Total":result["total"],"Discount":-result["discount"],"Total HT":result["total_ht"],"VAT":result["vat"],"TOTAL":result["grand_total"]}
@@ -1406,6 +1410,16 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         messagebox.showinfo("Sales Invoice",f'Invoice {number} saved as {"Posted" if post else "Draft"}.')
         self.new_sales_invoice(confirm=False)
         self.load_dashboard(); self.load_invoices(); self.load_journal(); self.load_trial()
+
+    def delete_sales_invoice(self):
+        if not self.sales_edit_id: return messagebox.showwarning("Sales Invoice","Open a saved invoice first")
+        number=self.sales_no.get()
+        if not messagebox.askyesno("Delete Invoice",f"Mark invoice {number} DELETED? Its number stays in the invoice list; the journal entry is removed."):
+            return
+        try: self.client.delete_invoice(self.sales_edit_id)
+        except Exception as exc: return messagebox.showerror("Sales Invoice",str(exc))
+        self.new_sales_invoice(confirm=False)
+        self.load_invoices(); self.load_dashboard(); self.load_journal(); self.load_trial()
 
     def build_parties(self):
         form=tk.LabelFrame(self.parties_tab,text="Customer / Supplier File",bg=LIGHT,padx=10,pady=8); form.pack(fill="x",padx=10,pady=10)

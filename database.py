@@ -974,6 +974,26 @@ class Database:
                 (user_id,"delete","invoice",int(invoice_id),json.dumps({"invoice_number":details.get("invoice_number"),"party_id":details.get("party_id"),"total":details.get("total")}),utcnow()))
         return {"deleted":int(invoice_id)}
 
+    def mark_invoice_deleted(self, invoice_id, user_id):
+        """Retain the document number and history while removing its accounting effect."""
+        with self.connect() as db:
+            invoice=db.execute("SELECT * FROM invoices WHERE id=?",(int(invoice_id),)).fetchone()
+            if not invoice: raise KeyError(invoice_id)
+            if invoice["status"]=="deleted": raise ValueError("Invoice is already deleted")
+            self._assert_period_open(invoice["invoice_date"])
+            if db.execute("SELECT 1 FROM payment_allocations WHERE invoice_id=? LIMIT 1",(int(invoice_id),)).fetchone():
+                raise ValueError("Invoice has allocated payments. Remove the allocation before deleting it")
+            if db.execute("SELECT 1 FROM invoices WHERE linked_invoice_id=? AND status NOT IN ('cancelled','deleted') LIMIT 1",(int(invoice_id),)).fetchone():
+                raise ValueError("Invoice has linked documents. Resolve them before deleting it")
+            import inventory
+            inventory.remove_invoice_documents(db,invoice_id)
+            db.execute("DELETE FROM journal_entries WHERE source_type IN ('invoice','journal_voucher','invoice_reversal') AND source_id=?",(int(invoice_id),))
+            db.execute("DELETE FROM journal_entries WHERE source_type='vat_reclass' AND entry_number=?",(f"VATND-INV-{int(invoice_id)}",))
+            db.execute("UPDATE invoices SET status='deleted',cancelled_at=?,cancellation_reason='Deleted' WHERE id=?",(utcnow(),int(invoice_id)))
+            db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
+                       (user_id,"mark_deleted","invoice",int(invoice_id),json.dumps({"invoice_number":invoice["invoice_number"]}),utcnow()))
+        return {"deleted":int(invoice_id),"invoice_number":invoice["invoice_number"]}
+
     def delete_journal_voucher(self,entry_id,user_id):
         with self.connect() as db:
             entry=db.execute("SELECT * FROM journal_entries WHERE id=?",(int(entry_id),)).fetchone()
@@ -1097,7 +1117,7 @@ class Database:
         result=self._update_invoice_base(invoice_id, item, user_id)
         with self.connect() as db:
             row=db.execute("SELECT kind,vat_recoverable,status FROM invoices WHERE id=?",(int(invoice_id),)).fetchone()
-        if row and row["kind"]=="purchase" and not row["vat_recoverable"] and row["status"]!="cancelled":
+        if row and row["kind"]=="purchase" and not row["vat_recoverable"] and row["status"] not in ("cancelled","deleted"):
             self.set_vat_recoverable("invoice",invoice_id,False,user_id)
         return result
 
@@ -1143,8 +1163,8 @@ class Database:
             existing = db.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
             if not existing:
                 raise KeyError(invoice_id)
-            if existing["status"] == "cancelled":
-                raise ValueError("Cancelled invoices cannot be edited")
+            if existing["status"] in ("cancelled","deleted"):
+                raise ValueError("Cancelled or deleted invoices cannot be edited")
             party_kind = "customer" if kind == "sale" else "supplier"
             party_name = str(item["party_name"]).strip()
             db.execute("INSERT OR IGNORE INTO parties(kind,name,currency) VALUES(?,?,?)", (party_kind, party_name, currency))
@@ -1253,8 +1273,8 @@ class Database:
             invoice = db.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
             if not invoice:
                 raise KeyError(invoice_id)
-            if invoice["status"] == "cancelled":
-                raise ValueError("Invoice is already cancelled")
+            if invoice["status"] in ("cancelled","deleted"):
+                raise ValueError("Cancelled or deleted invoices cannot be cancelled again")
             self._assert_period_open(invoice["invoice_date"])
             original = db.execute("SELECT * FROM journal_entries WHERE source_type IN ('invoice','journal_voucher') AND source_id=?", (invoice_id,)).fetchone()
             if not original:
@@ -1572,6 +1592,8 @@ class Database:
         except Exception as exc: raise ValueError("Invalid exchange difference amount") from exc
         import chart_extra
         commission_account=str(item.get("commission_account") or chart_extra.BANK_COMMISSION_ACCOUNT).split(" - ",1)[0].strip() or chart_extra.BANK_COMMISSION_ACCOUNT
+        if not commission_account.isdigit() or len(commission_account)!=9 or not commission_account.startswith("6739"):
+            raise ValueError("Bank commission account must be a 9-digit 6739 account")
         party_account=str(item.get("party_account") or (DEFAULT_LEBANESE_ACCOUNTS["accounts_receivable"] if kind=="customer_receipt" else DEFAULT_LEBANESE_ACCOUNTS["accounts_payable"])).strip()
         party_id=int(item.get("party_id"))
         with self.connect() as db:
@@ -1790,9 +1812,9 @@ class Database:
             metrics[code]["expenses"]+=float(row["subtotal"] or 0)
         today=datetime.now().date()
         with self.connect() as db:
-            invoices=[dict(row) for row in db.execute("SELECT kind,currency,total,amount_paid,due_date,status FROM invoices WHERE status!='cancelled'")]
+            invoices=[dict(row) for row in db.execute("SELECT kind,currency,total,amount_paid,due_date,status FROM invoices WHERE status NOT IN ('cancelled','deleted')")]
             monthly=[dict(row) for row in db.execute("""SELECT substr(CASE WHEN invoice_date GLOB '??-??-????' THEN substr(invoice_date,7,4)||'-'||substr(invoice_date,4,2)||'-'||substr(invoice_date,1,2) ELSE invoice_date END,1,7) month,
-                currency,kind,SUM(CAST(subtotal AS REAL)) amount FROM invoices WHERE status!='cancelled' GROUP BY month,currency,kind ORDER BY month""")]
+                currency,kind,SUM(CAST(subtotal AS REAL)) amount FROM invoices WHERE status NOT IN ('cancelled','deleted') GROUP BY month,currency,kind ORDER BY month""")]
         for row in invoices:
             code=row["currency"]; metrics.setdefault(code,{"currency":code,"sales":0.0,"purchases":0.0,"expenses":0.0,"profit":0.0,"receivables":0.0,"payables":0.0,"overdue":0})
             outstanding=float(row["total"] or 0)-float(row["amount_paid"] or 0)
@@ -1882,8 +1904,8 @@ class Database:
     def list_invoices(self, limit=500):
         with self.connect() as db:
             return [dict(r) for r in db.execute("""SELECT i.id,i.invoice_number,i.invoice_date,p.name party_name,i.kind,i.entry_type,i.currency,i.subtotal,i.deductible_subtotal,i.non_deductible_subtotal,i.vat,i.total,
-                COALESCE(CAST(i.debit_override AS REAL),CASE WHEN i.kind='sale' THEN CAST(i.total AS REAL) ELSE 0 END) debit,
-                COALESCE(CAST(i.credit_override AS REAL),CASE WHEN i.kind='purchase' THEN CAST(i.total AS REAL) ELSE 0 END) credit,
+                CASE WHEN i.status='deleted' THEN 0 ELSE COALESCE(CAST(i.debit_override AS REAL),CASE WHEN i.kind='sale' THEN CAST(i.total AS REAL) ELSE 0 END) END debit,
+                CASE WHEN i.status='deleted' THEN 0 ELSE COALESCE(CAST(i.credit_override AS REAL),CASE WHEN i.kind='purchase' THEN CAST(i.total AS REAL) ELSE 0 END) END credit,
                 i.status,i.currency_issue,i.supplier_account,i.vat_account,i.expense_account,i.expense_no_vat_account,
                 i.supplier_side,i.vat_side,i.expense_side,i.expense_no_vat_side,i.source_row,
                 i.due_date,i.payment_status,CAST(i.amount_paid AS REAL) amount_paid,i.payment_method,i.description,i.branch_id,COALESCE(b.name,'Head Office') branch_name,
@@ -1963,7 +1985,7 @@ class Database:
                 SUM(CAST(vat AS REAL)) vat,SUM(CAST(total AS REAL)) total,COUNT(*) count,
                 SUM(CASE WHEN kind='sale' THEN CAST(total AS REAL) ELSE 0 END) debit,
                 SUM(CASE WHEN kind='purchase' THEN CAST(total AS REAL) ELSE 0 END) credit
-                FROM invoices WHERE status!='cancelled' GROUP BY kind,currency""").fetchall()
+                FROM invoices WHERE status NOT IN ('cancelled','deleted') GROUP BY kind,currency""").fetchall()
             return [dict(r) for r in rows]
 
     def journal(self, from_date=None, to_date=None, currency=None, limit=5000, branch_id=None):
@@ -1995,7 +2017,7 @@ class Database:
                      WHEN e.source_type='invoice' AND i.kind='sale' THEN 'Sales'
                      WHEN e.source_type='invoice' AND COALESCE(i.entry_type,i.kind)='expenses' THEN 'Expenses'
                      WHEN e.source_type='invoice' THEN 'Purchases' ELSE 'Other' END journal_category,
-                COALESCE(p.name,'') party_name,CAST(j.debit AS REAL) debit,CAST(j.credit AS REAL) credit,j.id line_id
+                COALESCE(p.name,'') party_name,COALESCE(j.description,'') line_description,CAST(j.debit AS REAL) debit,CAST(j.credit AS REAL) credit,j.id line_id
                 FROM journal_lines j JOIN journal_entries e ON e.id=j.entry_id
                 JOIN accounts a ON a.id=j.account_id LEFT JOIN parties p ON p.id=j.party_id LEFT JOIN branches b ON b.id=e.branch_id
                 LEFT JOIN invoices i ON e.source_type='invoice' AND i.id=e.source_id
@@ -2160,7 +2182,7 @@ class Database:
         normalized="""CASE WHEN invoice_date GLOB '??-??-????'
             THEN substr(invoice_date,7,4)||'-'||substr(invoice_date,4,2)||'-'||substr(invoice_date,1,2)
             ELSE invoice_date END"""
-        conditions=["status!='cancelled'"]; parameters=[]
+        conditions=["status NOT IN ('cancelled','deleted')"]; parameters=[]
         if from_date: conditions.append(f"{normalized}>=?"); parameters.append(from_date)
         if to_date: conditions.append(f"{normalized}<=?"); parameters.append(to_date)
         if currency: conditions.append("currency=?"); parameters.append(currency)
@@ -2836,6 +2858,7 @@ class Database:
         with self.connect() as db:
             old = db.execute("SELECT * FROM invoices WHERE id=?", (int(invoice_id),)).fetchone()
             if not old: raise KeyError("Invoice not found")
+            if old["status"] in ("deleted","cancelled"): raise ValueError("Deleted or cancelled invoices cannot be edited")
             files = [dict(r) for r in db.execute("SELECT file_name,mime_type,content FROM invoice_attachments WHERE invoice_id=?", (int(invoice_id),))]
             linked = [r["id"] for r in db.execute("SELECT id FROM invoices WHERE linked_invoice_id=?", (int(invoice_id),))]
             self._assert_period_open(old["invoice_date"])
@@ -2904,7 +2927,7 @@ class Database:
     def landed_costs(self, purchase_id):
         with self.connect() as db:
             return [dict(r) for r in db.execute("""SELECT i.id,i.invoice_number,i.invoice_date,p.name party_name,i.currency,CAST(i.subtotal AS REAL) subtotal,
-                CAST(i.vat AS REAL) vat,CAST(i.total AS REAL) total FROM invoices i LEFT JOIN parties p ON p.id=i.party_id WHERE i.linked_invoice_id=? AND i.status<>'cancelled' ORDER BY i.id""", (int(purchase_id),))]
+                CAST(i.vat AS REAL) vat,CAST(i.total AS REAL) total FROM invoices i LEFT JOIN parties p ON p.id=i.party_id WHERE i.linked_invoice_id=? AND i.status NOT IN ('cancelled','deleted') ORDER BY i.id""", (int(purchase_id),))]
 
     # ---------------------------------------------------------------- Lebanese VAT classification
     SALE_TREATMENTS = ("standard", "zero_rated", "exempt", "out_of_scope")
@@ -2997,7 +3020,7 @@ class Database:
         with self.connect() as db:
             rows = [dict(r) for r in db.execute("""SELECT i.id,i.invoice_number,i.invoice_date,i.kind,i.doc_subtype,i.currency,CAST(i.total AS REAL) total,
                 CAST(COALESCE(i.amount_paid,'0') AS REAL) paid,(SELECT COALESCE(SUM(CAST(a.amount AS REAL)),0) FROM payment_allocations a WHERE a.invoice_id=i.id) allocated
-                FROM invoices i WHERE i.party_id=? AND i.status<>'cancelled' ORDER BY i.id""", (int(party_id),))]
+                FROM invoices i WHERE i.party_id=? AND i.status NOT IN ('cancelled','deleted') ORDER BY i.id""", (int(party_id),))]
         for row in rows:
             sign = -1 if row.get("doc_subtype") == "credit_note" else 1
             row["open_amount"] = round(sign * row["total"] - row["paid"] - row["allocated"], 2)

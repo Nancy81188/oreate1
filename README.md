@@ -9,6 +9,12 @@ Saber Accounting is a Windows desktop accounting application with a central shar
 - Lebanese VAT at 11%
 - Purchase and sales invoice import from Excel
 - Manual purchase and sales invoice entry with multiple items
+- Invoice deletion retains the invoice number and marks it DELETED; it removes the journal and stock effect. Linked allocations and active dependent invoices must be resolved first.
+- Purchases and sales show gross total, discount, total after discount before VAT, VAT, and final total. Purchase discounts reduce the posted invoice amount and stock line costs.
+- Journal Voucher Find searches each line's detail; each line detail can be edited in its own table column.
+- Bank commissions on receipts and payments post to the nine-digit account 673900000.
+- Stock Card accepts an item and From Date / To Date and includes the range in the report heading.
+- Optional AI buttons suggest expense accounts and preview page 1 of a PDF invoice. The existing local account suggestion and PDF reader work without AI. For online assistance enter an OpenAI API key when prompted (kept in memory for that session), or set `SABER_AI_API_KEY` before starting the app. Each request needs confirmation, sends the description or first PDF page to OpenAI, may incur API charges, and never saves an invoice automatically. Review all amounts and the account before Save.
 - Automatic 11% VAT per item, with editable VAT rate and VAT amount
 - Editable total before VAT per item with automatic invoice totals
 - Original invoice number when supplied; otherwise original Excel row number

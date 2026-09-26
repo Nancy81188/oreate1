@@ -385,7 +385,7 @@ def build_report(database, report, options):
         rows.append(["", "", "TOTAL / CLOSING", "", "", total_in, total_out, "", "", qty_balance, value_balance.quantize(Decimal("0.01"))])
         title = "Stock Card"
         item = items[item_id]
-        sections.append({"heading": f"{item['sku']} - {item['name']} ({item['unit']})" + (f" - {warehouses[warehouse]['code']}" if warehouse else ""),
+        sections.append({"heading": f"{item['sku']} - {item['name']} ({item['unit']}) | {display_date(date_from)} to {display_date(date_to)}" + (f" - {warehouses[warehouse]['code']}" if warehouse else ""),
                          "headers": ["Date", "Document", "Type", "Warehouse", "Party / Reference", "In", "Out", f"Unit Cost ({currency})", "Value", "Balance Qty", "Balance Value"],
                          "rows": rows, "total_rows": [0, len(rows) - 1]})
     elif report == "movements":

@@ -288,8 +288,8 @@ class InventoryMixin:
         self.ir_warehouse = tk.StringVar(value="All"); self.ir_item = tk.StringVar(); self.ir_method = tk.StringVar(value="Company setting"); self.ir_days = tk.StringVar(value="90")
         self.ir_category = tk.StringVar(value="All"); self.ir_zero = tk.BooleanVar(value=False)
         ttk.Combobox(bar, textvariable=self.ir_report, values=list(REPORTS), state="readonly", width=20).pack(side="left", padx=(0, 8))
-        tk.Label(bar, text="From", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.ir_from, 11).pack(side="left", padx=(4, 6))
-        tk.Label(bar, text="To / As of", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.ir_to, 11).pack(side="left", padx=(4, 6))
+        tk.Label(bar, text="From Date", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.ir_from, 11).pack(side="left", padx=(4, 6))
+        tk.Label(bar, text="To Date / As of", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.ir_to, 11).pack(side="left", padx=(4, 6))
         tk.Label(bar, text="Warehouse", bg=LIGHT).pack(side="left")
         self.ir_warehouse_box = ttk.Combobox(bar, textvariable=self.ir_warehouse, state="readonly", width=16); self.ir_warehouse_box.pack(side="left", padx=(4, 6))
         tk.Label(bar, text="Costing", bg=LIGHT).pack(side="left")
@@ -328,6 +328,11 @@ class InventoryMixin:
         return options
 
     def run_inventory_report(self):
+        try:
+            start=datetime.strptime(self.ir_from.get().strip(), "%d-%m-%Y")
+            end=datetime.strptime(self.ir_to.get().strip(), "%d-%m-%Y")
+            if start>end: raise ValueError("From Date must be on or before To Date")
+        except ValueError as exc: return messagebox.showwarning("Inventory Reports",str(exc) if "From Date" in str(exc) else "Enter From Date and To Date as DD-MM-YYYY")
         try: result = self.client.inventory_report(REPORTS[self.ir_report.get()], self.inventory_report_options())
         except Exception as exc: return messagebox.showerror("Inventory Reports", str(exc))
         self.inventory_report_result = result; self.show_sections(self.ir_viewer, result["sections"]); self.ir_info.config(text=f'{result["title"]}  |  ' + "   ".join(result["meta"]))
@@ -616,4 +621,3 @@ class InventoryMixin:
                 except ValueError: continue
                 self.count_display(row); self.pc_sheet.refresh(iid)
         self.update_count_info(); messagebox.showinfo("Physical Inventory", f"{found} count(s) loaded from the Excel file. Check them, then Save or Post.")
-

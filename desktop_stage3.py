@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import mimetypes
+import os
+import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from importer import read_customs_costs, read_expenses, read_invoices
 from pdf_import import read_invoice_pdf, read_invoice_pdf_pages
@@ -31,6 +33,25 @@ def _dd(value):
 
 
 class Stage3Mixin:
+    def ai_key_for_session(self):
+        key=getattr(self,"_ai_api_key",None) or os.environ.get("SABER_AI_API_KEY","")
+        if not key:
+            key=simpledialog.askstring("AI assistance", "Enter your OpenAI API key (kept only for this session):", show="*", parent=self)
+            if key: self._ai_api_key=key.strip()
+        return key.strip() if key else None
+
+    def run_ai_task(self, work, success):
+        key=self.ai_key_for_session()
+        if not key: return
+        if not messagebox.askyesno("AI assistance", "This sends the selected description or first PDF page to OpenAI. API usage may be charged. Continue?"):
+            return
+        def run():
+            try: result=work(key)
+            except Exception as exc:
+                error=str(exc); self.after(0,lambda:messagebox.showerror("AI assistance",error)); return
+            self.after(0,lambda:success(result))
+        threading.Thread(target=run,daemon=True,name="SaberAIAssist").start()
+
     # ================================================================ Import
     def build_import(self):
         page = self.import_tab; self.import_rows = []; self.import_mode = "excel"
@@ -193,7 +214,7 @@ class Stage3Mixin:
         tk.Label(row2, text="Ref. / Cheque", bg=LIGHT).pack(side="left"); tk.Entry(row2, textvariable=v["reference"], width=14).pack(side="left", padx=(4, 10))
         tk.Label(row2, text="Description", bg=LIGHT).pack(side="left"); tk.Entry(row2, textvariable=v["description"], width=22).pack(side="left", padx=4)
         row_fx = tk.Frame(box, bg=LIGHT); row_fx.pack(fill="x", pady=(6, 0))
-        tk.Label(row_fx, text="Bank Commission", bg=LIGHT).pack(side="left"); tk.Entry(row_fx, textvariable=v["bank_commission"], width=12).pack(side="left", padx=(4, 10))
+        tk.Label(row_fx, text="Bank Commission (A/C 673900000)", bg=LIGHT).pack(side="left"); tk.Entry(row_fx, textvariable=v["bank_commission"], width=12).pack(side="left", padx=(4, 10))
         tk.Label(row_fx, text="Exchange Difference", bg=LIGHT).pack(side="left"); tk.Entry(row_fx, textvariable=v["exchange_difference"], width=12).pack(side="left", padx=(4, 10))
         tk.Label(row_fx, text="(+ gain / - loss)", bg=LIGHT, fg=MUTED).pack(side="left")
         row3 = tk.Frame(box, bg=LIGHT); row3.pack(fill="x", pady=(6, 0))
@@ -406,6 +427,7 @@ class Stage3Mixin:
         v = f["vars"]; v["date"].set(datetime.now().strftime("%d-%m-%Y")); v["currency"].set("USD"); v["type"].set("Purchases"); v["rate"].set("11"); v["account"].set("601100000"); v["vat_account"].set("44210")
         f["department"] = tk.StringVar(); f["project"] = tk.StringVar(); f["vat_typed"] = False; self.purchase_form = f
         f["use"] = tk.StringVar(value="Mixed (partial deduction)"); f["reverse"] = tk.BooleanVar(value=False)
+        f["discount_percent"] = tk.StringVar(value="0"); f["discount_amount"] = tk.StringVar(value="0"); f["discount_mode"] = "percent"
         box = tk.LabelFrame(page, text="Purchase Invoice", bg=LIGHT, padx=8, pady=5); box.pack(fill="x", padx=8, pady=(6, 3))
         r1 = tk.Frame(box, bg=LIGHT); r1.pack(fill="x")
         tk.Label(r1, text="Supplier", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
@@ -416,13 +438,25 @@ class Stage3Mixin:
         tk.Label(r1, text="Due", bg=LIGHT).pack(side="left"); self.date_entry(r1, v["due"], 11).pack(side="left", padx=(4, 8))
         ttk.Combobox(r1, textvariable=v["currency"], values=["USD", "LBP", "EUR", "AED"], state="readonly", width=5).pack(side="left", padx=4)
         ttk.Combobox(r1, textvariable=v["type"], values=["Purchases", "Assets"], state="readonly", width=9).pack(side="left", padx=4)
-        r2 = tk.Frame(box, bg=LIGHT); r2.pack(fill="x", pady=(5, 0))
+        accounts_row = tk.Frame(box, bg=LIGHT); accounts_row.pack(fill="x", pady=(5, 0))
+        tk.Label(accounts_row, text="Cost / Asset A/C", bg=LIGHT).pack(side="left"); self.account_search_box(accounts_row, v["account"], 18).pack(side="left", padx=(4, 12))
+        tk.Label(accounts_row, text="VAT A/C", bg=LIGHT).pack(side="left"); self.account_search_box(accounts_row, v["vat_account"], 14).pack(side="left", padx=4)
+        totals_box = tk.LabelFrame(page, text="Purchase totals", bg="#dfe6ee", padx=10, pady=6)
+        r2 = tk.Frame(totals_box, bg="#dfe6ee"); r2.pack(fill="x", pady=(2, 4))
         for label, key, width in (("Taxable Amount", "taxable", 12), ("Exempt Amount", "exempt", 11), ("VAT %", "rate", 5), ("VAT", "vat", 11)):
-            tk.Label(r2, text=label, bg=LIGHT).pack(side="left"); entry = tk.Entry(r2, textvariable=v[key], width=width); entry.pack(side="left", padx=(4, 8))
+            tk.Label(r2, text=label, bg="#dfe6ee").pack(side="left"); entry = tk.Entry(r2, textvariable=v[key], width=width); entry.pack(side="left", padx=(4, 8))
             entry.bind("<KeyRelease>", lambda e, k=key: self.purchase_amounts_changed(k))
-        f["total"] = tk.Label(r2, text="Total: 0.00", bg=LIGHT, fg=NAVY, font=("Segoe UI", 10, "bold")); f["total"].pack(side="left", padx=6)
-        tk.Label(r2, text="Cost / Asset A/C", bg=LIGHT).pack(side="left", padx=(8, 0)); self.account_search_box(r2, v["account"], 12).pack(side="left", padx=4)
-        tk.Label(r2, text="VAT A/C", bg=LIGHT).pack(side="left"); self.account_search_box(r2, v["vat_account"], 11).pack(side="left", padx=4)
+        f["total"] = tk.Label(r2, text="Total: 0.00", bg="#dfe6ee", fg=NAVY, font=("Segoe UI", 10, "bold")); f["total"].pack(side="left", padx=6)
+        summary = tk.Frame(totals_box, bg="#dfe6ee"); summary.pack(fill="x", padx=8)
+        tk.Label(summary,text="Total before discount",bg="#dfe6ee").pack(side="left")
+        f["gross_summary"] = tk.Label(summary,text="0.00",bg="#dfe6ee",fg=NAVY,width=13,anchor="e"); f["gross_summary"].pack(side="left",padx=(2,16))
+        tk.Label(summary,text="Discount %",bg="#dfe6ee").pack(side="left")
+        percent_entry=tk.Entry(summary,textvariable=f["discount_percent"],width=6); percent_entry.pack(side="left",padx=4)
+        tk.Label(summary,text="or amount",bg="#dfe6ee").pack(side="left")
+        amount_entry=tk.Entry(summary,textvariable=f["discount_amount"],width=10); amount_entry.pack(side="left",padx=4)
+        percent_entry.bind("<KeyRelease>",lambda _e:self.purchase_discount_changed("percent"))
+        amount_entry.bind("<KeyRelease>",lambda _e:self.purchase_discount_changed("amount"))
+        f["discount_summary"] = tk.Label(summary,text="Total HT: 0.00",bg="#dfe6ee",fg=NAVY,font=("Segoe UI",9,"bold")); f["discount_summary"].pack(side="right",padx=8)
         r3 = tk.Frame(box, bg=LIGHT); r3.pack(fill="x", pady=(5, 0))
         self.dimension_selectors(r3, f["department"], f["project"])
         tk.Label(r3, text="VAT use", bg=LIGHT).pack(side="left"); ttk.Combobox(r3, textvariable=f["use"], values=list(PURCHASE_USES), state="readonly", width=23).pack(side="left", padx=(4, 6))
@@ -435,6 +469,7 @@ class Stage3Mixin:
         self.action_button(find, "Excel Template", lambda: self.save_invoice_template("purchases")).pack(side="left", padx=3)
         items = tk.LabelFrame(page, text="Items received into stock (optional) - F2 or type the item code or name; a new item is created automatically", bg=LIGHT, padx=6, pady=2)
         items.pack(fill="x", padx=8, pady=2, after=box)
+        totals_box.pack(fill="x", padx=8, pady=(2, 4), after=items)
         wh = tk.Frame(items, bg=LIGHT); wh.pack(fill="x"); f["warehouse"] = tk.StringVar()
         tk.Label(wh, text="Warehouse", bg=LIGHT).pack(side="left"); f["warehouse_box"] = ttk.Combobox(wh, textvariable=f["warehouse"], state="readonly", width=20); f["warehouse_box"].pack(side="left", padx=4)
         self.action_button(wh, "Add Item Line", lambda: self.purchase_item_line()).pack(side="left", padx=6)
@@ -442,7 +477,7 @@ class Stage3Mixin:
         from desktop_brains import EditableSheet
         f["items_sheet"] = EditableSheet(self, items, [("line", "#", 35, "center"), ("item_code", "Item Code", 100, "w"), ("name", "Item Name", 240, "w"), ("quantity", "Qty", 70, "e"),
             ("unit", "Unit", 60, "center"), ("unit_cost", "Unit Cost", 95, "e"), ("discount_percent", "Disc. %", 60, "e"), ("total", "Total", 105, "e")],
-            ["item_code", "name", "quantity", "unit", "unit_cost", "discount_percent"], self.purchase_item_changed, height=3)
+            ["item_code", "name", "quantity", "unit", "unit_cost", "discount_percent"], self.purchase_item_changed, height=6)
         f["items_sheet"].tree.bind("<F2>", lambda _e: self.purchase_item_lookup())
         f["items_sheet"].tree.master.pack_configure(expand=False, fill="x")  # leave room for the cost on purchase below
         r4 = tk.Frame(box, bg=LIGHT); r4.pack(fill="x", pady=(5, 0))
@@ -451,6 +486,7 @@ class Stage3Mixin:
         tk.Button(r4, text="Save", command=self.save_purchase, bg=GOLD, fg=NAVY, border=0, padx=18, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
         tk.Button(r4, text="Delete", command=self.delete_purchase, bg=RED, fg="white", border=0, padx=12, pady=6).pack(side="left", padx=3)
         self.action_button(r4, "Upload PDF", self.choose_purchase_pdf).pack(side="left", padx=3)
+        self.action_button(r4, "AI Read PDF", self.ai_read_purchase_pdf).pack(side="left", padx=3)
         self.action_button(r4, "Attachments", lambda: self.purchase_attachments()).pack(side="left", padx=3)
         f["pdf_label"].pack(side="left", padx=8)
         cost = tk.LabelFrame(page, text="Cost on Purchase (customs / freight / insurance) for the selected purchase", bg=LIGHT, padx=8, pady=4); cost.pack(fill="x", padx=8, pady=3)
@@ -496,6 +532,24 @@ class Stage3Mixin:
     def purchase_items_changed(self):
         f = self.purchase_form; rows = [r for r in f["items_sheet"].ordered() if (r.get("item_code") or r.get("name")) and _num(r.get("quantity"))]
         if rows: f["vars"]["taxable"].set(f'{sum(r["total"] for r in rows):.2f}'); self.purchase_amounts_changed("taxable")
+
+    def purchase_discount_changed(self, mode):
+        self.purchase_form["discount_mode"] = mode
+        self.purchase_amounts_changed("discount")
+
+    def purchase_discount(self, taxable):
+        f=self.purchase_form
+        percent=_num(f["discount_percent"].get(),0)
+        amount=_num(f["discount_amount"].get(),0)
+        if percent is None or amount is None or percent<0 or percent>100 or amount<0:
+            raise ValueError("Discount must be between 0% and 100%, or a positive amount")
+        if f["discount_mode"]=="percent":
+            amount=round(taxable*percent/100,2)
+            f["discount_amount"].set(f"{amount:.2f}")
+        else:
+            if amount>taxable: raise ValueError("Discount cannot exceed taxable amount")
+            f["discount_percent"].set(f"{amount/taxable*100:.4f}" if taxable else "0")
+        return amount
 
     def purchase_item_lookup(self):
         iid, row = self.purchase_form["items_sheet"].selected()
@@ -568,16 +622,24 @@ class Stage3Mixin:
         if key == "vat": f["vat_typed"] = True
         if key in ("taxable", "rate"): f["vat_typed"] = False
         taxable = _num(v["taxable"].get()) or 0; exempt = _num(v["exempt"].get()) or 0; rate = _num(v["rate"].get()) or 0
-        if not f["vat_typed"]: v["vat"].set(f"{taxable * rate / 100:.2f}" if taxable else "")
+        try: discount=self.purchase_discount(taxable)
+        except ValueError as exc:
+            f["discount_summary"].config(text=str(exc),fg=RED); return
+        if not f["vat_typed"]: v["vat"].set(f"{(taxable-discount) * rate / 100:.2f}" if taxable else "")
         vat = _num(v["vat"].get()) or 0
-        f["total"].config(text=f"Total: {taxable + exempt + vat:,.2f} {v['currency'].get()}")
+        rows=[r for r in f["items_sheet"].ordered() if (r.get("item_code") or r.get("name"))] if "items_sheet" in f else []
+        line_discount=sum(round((_num(r.get("quantity")) or 0)*(_num(r.get("unit_cost")) or 0)*(_num(r.get("discount_percent")) or 0)/100,2) for r in rows)
+        f["gross_summary"].config(text=f"{taxable+exempt+line_discount:,.2f}")
+        f["discount_summary"].config(text=f"−{discount+line_discount:,.2f}  |  Total HT: {taxable+exempt-discount:,.2f}",fg=NAVY)
+        f["total"].config(text=f"TOTAL TTC: {taxable+exempt-discount+vat:,.2f} {v['currency'].get()}")
 
     def new_purchase(self):
         f = self.purchase_form; v = f["vars"]; f["id"] = None; f["pdf"] = None; f["vat_typed"] = False
         for key in ("supplier", "number", "due", "taxable", "exempt", "vat"): v[key].set("")
         v["date"].set(datetime.now().strftime("%d-%m-%Y")); v["rate"].set("11"); v["type"].set("Purchases"); f["department"].set("(none)"); f["project"].set("(none)")
         f["use"].set("Mixed (partial deduction)"); f["reverse"].set(False)
-        f["pdf_label"].config(text="No PDF", fg=MUTED); f["total"].config(text="Total: 0.00"); f["tree"].selection_remove(*f["tree"].selection())
+        f["discount_mode"]="percent"; f["discount_percent"].set("0"); f["discount_amount"].set("0")
+        f["pdf_label"].config(text="No PDF", fg=MUTED); f["total"].config(text="TOTAL TTC: 0.00"); f["tree"].selection_remove(*f["tree"].selection())
         f["items_sheet"].clear(); f["find"].set("")
 
     def choose_purchase_pdf(self):
@@ -596,18 +658,54 @@ class Stage3Mixin:
             f["pdf_label"].config(text=f"{Path(path).name}: {data.get('notes', '')}", fg=NAVY)
         else: f["pdf_label"].config(text=Path(path).name, fg=NAVY)
 
+    def ai_read_purchase_pdf(self):
+        path=filedialog.askopenfilename(filetypes=[("PDF invoice","*.pdf")])
+        if not path: return
+        from ai_service import read_invoice_pdf as read_ai_pdf
+        def show(data):
+            f=self.purchase_form; v=f["vars"]; f["pdf"]=path
+            for key,source in (("number","invoice_number"),("date","invoice_date"),("currency","currency"),("supplier","party_name")):
+                if data.get(source): v[key].set(data[source])
+            if data.get("subtotal") is not None: v["taxable"].set(f'{data["subtotal"]:.2f}')
+            if data.get("vat") is not None: v["vat"].set(f'{data["vat"]:.2f}'); f["vat_typed"]=True
+            self.purchase_amounts_changed("none")
+            f["pdf_label"].config(text=f"AI preview of page 1: {Path(path).name} — review before Save",fg=NAVY)
+        self.run_ai_task(lambda key:read_ai_pdf(path,key),show)
+
+    def ai_read_sales_pdf(self):
+        path=filedialog.askopenfilename(filetypes=[("PDF invoice","*.pdf")])
+        if not path: return
+        from ai_service import read_invoice_pdf as read_ai_pdf
+        def show(data):
+            self.new_sales_invoice(confirm=False)
+            if data.get("invoice_date"): self.sales_date.set(data["invoice_date"])
+            if data.get("party_name"): self.sales_party.set(data["party_name"])
+            if data.get("currency"): self.sales_currency.set(data["currency"])
+            line=self.sales_items[0]
+            line.update(description=f"As per {Path(path).name}",quantity=1,unit_price=data.get("subtotal") or data.get("total") or 0)
+            if data.get("subtotal") and data.get("vat") is not None:
+                line["vat_rate"]=round(data["vat"] / data["subtotal"]*100,4)
+            self.recalculate_sales_item(line)
+            self.sales_sheet.item(line["_iid"],values=self.sales_row_values(line))
+            self.update_sales_totals()
+            messagebox.showinfo("AI PDF preview",f"Read page 1 of {Path(path).name}. Check the customer, VAT, amounts and invoice number before Save.")
+        self.run_ai_task(lambda key:read_ai_pdf(path,key),show)
+
     def purchase_payload(self):
         f = self.purchase_form; v = f["vars"]; self.purchase_items_changed()
         if not v["supplier"].get().strip(): raise ValueError("Choose or type the supplier")
         taxable = _num(v["taxable"].get()); exempt = _num(v["exempt"].get()); vat = _num(v["vat"].get()); rate = _num(v["rate"].get())
         if None in (taxable, exempt, vat, rate) or min(taxable, exempt, vat) < 0: raise ValueError("Amounts must be positive numbers")
         if not taxable and not exempt: raise ValueError("Enter the taxable or exempt amount")
+        discount=self.purchase_discount(taxable)
+        net_taxable=round(taxable-discount,2)
         party = f.get("supplier_map", {}).get(v["supplier"].get())
         invoice = {"invoice_number": v["number"].get().strip(), "invoice_date": v["date"].get().strip(), "due_date": v["due"].get().strip(), "party_name": party["name"] if party else v["supplier"].get().strip(),
                    "kind": "assets" if v["type"].get() == "Assets" else "purchases", "currency": v["currency"].get(), "status": "posted", "source_file": "Purchase Invoice",
                    "expense_account": v["account"].get().split(" - ", 1)[0].strip() or "601100000", "vat_account": v["vat_account"].get().split(" - ", 1)[0].strip() or "442660000",
                    "department": self.dimension_code(f["department"].get()), "project": self.dimension_code(f["project"].get()),
-                   "vat_use": PURCHASE_USES.get(f["use"].get(), "mixed"), "vat_treatment": "reverse_charge" if f["reverse"].get() else "standard"}
+                   "vat_use": PURCHASE_USES.get(f["use"].get(), "mixed"), "vat_treatment": "reverse_charge" if f["reverse"].get() else "standard",
+                   "invoice_discount_percent": f["discount_percent"].get(), "invoice_discount_amount": str(discount), "gross_before_discount": str(taxable+exempt)}
         if party and party.get("account_number"): invoice["supplier_account"] = party["account_number"]
         stock = [r for r in f["items_sheet"].ordered() if (r.get("item_code") or r.get("name")) and _num(r.get("quantity"))]
         if stock:
@@ -617,14 +715,24 @@ class Stage3Mixin:
                 if not code:
                     item = self.client.find_or_create_item(r["name"], r.get("unit") or "unit", None, party["id"] if party else None); code = item["sku"]
                 cost = (_num(r["unit_cost"]) or 0) * (1 - (_num(r.get("discount_percent")) or 0) / 100)
+                cost *= net_taxable/taxable if taxable else 1
                 item_row = next((i for i in getattr(self, "inventory_rows", []) if i.get("sku") == code), None)
-                line = {"item_code": code, "description": r.get("name") or code, "quantity": _num(r["quantity"]), "unit": r.get("unit") or "", "unit_price": round(cost, 4),
+                line = {"item_code": code, "description": r.get("name") or code, "quantity": _num(r["quantity"]), "unit": r.get("unit") or "", "unit_price": round(cost, 6),
                               "discount_percent": _num(r.get("discount_percent")) or 0, "vat_rate": rate, "warehouse": warehouse}
                 if item_row and item_row.get("cost_account"): line["expense_account"] = item_row["cost_account"]
                 lines.append(line)
+            remaining_subtotal=net_taxable; remaining_vat=vat
+            for index,line in enumerate(lines):
+                subtotal=(round(line["quantity"]*line["unit_price"],2) if index<len(lines)-1 else remaining_subtotal)
+                line["deductible_subtotal"]=subtotal
+                line_vat=(round(subtotal*rate/100,2) if index<len(lines)-1 else remaining_vat)
+                line["vat"]=line_vat
+                remaining_subtotal=round(remaining_subtotal-subtotal,2); remaining_vat=round(remaining_vat-line_vat,2)
+            if any(line["deductible_subtotal"]<0 or line["vat"]<0 for line in lines):
+                raise ValueError("Item totals do not match the purchase amount and VAT. Check the item lines")
             if exempt: lines.append({"description": "Exempt part", "quantity": 1, "unit_price": exempt, "deductible_subtotal": 0, "non_deductible_subtotal": exempt, "vat_rate": 0, "vat": 0})
             return invoice, lines
-        line = {"description": f"Supplier invoice {invoice['invoice_number']}".strip(), "quantity": 1, "unit_price": taxable, "deductible_subtotal": taxable,
+        line = {"description": f"Supplier invoice {invoice['invoice_number']}".strip(), "quantity": 1, "unit_price": net_taxable, "deductible_subtotal": net_taxable,
                 "non_deductible_subtotal": exempt, "vat_rate": rate, "vat": vat}
         return invoice, [line]
 
@@ -691,10 +799,27 @@ class Stage3Mixin:
     def edit_purchase(self):
         row = self.selected_purchase(); f = self.purchase_form; v = f["vars"]
         if not row: return
+        if row.get("status") in ("deleted","cancelled"):
+            return messagebox.showwarning("Purchases","Deleted or cancelled purchases cannot be edited")
         f["id"] = row["id"]; f["pdf"] = None; f["vat_typed"] = True
+        discount=_num(row.get("invoice_discount_amount")) or 0
+        net_taxable=float(row.get("deductible_subtotal") or 0)
+        gross_taxable=round(net_taxable+discount,2)
+        f["discount_mode"]="amount"; f["discount_amount"].set(f"{discount:.2f}")
+        f["discount_percent"].set(str(row.get("invoice_discount_percent") or "0"))
+        f["items_sheet"].clear()
+        try: saved_items=self.client.invoice_detail(row["id"]).get("items",[])
+        except Exception: saved_items=[]
+        factor=net_taxable/gross_taxable if gross_taxable else 1
+        for item in saved_items:
+            if not item.get("item_code"): continue
+            line_percent=_num(item.get("discount_percent")) or 0
+            unit_cost=float(item.get("unit_price") or 0)/max((1-line_percent/100)*factor,0.000001)
+            self.purchase_item_line({"item_code":item["item_code"],"name":item.get("description") or "", "quantity":_num(item.get("quantity")) or 1,
+                                     "unit":item.get("unit") or "", "unit_cost":unit_cost,"discount_percent":line_percent})
         label = next((n for n, p in f.get("supplier_map", {}).items() if p["name"] == row.get("party_name")), row.get("party_name") or "")
         for key, value in (("supplier", label), ("number", row["invoice_number"]), ("date", _dd(row["invoice_date"])), ("due", _dd(row.get("due_date")) if row.get("due_date") else ""),
-                           ("currency", row["currency"]), ("type", "Assets" if row.get("entry_type") == "assets" else "Purchases"), ("taxable", f'{float(row.get("deductible_subtotal") or 0):.2f}'),
+                           ("currency", row["currency"]), ("type", "Assets" if row.get("entry_type") == "assets" else "Purchases"), ("taxable", f'{gross_taxable:.2f}'),
                            ("exempt", f'{float(row.get("non_deductible_subtotal") or 0):.2f}'), ("vat", f'{float(row.get("vat") or 0):.2f}'), ("account", row.get("expense_account") or ""),
                            ("vat_account", row.get("vat_account") or "")):
             v[key].set(value)
@@ -708,7 +833,7 @@ class Stage3Mixin:
     def delete_purchase(self):
         row = self.selected_purchase() if not self.purchase_form["id"] else self.purchase_form["rows"].get(str(self.purchase_form["id"]))
         if not row: return messagebox.showwarning("Purchases", "Select a purchase first")
-        if not messagebox.askyesno("Purchases", f"Delete purchase {row['invoice_number']} and its journal entry?"): return
+        if not messagebox.askyesno("Purchases", f"Mark purchase {row['invoice_number']} DELETED? Its number stays in the invoice list; the journal entry is removed."): return
         try: self.client.delete_invoice(row["id"])
         except Exception as exc: return messagebox.showerror("Purchases", str(exc))
         self.new_purchase(); self.load_purchases(); self.load_invoices(); self.load_journal(); self.load_trial()
@@ -803,6 +928,8 @@ class Stage3Mixin:
             else: self.account_search_box(r3, v[key], 9).pack(side="left", padx=(4, 8))
         tk.Button(r3, text="Suggest A/C", command=self.suggest_expense_account,
                   bg=GOLD, fg=NAVY, border=0).pack(side="left", padx=4)
+        tk.Button(r3, text="AI Suggest A/C", command=self.ai_suggest_expense_account,
+                  bg=NAVY, fg="white", border=0).pack(side="left", padx=4)
         r4 = tk.Frame(box, bg=LIGHT); r4.pack(fill="x", pady=(5, 0))
         self.dimension_selectors(r4, f["department"], f["project"])
         tk.Label(r4, text="VAT used for", bg=LIGHT).pack(side="left"); ttk.Combobox(r4, textvariable=f["use"], values=list(PURCHASE_USES), state="readonly", width=24).pack(side="left", padx=4)
@@ -906,6 +1033,16 @@ class Stage3Mixin:
         if messagebox.askyesno("Account suggestion",
                                f"Use {suggestion['code']} - {suggestion['name']}?\nPlease verify the account before saving."):
             form["account"].set(suggestion["code"])
+
+    def ai_suggest_expense_account(self):
+        from ai_service import suggest_account
+        form=self.expense_form["vars"]
+        description=form["description"].get().strip()
+        accounts=list(getattr(self,"_expense_accounts",[]))
+        def show(suggestion):
+            if messagebox.askyesno("AI account suggestion",f"{suggestion['code']} - {suggestion['name']}\n{suggestion['reason']}\n\nUse this account?"):
+                form["account"].set(suggestion["code"])
+        self.run_ai_task(lambda key:suggest_account(description,accounts,key),show)
 
     def expense_found(self):
         f = self.expense_form; expense_id = f.get("find_map", {}).get(f["find"].get())
