@@ -915,7 +915,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         sheet_frame=tk.Frame(items_area,bg=LIGHT); sheet_frame.pack(fill="both",expand=True)
         self.sales_columns=[("item_code","Item",90),("description","Description",250),("quantity","Qty",55),("unit","Unit",60),("unit_price","Unit Price",95),
             ("gross_amount","Total Amount",105),("discount_percent","Discount %",80),("vat_rate","VAT %",60),("total","Net",105)]
-        self.sales_sheet=ttk.Treeview(sheet_frame,columns=[c[0] for c in self.sales_columns],show="headings",height=14,style="Sales.Treeview")
+        self.sales_sheet=ttk.Treeview(sheet_frame,columns=[c[0] for c in self.sales_columns],show="headings",height=7,style="Sales.Treeview")
         for key,label,width in self.sales_columns: self.sales_sheet.heading(key,text=label); self.sales_sheet.column(key,width=width,anchor="w" if key=="description" else "e")
         scroll=ttk.Scrollbar(sheet_frame,orient="vertical",command=self.sales_sheet.yview); self.sales_sheet.configure(yscrollcommand=scroll.set)
         self.sales_sheet.pack(side="left",fill="both",expand=True); scroll.pack(side="right",fill="y")
