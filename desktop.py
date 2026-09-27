@@ -7,6 +7,7 @@ import traceback
 import mimetypes
 import time
 import json
+from urllib.request import urlopen
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -333,7 +334,13 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         nav_canvas.configure(xscrollcommand=nav_scroll.set)
         tab_nav=tk.Frame(nav_canvas,bg=LIGHT)
         nav_canvas.create_window((0,0),window=tab_nav,anchor="nw")
-        tab_nav.bind("<Configure>",lambda _event:nav_canvas.configure(scrollregion=nav_canvas.bbox("all")))
+        def size_navigation(_event=None):
+            nav_canvas.configure(height=max(56,tab_nav.winfo_reqheight()+2),scrollregion=nav_canvas.bbox("all"))
+            if tab_nav.winfo_reqwidth()>nav_canvas.winfo_width()+1:
+                if not nav_scroll.winfo_manager(): nav_scroll.pack(side="bottom",fill="x")
+            elif nav_scroll.winfo_manager(): nav_scroll.pack_forget()
+        tab_nav.bind("<Configure>",size_navigation)
+        nav_canvas.bind("<Configure>",size_navigation)
         ttk.Style(self).layout("Tabless.TNotebook.Tab",[])
         notebook=ttk.Notebook(self,style="Tabless.TNotebook"); self.main_notebook=notebook
         filter_bar=tk.Frame(self,bg=LIGHT); filter_bar.pack(fill="x",padx=28)
@@ -347,16 +354,22 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.main_tab_pages=[]
         for attribute,name in pages:
             container=tk.Frame(notebook,bg=LIGHT)
+            container.grid_rowconfigure(0,weight=1)
+            container.grid_columnconfigure(0,weight=1)
             canvas=tk.Canvas(container,bg=LIGHT,highlightthickness=0)
             vertical=ttk.Scrollbar(container,orient="vertical",command=canvas.yview)
             horizontal=ttk.Scrollbar(container,orient="horizontal",command=canvas.xview)
             canvas.configure(yscrollcommand=vertical.set,xscrollcommand=horizontal.set)
-            vertical.pack(side="right",fill="y")
-            horizontal.pack(side="bottom",fill="x")
-            canvas.pack(side="left",fill="both",expand=True)
+            canvas.grid(row=0,column=0,sticky="nsew")
+            vertical.grid(row=0,column=1,sticky="ns")
+            horizontal.grid(row=1,column=0,sticky="ew")
             frame=tk.Frame(canvas,bg=LIGHT)
             item=canvas.create_window((0,0),window=frame,anchor="nw")
-            def resize_page(_event=None, *, page=frame, view=canvas, window=item):
+            def resize_page(_event=None, *, page=frame, view=canvas, window=item, vbar=vertical, hbar=horizontal):
+                if page.winfo_reqheight()>view.winfo_height()+1: vbar.grid()
+                else: vbar.grid_remove()
+                if page.winfo_reqwidth()>view.winfo_width()+1: hbar.grid()
+                else: hbar.grid_remove()
                 view.itemconfigure(window,width=max(view.winfo_width(),page.winfo_reqwidth()),
                                    height=max(view.winfo_height(),page.winfo_reqheight()))
                 view.configure(scrollregion=view.bbox("all"))
@@ -376,6 +389,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             button=tk.Button(tab_nav,text=name,command=lambda p=page:self.select_main_tab(p),bg=NAVY,fg="white",
                 activebackground=GOLD,activeforeground=NAVY,border=0,font=("Segoe UI",8,"bold"),pady=1,wraplength=120,cursor="hand2")
             button.grid(row=row,column=column,sticky="nsew",padx=1,pady=0); self.tab_buttons.append(button)
+        self.after_idle(size_navigation)
         notebook.bind("<<NotebookTabChanged>>",lambda _event:self.highlight_main_tab())
         self.highlight_main_tab()
         tk.Label(filter_bar,text="Show currency:",bg=LIGHT,font=("Segoe UI",10,"bold")).pack(side="left")
@@ -1669,8 +1683,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         refresh()
 
     def build_payroll(self):
-        nested=ttk.Notebook(self.payroll_tab); nested.pack(fill="both",expand=True,padx=8,pady=8)
+        nested=ttk.Notebook(self.payroll_tab); nested.pack(fill="both",expand=True,padx=8,pady=8); self.payroll_notebook=nested
         employees=tk.Frame(nested,bg=LIGHT); run=tk.Frame(nested,bg=LIGHT); settings_outer,settings_page=self.scrollable_page(nested); reports_page=tk.Frame(nested,bg=LIGHT)
+        self.payroll_employees_page=employees
         nested.add(employees,text="Employees"); nested.add(run,text="Payroll Entry"); nested.add(reports_page,text="Official Reports (R5 / R6 / R10)"); nested.add(settings_outer,text="Tax & NSSF Settings")
         employee_actions=tk.Frame(employees,bg=LIGHT); employee_actions.pack(fill="x",padx=10,pady=8)
         self.action_button(employee_actions,"New Employee",lambda:self.employee_dialog()).pack(side="left",padx=4)
@@ -1678,6 +1693,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.action_button(employee_actions,"R3 Registration Worksheet",lambda:self.employee_r3_worksheet("preview")).pack(side="left",padx=4)
         self.action_button(employee_actions,"R3 PDF",lambda:self.employee_r3_worksheet("pdf")).pack(side="left",padx=4)
         self.action_button(employee_actions,"R3 Excel",lambda:self.employee_r3_worksheet("xlsx")).pack(side="left",padx=4)
+        self.action_button(employee_actions,"Official R3 Form",lambda:self.download_payroll_form("R3")).pack(side="left",padx=4)
+        self.action_button(employee_actions,"Official R3-1 Form",lambda:self.download_payroll_form("R3-1")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Refresh",self.load_payroll).pack(side="left",padx=4)
         self.employee_tree=self.table(employees,[("number","Employee ID",105),("name","Employee Name",220),("job","Job Title",150),
             ("branch","Branch",120),("currency","Currency",70),("salary","Base Salary",120),("nssf","NSSF Number",120),("active","Active",65)])
@@ -1790,6 +1807,20 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.output_sections("R3 Employee Registration Worksheet",meta,
             [{"heading":"Employee information","headers":["Field","Value"],"rows":rows,"total_rows":[]}],
             f'R3_Worksheet_{employee["employee_number"]}',format_name)
+
+    def download_payroll_form(self,form):
+        official={"R3":"https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf",
+                  "R3-1":"https://www.finance.gov.lb/en-us/Taxation/Na/DASS1/%D8%B13-1.pdf"}
+        if form not in official: raise ValueError("Unknown payroll form")
+        target=filedialog.asksaveasfilename(title=f"Save official {form} form",defaultextension=".pdf",
+            initialfile=f"Lebanon_MOF_{form}.pdf",filetypes=[("PDF files","*.pdf")])
+        if not target: return
+        try:
+            with urlopen(official[form],timeout=20) as response: content=response.read()
+            if not content.startswith(b"%PDF"): raise ValueError("The Ministry site did not return a PDF")
+            Path(target).write_bytes(content)
+        except Exception as exc: return messagebox.showerror(f"Official {form}",f"Could not download the form: {exc}")
+        messagebox.showinfo(f"Official {form}",f"Official blank form saved to {target}")
 
     def load_payroll(self):
         if not hasattr(self,"employee_tree"): return
