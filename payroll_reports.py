@@ -296,10 +296,10 @@ def build_nssf_statement(db, period_type="monthly", year=None, index=1, include_
                ["Less: family allowances paid to employees on behalf of the NSSF", "ينزل: التعويضات العائلية المدفوعة عن الصندوق", totals["allowance"]],
                ["NET AMOUNT PAYABLE TO THE NSSF (LBP)", "الصافي المتوجب دفعه للصندوق (ل.ل.)", totals["net"]]]
     ceilings = [[month[5:] + "-" + month[:4], _ceiling_text(v[0]), _ceiling_text(v[1]), _rate_text(v[2]), _rate_text(v[3]), _rate_text(v[4]), _rate_text(v[5])] for month, v in sorted(rates_seen.items())]
-    sections = [{"heading": f"Company employee list - {len(period_employees)} in period, {len(payroll_employee_ids)} with payroll | لائحة الأجراء",
+    sections = [{"heading": f"Employees - {label} | الأجراء", "headers": headers, "rows": rows if len(rows) > 1 else [["No payroll in this period"] + [""] * 13], "total_rows": [len(rows) - 1] if len(rows) > 1 else []},
+                {"heading": f"Company employee list - {len(period_employees)} in period, {len(payroll_employee_ids)} with payroll | لائحة الأجراء",
                  "headers": ["Emp. No.","Employee Name","NSSF No.","Nationality","Hire Date","Leave Date","Payroll in period"],
                  "rows": roster or [["No employees in this period"]+[""]*6],"total_rows": []},
-                {"heading": f"Employees - {label} | الأجراء", "headers": headers, "rows": rows if len(rows) > 1 else [["No payroll in this period"] + [""] * 13], "total_rows": [len(rows) - 1] if len(rows) > 1 else []},
                 {"heading": "Payment summary | خلاصة الدفع", "headers": ["Branch", "الفرع", "Amount (LBP)"], "rows": summary, "total_rows": [2, 5, 7]},
                 {"heading": "Monthly ceilings and rates applied | السقوف والنسب المعتمدة شهرياً", "headers": ["Month", "Sickness ceiling", "Family ceiling", "Employee", "Employer sickness", "Family", "End of service"],
                  "rows": ceilings or [["-"] * 7], "total_rows": []}]
