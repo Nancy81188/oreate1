@@ -299,6 +299,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path == "/api/settings": return self._json(200,self.db.settings())
         if path == "/api/currencies": return self._json(200,{"items":self.db.currencies()})
         if path == "/api/exchange-rates": return self._json(200,{"items":self.db.list_exchange_rates()})
+        if path == "/api/doe/candidates":
+            try: return self._json(200,self.db.doe_candidates(self._query(parsed,"date","")))
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/trial-balance":
             query = parse_qs(parsed.query)
             from_date = query.get("from_date", [None])[0]

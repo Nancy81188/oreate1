@@ -1118,6 +1118,50 @@ class Database:
         if currency=="USD": return {"currency":"USD","rate_lbp":usd_lbp,"rate_usd":Decimal("1")}
         return {"currency":currency,"rate_lbp":self._converted_amount(Decimal("1"),currency,"LBP",day),"rate_usd":self._converted_amount(Decimal("1"),currency,"USD",day)}
 
+    def doe_candidates(self, posting_date):
+        """Foreign class 4/5 balances and their original LBP carrying amounts as of a date.
+
+        Local-currency activity is ignored except prior DOE corrections. Accounts with
+        multiple foreign currencies are excluded because their DOE corrections cannot
+        be assigned to one currency without an explicit allocation.
+        """
+        day=iso_date(posting_date)
+        normal="CASE WHEN e.entry_date GLOB '??-??-????' THEN substr(e.entry_date,7,4)||'-'||substr(e.entry_date,4,2)||'-'||substr(e.entry_date,1,2) ELSE e.entry_date END"
+        with self.connect() as db:
+            lines=[dict(row) for row in db.execute(f"""SELECT a.code,a.name_en,e.currency voucher_currency,e.voucher_type,e.source_type,
+                e.entry_date,COALESCE(j.line_currency,e.currency) line_currency,j.amount,j.amount_lbp,j.debit,j.credit
+                FROM journal_lines j JOIN journal_entries e ON e.id=j.entry_id JOIN accounts a ON a.id=j.account_id
+                LEFT JOIN invoices i ON e.source_type='invoice' AND i.id=e.source_id
+                WHERE (a.code LIKE '4%' OR a.code LIKE '5%') AND {normal}<=?
+                AND (e.source_type!='invoice' OR i.status='posted') ORDER BY a.code,e.id,j.id""",(day,))]
+        groups={}; doe_corrections={}; currencies_by_account={}
+        for line in lines:
+            code=line["code"]; currency=line["line_currency"]
+            signed=Decimal("1") if Decimal(str(line["debit"] or 0))>0 else Decimal("-1")
+            if currency=="LBP":
+                if line["source_type"]=="journal_voucher" and line["voucher_type"]=="07":
+                    doe_corrections[code]=doe_corrections.get(code,Decimal("0"))+Decimal(str(line["debit"] or 0))-Decimal(str(line["credit"] or 0))
+                continue
+            native=Decimal(str(line["amount"] or 0)) if line["amount"] not in (None,"") else abs(Decimal(str(line["debit"] or 0))-Decimal(str(line["credit"] or 0)))
+            if native<=0: continue
+            key=(code,currency); currencies_by_account.setdefault(code,set()).add(currency)
+            item=groups.setdefault(key,{"account":code,"name":line["name_en"],"currency":currency,"balance":Decimal("0"),"carrying_lbp":Decimal("0")})
+            item["balance"]+=signed*native
+            if line["amount_lbp"] not in (None,""):
+                item["carrying_lbp"]+=signed*Decimal(str(line["amount_lbp"]))
+            else:
+                item["carrying_lbp"]+=signed*self._converted_amount(native,currency,"LBP",line["entry_date"])
+        results=[]; skipped=[]; rates={}
+        for (account,currency),item in sorted(groups.items()):
+            if len(currencies_by_account[account])>1:
+                if account not in skipped: skipped.append(account)
+                continue
+            if not item["balance"]: continue
+            item["carrying_lbp"]+=doe_corrections.get(account,Decimal("0"))
+            if currency not in rates: rates[currency]=Decimal(str(self.suggested_rates(currency,posting_date)["rate_lbp"]))
+            results.append({**item,"balance":str(item["balance"]),"carrying_lbp":str(item["carrying_lbp"]),"suggested_rate":str(rates[currency])})
+        return {"items":results,"skipped_accounts":skipped}
+
     def _voucher_line_amounts(self,line,voucher_currency,date,index):
         """Lines entered like BRAINS: currency, D/C, amount in the account currency and LBP / USD rates."""
         if line.get("amount") in (None,"") or not line.get("side"): return None

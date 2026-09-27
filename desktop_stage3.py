@@ -461,6 +461,8 @@ class Stage3Mixin:
                 widget.grid(row=row,column=column+1,sticky="ew",padx=(2,12),pady=5)
                 fields.grid_columnconfigure(column+1,weight=1)
         self.asset_rate.trace_add("write",self.asset_rate_changed)
+        for key in ("cost","residual"):
+            self.asset_fields[key].trace_add("write",self.asset_rate_changed)
         actions=tk.Frame(page,bg=LIGHT); actions.pack(fill="x",padx=8,pady=4)
         self.action_button(actions,"Record Asset Purchase",self.open_asset_purchase).pack(side="left",padx=3)
         for label,command in (("New",self.new_asset),("Save",self.save_asset_entry),("Delete",self.delete_asset_entry),
@@ -526,11 +528,14 @@ class Stage3Mixin:
     def asset_rate_changed(self,*_args):
         try:
             rate=float(self.asset_rate.get())
-            cost=float(self.asset_fields["cost"].get().replace(",",""))
-            residual=float(self.asset_fields["residual"].get().replace(",",""))
-            if 0<rate<=100 and 0<=residual<cost:
-                import math
-                self.asset_fields["useful_months"].set(str(math.ceil((cost-residual)*1200/(cost*rate))))
+            if not 0<rate<=100: return
+            import math
+            try:
+                cost=float(self.asset_fields["cost"].get().replace(",",""))
+                residual=float(self.asset_fields["residual"].get().replace(",",""))
+                months=math.ceil((cost-residual)*1200/(cost*rate)) if 0<=residual<cost else math.ceil(1200/rate)
+            except (ValueError,ZeroDivisionError): months=math.ceil(1200/rate)
+            self.asset_fields["useful_months"].set(str(months))
         except ValueError: pass
 
     def open_asset_purchase(self):

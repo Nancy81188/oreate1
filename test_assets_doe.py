@@ -71,5 +71,16 @@ class AssetAndDoeTest(unittest.TestCase):
         self.assertEqual(saved["voucher"]["voucher_type"],"07")
         self.assertEqual(saved["voucher"]["entry_date"],"01-09-2024")
 
+    def test_automatic_doe_uses_foreign_balances_and_prior_adjustments(self):
+        self.db.save_journal_voucher({"entry_date":"01-09-2024","currency":"USD","voucher_type":"01"},
+            [{"account_code":"4011","debit":"100"},{"account_code":"211","credit":"100"}],1)
+        before=next(row for row in self.db.doe_candidates("30-09-2024")["items"] if row["account"]=="4011")
+        self.assertEqual(before["currency"],"USD")
+        self.assertEqual(before["balance"],"100")
+        self.db.save_journal_voucher({"entry_date":"30-09-2024","currency":"LBP","voucher_type":"07"},
+            [{"account_code":"4011","debit":"500"},{"account_code":"775100000","credit":"500"}],1)
+        after=next(row for row in self.db.doe_candidates("30-09-2024")["items"] if row["account"]=="4011")
+        self.assertEqual(float(after["carrying_lbp"])-float(before["carrying_lbp"]),500)
+
 
 if __name__=="__main__": unittest.main()

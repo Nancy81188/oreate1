@@ -2115,9 +2115,15 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.vat_summary=tk.Label(vat,text="",bg=LIGHT,font=("Segoe UI",10,"bold")); self.vat_summary.pack(pady=(0,8))
         self.cash_tree=self.table(cash,[("currency","Currency",90),("category","Cash Flow Category",280),("inflow","Inflow",140),("outflow","Outflow",140),("net","Net Cash Movement",160)]); self.report_buttons(cash,"cash")
         outlook_bar=tk.Frame(cash_outlook,bg=LIGHT); outlook_bar.pack(fill="x",padx=10,pady=8)
-        tk.Label(outlook_bar,text="Actual months in the selected fiscal year; projected months use the trailing 3 complete months of cash movements.",bg=LIGHT,fg=NAVY).pack(side="left")
+        self.cash_outlook_year=tk.StringVar(value=str(self.current_fiscal_year))
+        self.cash_outlook_horizon=tk.StringVar(value="Quarter (3 months)")
+        tk.Label(outlook_bar,text="Report year",bg=LIGHT,fg=NAVY).pack(side="left")
+        tk.Entry(outlook_bar,textvariable=self.cash_outlook_year,width=6).pack(side="left",padx=(4,10))
+        tk.Label(outlook_bar,text="Project ahead",bg=LIGHT,fg=NAVY).pack(side="left")
+        ttk.Combobox(outlook_bar,textvariable=self.cash_outlook_horizon,values=["Quarter (3 months)","6 Months","Yearly (12 months)"],state="readonly",width=21).pack(side="left",padx=(4,10))
+        tk.Label(outlook_bar,text="Projected values use the last 3 complete months.",bg=LIGHT,fg=NAVY).pack(side="left")
         self.action_button(outlook_bar,"Refresh Projection",self.load_cashflow_outlook).pack(side="right")
-        self.cash_projection_tree=self.table(cash_outlook,[("month","Month",115),("status","Status",95),("currency","Currency",85),
+        self.cash_projection_tree=self.table(cash_outlook,[("month","Period",180),("status","Status",95),("currency","Currency",85),
             ("inflow","Inflow",130),("outflow","Outflow",130),("net","Net cash movement",150)])
         self.report_buttons(cash_outlook,"cash_projection")
         ageing_controls=tk.Frame(aging,bg=LIGHT); ageing_controls.pack(fill="x",padx=8,pady=4)
@@ -2217,34 +2223,41 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             self.aging_tree.insert("","end",values=("Receivable" if r["kind"]=="sale" else "Payable",r["party_name"],r["invoice_number"],r.get("due_date") or r["invoice_date"],r["currency"],f'{r["outstanding"]:,.2f}',r["days_overdue"],r["bucket"]))
 
     def load_cashflow_outlook(self):
-        import calendar
-        year=int(self.current_fiscal_year); today=datetime.now()
-        last=12 if year<today.year else (today.month-1 if year==today.year else 0)
-        if last<1: return
+        from financial_projection import HORIZONS, completed_months, future_months, month_range, trailing_average
+        try:
+            year=int(self.cash_outlook_year.get()); last=completed_months(year)
+            future=future_months(year,last,HORIZONS[self.cash_outlook_horizon.get()])
+        except (ValueError,KeyError) as exc: return messagebox.showwarning("Cash Flow Outlook",str(exc))
         currency=None if self.view_currency.get()=="All Currencies" else self.view_currency.get()
         history={}; currencies=set()
         try:
             for month in range(1,last+1):
-                end=calendar.monthrange(year,month)[1]
-                rows=self.client.cash_flow(f"{year}-{month:02d}-01",f"{year}-{month:02d}-{end:02d}",currency)
+                start,end=month_range(year,month)
+                rows=self.client.cash_flow(start,end,currency)
                 for row in rows:
                     key=row["currency"]; currencies.add(key)
                     values=history.setdefault((key,month),{"inflow":0.0,"outflow":0.0})
                     values["inflow"]+=float(row["inflow"]); values["outflow"]+=float(row["outflow"])
         except Exception as exc: return messagebox.showerror("Cash Flow Outlook",str(exc))
         self.cash_projection_rows=[]
+        if not currencies: currencies={currency or "USD"}
         for code in sorted(currencies):
+            actual_total={"inflow":0.0,"outflow":0.0}
             for month in range(1,last+1):
                 values=history.get((code,month),{"inflow":0.0,"outflow":0.0})
+                for key in actual_total: actual_total[key]+=values[key]
                 self.cash_projection_rows.append({"month":f"{year}-{month:02d}","status":"Actual","currency":code,**values,
                     "net":values["inflow"]-values["outflow"]})
-            recent=[history.get((code,month),{"inflow":0.0,"outflow":0.0}) for month in range(max(1,last-2),last+1)]
-            average={key:sum(item[key] for item in recent)/len(recent) for key in ("inflow","outflow")}
-            for offset in range(1,13):
-                target=year*12+last-1+offset; projected_year,zero_month=divmod(target,12)
-                self.cash_projection_rows.append({"month":f"{projected_year}-{zero_month+1:02d}","status":"Projected","currency":code,**average,
+            self.cash_projection_rows.append({"month":f"{year} actual total (Jan–{last:02d})","status":"Actual total","currency":code,**actual_total,
+                "net":actual_total["inflow"]-actual_total["outflow"]})
+            monthly={month:history.get((code,month),{}) for month in range(1,last+1)}
+            average={key:trailing_average(monthly,last,key) for key in ("inflow","outflow")}
+            for projected_year,projected_month in future:
+                self.cash_projection_rows.append({"month":f"{projected_year}-{projected_month:02d}","status":"Projected","currency":code,**average,
                     "net":average["inflow"]-average["outflow"]})
-        self.cash_projection_rows.sort(key=lambda row:(row["currency"],row["month"]))
+            totals={key:average[key]*len(future) for key in average}
+            self.cash_projection_rows.append({"month":f"{future[0][0]}-{future[0][1]:02d} to {future[-1][0]}-{future[-1][1]:02d}",
+                "status":"Forecast total","currency":code,**totals,"net":totals["inflow"]-totals["outflow"]})
         self.cash_projection_tree.delete(*self.cash_projection_tree.get_children())
         for row in self.cash_projection_rows:
             self.cash_projection_tree.insert("","end",values=(row["month"],row["status"],row["currency"],
