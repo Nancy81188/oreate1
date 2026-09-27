@@ -108,9 +108,12 @@ class CompanyManager:
         previous=max((y for y in company["years"] if int(y["year"])<year),key=lambda y:int(y["year"]),default=None)
         if not previous: raise ValueError("Create fiscal years in chronological order")
         source=Database(previous["database"])
+        import fixed_assets
+        fixed_assets.check_carry_forward(source,year)
         path=self.root/company_id/f"{year}.db"; path.parent.mkdir(parents=True,exist_ok=True); target=Database(path); target.initialize(secrets.token_urlsafe(24)); self._copy_master_data(source,target)
         import inventory
         inventory.carry_forward(source,target,year,user_id)
+        fixed_assets.carry_forward(source,target,year)
         company["years"].append({"year":year,"database":str(path.resolve()),"status":"open"}); company["years"].sort(key=lambda y:int(y["year"]))
         self._write(data); return company
 

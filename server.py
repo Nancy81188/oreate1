@@ -377,7 +377,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             try: return self._json(201,{"asset":fixed_assets.save_asset(self.db,body,user_id=user["id"])})
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path.startswith("/api/fixed-assets/") and path.endswith("/post"):
-            try: return self._json(201,{"voucher":fixed_assets.post_period(self.db,int(path.split("/")[-2]),body.get("period_end"),user["id"])})
+            try: return self._json(201,{"voucher":fixed_assets.post_period(self.db,int(path.split("/")[-2]),body.get("period_end"),user["id"],self.headers.get("X-Fiscal-Year"))})
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path.startswith("/api/expenses/") and path.endswith("/attachments"):
             try:

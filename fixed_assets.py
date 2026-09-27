@@ -17,7 +17,7 @@ def migrate(db):
         );
         CREATE TABLE IF NOT EXISTS fixed_asset_postings (
             id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL REFERENCES fixed_assets(id),
-            period_end TEXT NOT NULL, amount TEXT NOT NULL, entry_id INTEGER NOT NULL REFERENCES journal_entries(id),
+            period_end TEXT NOT NULL, amount TEXT NOT NULL, entry_id INTEGER REFERENCES journal_entries(id),
             UNIQUE(asset_id, period_end)
         );
     """)
@@ -110,11 +110,13 @@ def schedule(database, asset_id):
     return rows
 
 
-def post_period(database, asset_id, period_end, user_id):
+def post_period(database, asset_id, period_end, user_id, fiscal_year=None):
     asset=next((item for item in list_assets(database) if item["id"]==int(asset_id)),None)
     if not asset: raise KeyError(asset_id)
     row=next((item for item in schedule(database,asset_id) if item["period_end"]==_iso(period_end)),None)
     if not row: raise ValueError("Choose a period in the asset amortisation schedule")
+    if fiscal_year is not None and int(row["period_end"][:4])!=int(fiscal_year):
+        raise ValueError(f"Select fiscal year {row['period_end'][:4]} before posting this amortisation")
     if row["posted"]: raise ValueError("This amortisation period was already posted")
     previous=[item for item in schedule(database,asset_id) if item["period_end"]<row["period_end"] and not item["posted"]]
     if previous: raise ValueError("Post earlier amortisation periods first")
@@ -140,3 +142,28 @@ def delete_asset(database, asset_id, user_id=None):
         db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,datetime('now'))",
                    (user_id,"delete","fixed_asset",asset_id,"{}"))
     return {"deleted":int(asset_id)}
+
+
+def check_carry_forward(source,target_year):
+    assets=list_assets(source)
+    for asset in assets:
+        prior=[row for row in schedule(source,asset["id"]) if row["period_end"][:4]<str(target_year)]
+        if any(not row["posted"] for row in prior):
+            raise ValueError(f"Post earlier amortisation periods for {asset['asset_code']} before creating {target_year}")
+    return assets
+
+
+def carry_forward(source, target, target_year):
+    """Continue active asset schedules in the next fiscal-year database."""
+    assets=check_carry_forward(source,target_year)
+    with target.connect() as db:
+        for asset in assets:
+            values=(asset["asset_code"],asset["name"],asset["acquired_on"],asset["start_on"],asset["currency"],
+                    asset["cost"],asset["residual"],asset["useful_months"],asset["frequency"],asset["asset_account"],
+                    asset["depreciation_account"],asset["accumulated_account"],None,asset["created_at"])
+            new_id=db.execute("""INSERT INTO fixed_assets(asset_code,name,acquired_on,start_on,currency,cost,residual,useful_months,frequency,
+                asset_account,depreciation_account,accumulated_account,invoice_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",values).lastrowid
+            for row in schedule(source,asset["id"]):
+                if row["posted"] and row["period_end"][:4]<str(target_year):
+                    db.execute("INSERT INTO fixed_asset_postings(asset_id,period_end,amount,entry_id) VALUES(?,?,?,NULL)",
+                               (new_id,row["period_end"],row["amount"]))

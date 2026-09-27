@@ -36,6 +36,16 @@ class AssetAndDoeTest(unittest.TestCase):
             "frequency":"yearly","asset_account":"211","depreciation_account":"6811","accumulated_account":"2811"})
         self.assertEqual([(row["period_end"],row["amount"]) for row in fixed_assets.schedule(self.db,asset["id"])],
                          [("2024-12-31","1000.00"),("2025-02-28","200.00")])
+        with self.assertRaisesRegex(ValueError,"Post earlier"):
+            fixed_assets.check_carry_forward(self.db,2025)
+        fixed_assets.post_period(self.db,asset["id"],"2024-12-31",1,2024)
+        target=Database(Path(self.folder.name)/"next-year.db"); target.initialize("secret12345")
+        fixed_assets.carry_forward(self.db,target,2025)
+        continued=fixed_assets.list_assets(target)[0]
+        self.assertEqual([r["posted"] for r in fixed_assets.schedule(target,continued["id"])],[True,False])
+        with self.assertRaisesRegex(ValueError,"Select fiscal year 2025"):
+            fixed_assets.post_period(self.db,asset["id"],"2025-02-28",1,2024)
+        fixed_assets.post_period(target,continued["id"],"2025-02-28",1,2025)
 
     def test_doe_enforces_class_and_gain_loss_sides(self):
         with self.assertRaisesRegex(ValueError,"gains credit"):
