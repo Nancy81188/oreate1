@@ -2187,6 +2187,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         choice = self.ageing_kind.get()
         rows=[r for r in getattr(self,"aging_rows",[]) if choice=="Customers & Suppliers" or (r["kind"]=="sale")== (choice=="Customers")]
         lower=self.ageing_from.get().strip(); upper=self.ageing_to.get().strip()
+        if lower and not upper and " - " not in lower:
+            needle=lower.casefold()
+            return [row for row in rows if needle in str(row.get("account_number") or "").casefold() or needle in str(row.get("party_name") or "").casefold()]
         def bound(value):
             if not value: return None
             code=value.split(" - ",1)[0].strip()
