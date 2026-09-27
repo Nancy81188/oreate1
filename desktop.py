@@ -83,7 +83,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.1")
+        self.title("Saber Accounting 2.9.2")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -1675,6 +1675,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         employee_actions=tk.Frame(employees,bg=LIGHT); employee_actions.pack(fill="x",padx=10,pady=8)
         self.action_button(employee_actions,"New Employee",lambda:self.employee_dialog()).pack(side="left",padx=4)
         self.action_button(employee_actions,"Edit Selected",self.edit_selected_employee).pack(side="left",padx=4)
+        self.action_button(employee_actions,"R3 Registration Worksheet",lambda:self.employee_r3_worksheet("preview")).pack(side="left",padx=4)
+        self.action_button(employee_actions,"R3 PDF",lambda:self.employee_r3_worksheet("pdf")).pack(side="left",padx=4)
+        self.action_button(employee_actions,"R3 Excel",lambda:self.employee_r3_worksheet("xlsx")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Refresh",self.load_payroll).pack(side="left",padx=4)
         self.employee_tree=self.table(employees,[("number","Employee ID",105),("name","Employee Name",220),("job","Job Title",150),
             ("branch","Branch",120),("currency","Currency",70),("salary","Base Salary",120),("nssf","NSSF Number",120),("active","Active",65)])
@@ -1738,32 +1741,55 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def employee_dialog(self,employee=None):
         window=tk.Toplevel(self); window.title("Employee File"); window.configure(bg=LIGHT); window.transient(self); window.grab_set()
-        data=employee or {}; fields={key:tk.StringVar(value=str(data.get(key,""))) for key in ("employee_number","full_name","national_id","mof_number","nssf_number","address","contact_number","job_title","hire_date","leave_date","base_salary","salary_account","payable_account")}
+        window.geometry(f"{min(940,self.winfo_screenwidth())}x{min(650,self.winfo_screenheight()-80)}")
+        outer,form=self.scrollable_page(window); outer.pack(fill="both",expand=True)
+        data=employee or {}; fields={key:tk.StringVar(value=str(data.get(key) or "")) for key in ("employee_number","full_name","national_id","mof_number","nssf_number","address","contact_number","nationality","father_name","mother_name","birth_date","birth_place","job_title","hire_date","leave_date","base_salary","salary_account","payable_account")}
         if not fields["employee_number"].get(): fields["employee_number"].set("1000")
         marital=tk.StringVar(value=data.get("marital_status","single")); spouse_works=tk.BooleanVar(value=bool(data.get("spouse_works",0))); children=tk.StringVar(value=str(data.get("children",0))); employee_group=tk.StringVar(value=data.get("employee_group","employee")); currency=tk.StringVar(value=data.get("currency","LBP")); active=tk.BooleanVar(value=bool(data.get("active",1)))
-        rows=(("employee_number","Employee ID / 4-digit prefix"),("full_name","Full Name"),("national_id","National ID"),("mof_number","MOF Number"),("nssf_number","NSSF Number"),("address","Address"),("contact_number","Contact Number"),("job_title","Job Title"),("hire_date","Hire Date"),("leave_date","Leave Date"),("base_salary","Base Salary"),("salary_account","Salary Expense Account"),("payable_account","Salary Payable Account"))
+        rows=(("employee_number","Employee ID / 4-digit prefix"),("full_name","Full Name"),("national_id","National ID"),("mof_number","MOF Number"),("nssf_number","NSSF Number"),("address","Address"),("contact_number","Contact Number"),("nationality","Nationality"),("father_name","Father's Name"),("mother_name","Mother's Name"),("birth_date","Date of Birth"),("birth_place","Place of Birth"),("job_title","Job Title"),("hire_date","Hire Date"),("leave_date","Leave Date"),("base_salary","Base Salary"),("salary_account","Salary Expense Account"),("payable_account","Payable Account"))
         for index,(key,label) in enumerate(rows):
-            column=0 if index<7 else 2; row=index if index<7 else index-7
-            tk.Label(window,text=label,bg=LIGHT).grid(row=row,column=column,padx=10,pady=5,sticky="w")
-            (self.date_entry(window,fields[key],28) if key in ("hire_date","leave_date") else tk.Entry(window,textvariable=fields[key],width=28)).grid(row=row,column=column+1,padx=10,pady=5)
-        tk.Label(window,text="Marital Status",bg=LIGHT).grid(row=7,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=marital,values=["single","married"],state="readonly",width=25).grid(row=7,column=1)
-        tk.Label(window,text="Children",bg=LIGHT).grid(row=8,column=0,padx=10,pady=5,sticky="w"); tk.Entry(window,textvariable=children,width=28).grid(row=8,column=1)
-        tk.Label(window,text="Currency",bg=LIGHT).grid(row=7,column=2,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=currency,values=self.currency_codes,state="readonly",width=25).grid(row=7,column=3)
-        tk.Checkbutton(window,text="Spouse Works",variable=spouse_works,bg=LIGHT).grid(row=8,column=2,sticky="w")
-        tk.Checkbutton(window,text="Active",variable=active,bg=LIGHT).grid(row=8,column=3,sticky="w")
-        tk.Label(window,text="Payroll Group",bg=LIGHT).grid(row=9,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=employee_group,values=["employee","manager"],state="readonly",width=25).grid(row=9,column=1)
+            column=0 if index<9 else 2; row=index if index<9 else index-9
+            tk.Label(form,text=label,bg=LIGHT).grid(row=row,column=column,padx=10,pady=5,sticky="w")
+            (self.date_entry(form,fields[key],28) if key in ("hire_date","leave_date","birth_date") else tk.Entry(form,textvariable=fields[key],width=28)).grid(row=row,column=column+1,padx=10,pady=5)
+        tk.Label(form,text="Marital Status",bg=LIGHT).grid(row=9,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(form,textvariable=marital,values=["single","married"],state="readonly",width=25).grid(row=9,column=1)
+        tk.Label(form,text="Children",bg=LIGHT).grid(row=10,column=0,padx=10,pady=5,sticky="w"); tk.Entry(form,textvariable=children,width=28).grid(row=10,column=1)
+        tk.Label(form,text="Currency",bg=LIGHT).grid(row=9,column=2,padx=10,pady=5,sticky="w"); ttk.Combobox(form,textvariable=currency,values=self.currency_codes,state="readonly",width=25).grid(row=9,column=3)
+        tk.Checkbutton(form,text="Spouse Works",variable=spouse_works,bg=LIGHT).grid(row=10,column=2,sticky="w")
+        tk.Checkbutton(form,text="Active",variable=active,bg=LIGHT).grid(row=10,column=3,sticky="w")
+        tk.Label(form,text="Payroll Group",bg=LIGHT).grid(row=11,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(form,textvariable=employee_group,values=["employee","manager"],state="readonly",width=25).grid(row=11,column=1)
         def save():
             payload={key:var.get().strip() for key,var in fields.items()}; payload.update({"id":data.get("id"),"marital_status":marital.get(),"spouse_works":spouse_works.get(),"children":children.get(),"employee_group":employee_group.get(),"currency":currency.get(),"active":active.get()})
             try: saved=self.client.save_employee(payload)
             except Exception as exc: return messagebox.showerror("Employee",str(exc),parent=window)
             window.destroy(); self.load_payroll(); messagebox.showinfo("Employee",f'Employee {saved["employee_number"]} saved successfully')
-        self.action_button(window,"Save Employee",save).grid(row=10,column=0,columnspan=4,pady=14)
+        self.action_button(window,"Save Employee",save).pack(pady=8)
 
     def edit_selected_employee(self):
         selected=self.employee_tree.selection()
         if not selected: return messagebox.showwarning("Employees","Select an employee first")
         employee=next((row for row in getattr(self,"employee_rows",[]) if str(row["id"])==str(selected[0])),None)
         if employee: self.employee_dialog(employee)
+
+    def employee_r3_worksheet(self,format_name):
+        selected=self.employee_tree.selection()
+        if not selected: return messagebox.showwarning("R3 Registration","Select an employee first")
+        employee=next((row for row in getattr(self,"employee_rows",[]) if str(row["id"])==str(selected[0])),None)
+        if not employee: return messagebox.showwarning("R3 Registration","Refresh the employee list and select an employee")
+        fields=(("Full name","full_name"),("Father's name","father_name"),("Mother's name","mother_name"),
+                ("Nationality","nationality"),("Date of birth","birth_date"),("Place of birth","birth_place"),
+                ("National ID","national_id"),("MOF personal number","mof_number"),("NSSF number","nssf_number"),
+                ("Marital status","marital_status"),("Children","children"),("Address","address"),
+                ("Phone","contact_number"),("Profession","job_title"),("Start date","hire_date"))
+        rows=[[label,employee.get(key) if employee.get(key) not in (None,"") else "MISSING"] for label,key in fields]
+        missing=[label for (label,key),row in zip(fields,rows) if row[1]=="MISSING"]
+        meta=[f'Employee ID: {employee["employee_number"]}',
+              "Preparation worksheet only. Complete and submit the Ministry of Finance R3 form separately.",
+              "Official form: https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf",
+              "Check the official form for other details and supporting documents."]
+        if missing: meta.append("Missing in employee file: " + ", ".join(missing))
+        self.output_sections("R3 Employee Registration Worksheet",meta,
+            [{"heading":"Employee information","headers":["Field","Value"],"rows":rows,"total_rows":[]}],
+            f'R3_Worksheet_{employee["employee_number"]}',format_name)
 
     def load_payroll(self):
         if not hasattr(self,"employee_tree"): return
