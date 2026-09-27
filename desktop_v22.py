@@ -12,6 +12,11 @@ NAVY, GOLD, LIGHT = "#071b2e", "#c9a96a", "#f3f6f8"
 TREATMENTS = {"Taxable": "standard", "Taxable 11%": "standard", "Zero-rated": "zero_rated", "Zero-rated (export)": "zero_rated", "Exempt": "exempt", "Exempt (Art. 16-17)": "exempt", "Out of scope": "out_of_scope"}
 
 
+def _dd(value):
+    text = str(value or "")
+    return f"{text[8:10]}-{text[5:7]}-{text[:4]}" if len(text) >= 10 and text[4] == "-" else text
+
+
 class V22Mixin:
     # ------------------------------------------------------------ sales documents
     def sales_doc_type_changed(self):
@@ -244,3 +249,175 @@ class V22Mixin:
         if not getattr(self, "business_result", None): self.run_business_report()
         result = getattr(self, "business_result", None)
         if result: self.output_sections(result["title"], result["meta"], result["sections"], result["title"].replace(" ", "_").replace("(", "").replace(")", ""), mode)
+
+    # ------------------------------------------------------------ dashboard charts
+    def build_dashboard_charts(self, parent):
+        box = tk.Frame(parent, bg=LIGHT); box.pack(fill="both", expand=True, padx=12, pady=(4, 8))
+        bar = tk.Frame(box, bg=LIGHT); bar.pack(fill="x")
+        self.dash_basis = tk.StringVar(value="USD")
+        tk.Label(bar, text=f"Year {getattr(self, 'current_fiscal_year', '')} - charts in", bg=LIGHT, fg=NAVY, font=("Segoe UI", 10, "bold")).pack(side="left")
+        box_basis = ttk.Combobox(bar, textvariable=self.dash_basis, values=["USD", "LBP"], state="readonly", width=5); box_basis.pack(side="left", padx=6)
+        box_basis.bind("<<ComboboxSelected>>", lambda _e: self.load_dashboard_charts())
+        grid = tk.Frame(box, bg=LIGHT); grid.pack(fill="both", expand=True, pady=(4, 0))
+        self.dash_canvases = {}
+        for index, key in enumerate(("months", "receivables", "top_clients", "cash")):
+            canvas = tk.Canvas(grid, bg="white", highlightthickness=1, highlightbackground="#dfe6ee", height=190)
+            canvas.grid(row=index // 2, column=index % 2, sticky="nsew", padx=4, pady=4); self.dash_canvases[key] = canvas
+            canvas.bind("<Configure>", lambda _e: self.draw_dashboard_charts())
+        for col in range(2): grid.grid_columnconfigure(col, weight=1)
+        for row in range(2): grid.grid_rowconfigure(row, weight=1)
+
+    def load_dashboard_charts(self):
+        if not getattr(self, "dash_canvases", None): return
+        try: self.dash_data = self.client.dashboard_charts(getattr(self, "current_fiscal_year", datetime.now().year), self.dash_basis.get())
+        except Exception: self.dash_data = None
+        self.draw_dashboard_charts()
+
+    def draw_dashboard_charts(self):
+        data = getattr(self, "dash_data", None)
+        if not data or not getattr(self, "dash_canvases", None): return
+        basis = data["basis"]
+        self._bar_chart(self.dash_canvases["months"], f"Sales vs purchases & expenses by month (HT, {basis})", [m[0] for m in data["months"]],
+                        [("Sales", "#1F6E8C", [m[1] for m in data["months"]]), ("Purchases", GOLD, [m[2] for m in data["months"]])])
+        self._bar_chart(self.dash_canvases["receivables"], f"Receivables by age ({basis})", [r[0].replace(" days", "d") for r in data["receivables"]],
+                        [("Open", "#8B1E1E", [r[1] for r in data["receivables"]])])
+        self._hbar_chart(self.dash_canvases["top_clients"], f"Top 5 clients (TTC, {basis})", data["top_clients"], "#1F6E8C")
+        self._hbar_chart(self.dash_canvases["cash"], f"Cash and bank balances ({basis})", data["cash"], "#2E7D5B")
+
+    def _short(self, value):
+        value = float(value); sign = "-" if value < 0 else ""; value = abs(value)
+        return f"{sign}{value / 1e9:.1f}B" if value >= 1e9 else f"{sign}{value / 1e6:.1f}M" if value >= 1e6 else f"{sign}{value / 1e3:.1f}K" if value >= 1e4 else f"{sign}{value:,.0f}"
+
+    def _bar_chart(self, canvas, title, labels, series):
+        canvas.delete("all"); width = max(canvas.winfo_width(), 300); height = max(canvas.winfo_height(), 160)
+        canvas.create_text(10, 8, anchor="nw", text=title, fill=NAVY, font=("Segoe UI", 9, "bold"))
+        values = [v for _n, _c, vals in series for v in vals]; top = max([1.0] + [abs(v) for v in values])
+        if not any(values): canvas.create_text(width / 2, height / 2, text="No data yet", fill="#8a96a3"); return
+        left, bottom, chart_h = 40, height - 22, height - 60
+        slot = (width - left - 10) / max(1, len(labels)); bar = max(4, min(22, slot / (len(series) + 1)))
+        for step in range(4):
+            y = bottom - chart_h * step / 3; canvas.create_line(left, y, width - 8, y, fill="#eef2f6")
+            canvas.create_text(left - 4, y, anchor="e", text=self._short(top * step / 3), fill="#8a96a3", font=("Segoe UI", 7))
+        for i, label in enumerate(labels):
+            x0 = left + i * slot + (slot - bar * len(series)) / 2
+            for j, (_name, color, vals) in enumerate(series):
+                h = chart_h * max(0, vals[i]) / top; canvas.create_rectangle(x0 + j * bar, bottom - h, x0 + (j + 1) * bar - 1, bottom, fill=color, outline="")
+            canvas.create_text(left + i * slot + slot / 2, bottom + 9, text=label, fill="#5f6b76", font=("Segoe UI", 7))
+        for j, (name, color, vals) in enumerate(series):
+            x = width - 170 + j * 85; canvas.create_rectangle(x, 11, x + 10, 19, fill=color, outline=""); canvas.create_text(x + 14, 15, anchor="w", text=f"{name} {self._short(sum(vals))}", font=("Segoe UI", 7), fill=NAVY)
+
+    def _hbar_chart(self, canvas, title, rows, color):
+        canvas.delete("all"); width = max(canvas.winfo_width(), 300); height = max(canvas.winfo_height(), 160)
+        canvas.create_text(10, 8, anchor="nw", text=title, fill=NAVY, font=("Segoe UI", 9, "bold"))
+        if not rows: canvas.create_text(width / 2, height / 2, text="No data yet", fill="#8a96a3"); return
+        top = max([1.0] + [abs(v) for _l, v in rows]); line_h = min(26, (height - 36) / len(rows)); label_w = 150
+        for i, (label, value) in enumerate(rows):
+            y = 32 + i * line_h; w = (width - label_w - 70) * abs(value) / top
+            canvas.create_text(10, y + line_h / 2, anchor="w", text=str(label)[:24], fill=NAVY, font=("Segoe UI", 8))
+            canvas.create_rectangle(label_w, y + 4, label_w + w, y + line_h - 4, fill=color if value >= 0 else "#8B1E1E", outline="")
+            canvas.create_text(label_w + w + 6, y + line_h / 2, anchor="w", text=self._short(value), fill="#5f6b76", font=("Segoe UI", 8))
+
+    # ------------------------------------------------------------ bank reconciliation
+    def build_bank_rec_page(self, page):
+        year = getattr(self, "current_fiscal_year", datetime.now().year)
+        self.bk = {k: tk.StringVar(value=v) for k, v in (("account", ""), ("currency", "USD"), ("from", f"01-01-{year}"), ("to", f"31-12-{year}"), ("balance", ""), ("post_account", "6739 - Bank Commissions & Other Charges"))}
+        bar = tk.Frame(page, bg=LIGHT); bar.pack(fill="x", padx=8, pady=(8, 2))
+        tk.Label(bar, text="Bank account", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.bk_account_box = ttk.Combobox(bar, textvariable=self.bk["account"], state="readonly", width=30); self.bk_account_box.pack(side="left", padx=(4, 8))
+        ttk.Combobox(bar, textvariable=self.bk["currency"], values=getattr(self, "currency_codes", ["USD", "LBP", "EUR", "AED"]), state="readonly", width=5).pack(side="left", padx=4)
+        tk.Label(bar, text="From", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.bk["from"], 11).pack(side="left", padx=(4, 6))
+        tk.Label(bar, text="To", bg=LIGHT).pack(side="left"); self.date_entry(bar, self.bk["to"], 11).pack(side="left", padx=(4, 6))
+        tk.Label(bar, text="Statement ending balance", bg=LIGHT).pack(side="left"); tk.Entry(bar, textvariable=self.bk["balance"], width=12).pack(side="left", padx=4)
+        tk.Button(bar, text="Show", command=self.load_bank_rec, bg=GOLD, fg=NAVY, border=0, padx=14, pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", padx=6)
+        bar2 = tk.Frame(page, bg=LIGHT); bar2.pack(fill="x", padx=8, pady=2)
+        for text, command in (("Import Statement (Excel / CSV)", self.import_bank_statement), ("Auto Match", self.bank_auto_match), ("Match Selected", self.bank_match_selected),
+                              ("Unmatch", self.bank_unmatch), ("Delete Statement Line", self.bank_delete_line)):
+            tk.Button(bar2, text=text, command=command, bg=NAVY if text != "Delete Statement Line" else "#8B1E1E", fg="white", border=0, padx=10, pady=5).pack(side="left", padx=2)
+        tk.Label(bar2, text="Book to", bg=LIGHT).pack(side="left", padx=(8, 2)); tk.Entry(bar2, textvariable=self.bk["post_account"], width=20).pack(side="left")
+        tk.Button(bar2, text="Post Line", command=self.bank_post_line, bg=GOLD, fg=NAVY, border=0, padx=10, pady=5).pack(side="left", padx=4)
+        tk.Button(bar, text="Report", command=lambda: self.bank_report("preview"), bg=NAVY, fg="white", border=0, padx=10, pady=5).pack(side="left", padx=2)
+        self.bk_info = tk.Label(page, text="Choose the bank account and press Show. Match each statement line (left) with its book line (right).", bg=LIGHT, fg=NAVY, anchor="w", font=("Segoe UI", 9, "bold"))
+        self.bk_info.pack(fill="x", padx=10, pady=(2, 2))
+        panes = tk.Frame(page, bg=LIGHT); panes.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.bk_trees = {}
+        for index, (key, title, columns) in enumerate((("statement", "Bank statement", (("date", "Date", 85), ("ref", "Reference", 90), ("desc", "Description", 190), ("amount", "Amount", 95), ("match", "Matched", 95))),
+                                                       ("books", "Books (account movements)", (("date", "Date", 85), ("voucher", "Voucher", 115), ("desc", "Description", 180), ("amount", "Amount", 95), ("match", "Matched", 70))))):
+            frame = tk.LabelFrame(panes, text=title, bg=LIGHT, padx=4, pady=2); frame.grid(row=0, column=index, sticky="nsew", padx=3)
+            tree = ttk.Treeview(frame, columns=[c[0] for c in columns], show="headings", selectmode="browse")
+            for col, label, width in columns: tree.heading(col, text=label); tree.column(col, width=width, anchor="e" if col == "amount" else "w")
+            scroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview); tree.configure(yscrollcommand=scroll.set)
+            tree.pack(side="left", fill="both", expand=True); scroll.pack(side="right", fill="y")
+            tree.tag_configure("matched", foreground="#2E7D5B"); tree.tag_configure("open", foreground="#8B1E1E"); self.bk_trees[key] = tree
+        for col in range(2): panes.grid_columnconfigure(col, weight=1)
+        panes.grid_rowconfigure(0, weight=1)
+        try: self.bk_account_box["values"] = [f'{a["code"]} - {a["name_en"]}' for a in self.client.accounts() if str(a["code"]).startswith(("511", "512", "519", "53"))]
+        except Exception: pass
+
+    def _bank_params(self):
+        account = self.bk["account"].get().split(" - ", 1)[0].strip()
+        if not account: raise ValueError("Choose the bank account")
+        return account, self.bk["currency"].get(), self.bk["from"].get().strip(), self.bk["to"].get().strip()
+
+    def load_bank_rec(self):
+        try: account, currency, start, end = self._bank_params(); data = self.client.bank_lines(account, currency, start, end, self.bk["balance"].get().strip() or None)
+        except Exception as exc: return messagebox.showerror("Bank Reconciliation", str(exc))
+        self.bank_data = data; books = {b["id"]: b for b in data["books"]}
+        tree = self.bk_trees["statement"]; tree.delete(*tree.get_children())
+        for s in data["statement"]:
+            book = books.get(s["journal_line_id"]); tree.insert("", "end", iid=str(s["id"]), values=(_dd(s["line_date"]), s.get("reference") or "", s.get("description") or "", f'{float(s["amount"]):,.2f}',
+                book["entry_number"] if book else ("matched" if s["journal_line_id"] else "")), tags=("matched" if s["journal_line_id"] else "open",))
+        tree = self.bk_trees["books"]; tree.delete(*tree.get_children())
+        for b in data["books"]:
+            tree.insert("", "end", iid=str(b["id"]), values=(_dd(b["iso_date"]), b["entry_number"], b.get("description") or "", f'{float(b["amount"]):,.2f}', "Yes" if b.get("statement_id") else ""),
+                        tags=("matched" if b.get("statement_id") else "open",))
+        r = data["report"]; diff = r.get("difference")
+        self.bk_info.config(text=f'Book balance {r["book_balance"]:,.2f}   Expected bank balance {r["expected"]:,.2f}   Matched {r["matched"]} of {r["statement_count"]} statement line(s)' +
+                            (f'   DIFFERENCE {diff:,.2f}' if diff is not None else "   (enter the statement ending balance to check the difference)"),
+                            fg="#2E7D5B" if diff is not None and abs(diff) < 0.005 else NAVY if diff is None else "#8B1E1E")
+
+    def import_bank_statement(self):
+        import bank_rec
+        try: account, currency, _start, _end = self._bank_params()
+        except ValueError as exc: return messagebox.showwarning("Bank Reconciliation", str(exc))
+        path = filedialog.askopenfilename(filetypes=[("Bank statement", "*.xlsx *.xlsm *.csv")])
+        if not path: return
+        try:
+            rows = [{**row, "amount": str(row["amount"])} for row in bank_rec.read_statement_file(path)]
+            added = self.client.bank_action("import", {"account": account, "currency": currency, "rows": rows})["added"]
+        except Exception as exc: return messagebox.showerror("Bank Reconciliation", f"The statement could not be read: {exc}")
+        messagebox.showinfo("Bank Reconciliation", f"{added} statement line(s) imported. Press Auto Match."); self.load_bank_rec()
+
+    def bank_auto_match(self):
+        try: account, currency, start, end = self._bank_params(); matched = self.client.bank_action("auto-match", {"account": account, "currency": currency, "from": start, "to": end})["matched"]
+        except Exception as exc: return messagebox.showerror("Bank Reconciliation", str(exc))
+        messagebox.showinfo("Bank Reconciliation", f"{matched} line(s) matched automatically (same amount, dates within 5 days)."); self.load_bank_rec()
+
+    def bank_match_selected(self):
+        s = self.bk_trees["statement"].selection(); b = self.bk_trees["books"].selection()
+        if not s or not b: return messagebox.showwarning("Bank Reconciliation", "Select one statement line (left) and one book line (right)")
+        try: self.client.bank_action("match", {"statement_id": s[0], "journal_line_id": b[0]})
+        except Exception as exc: return messagebox.showerror("Bank Reconciliation", str(exc))
+        self.load_bank_rec()
+
+    def bank_unmatch(self):
+        s = self.bk_trees["statement"].selection()
+        if not s: return messagebox.showwarning("Bank Reconciliation", "Select a matched statement line")
+        self.client.bank_action("unmatch", {"statement_id": s[0]}); self.load_bank_rec()
+
+    def bank_delete_line(self):
+        s = self.bk_trees["statement"].selection()
+        if not s or not messagebox.askyesno("Bank Reconciliation", "Delete the selected statement line?"): return
+        self.client.bank_action("delete", {"statement_id": s[0]}); self.load_bank_rec()
+
+    def bank_post_line(self):
+        s = self.bk_trees["statement"].selection()
+        if not s: return messagebox.showwarning("Bank Reconciliation", "Select the statement line to book (bank charges, interest...)")
+        try: voucher = self.client.bank_action("post", {"statement_id": s[0], "account_code": self.bk["post_account"].get()})["voucher"]
+        except Exception as exc: return messagebox.showerror("Bank Reconciliation", str(exc))
+        messagebox.showinfo("Bank Reconciliation", f"Booked as {voucher} and matched."); self.load_bank_rec(); self.load_journal(); self.load_trial()
+
+    def bank_report(self, mode):
+        if not getattr(self, "bank_data", None): self.load_bank_rec()
+        data = getattr(self, "bank_data", None)
+        if data: report = data["report"]; self.output_sections(report["title"], report["meta"], report["sections"], "Bank_Reconciliation", mode)
+

@@ -258,3 +258,8 @@ class ApiClient:
     def backup_folder(self): return self.request("GET","/api/backups/folder")["folder"]
     def business_report(self,report,options): return self.request("GET","/api/reports/business?"+urlencode({"report":report,"options":json.dumps(options)}))
     def delete_payroll_period(self,date_from): return self.request("POST","/api/payroll/delete-period",{"date_from":date_from})["items"]
+    def dashboard_charts(self,year,basis="USD"): return self.request("GET","/api/reports/dashboard-charts?"+urlencode({"year":year,"basis":basis}))
+    def bank_lines(self,account,currency,date_from,date_to,balance=None):
+        return self.request("GET","/api/bank/lines?"+urlencode({k:v for k,v in {"account":account,"currency":currency,"from":date_from,"to":date_to,"balance":balance}.items() if v not in (None,"")}))
+    def bank_action(self,action,item): return self.request("POST",f"/api/bank/{action}",item)
+

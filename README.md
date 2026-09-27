@@ -1,5 +1,17 @@
 # Saber Accounting MVP
 
+## Version 2.9.0
+
+- **Bank Reconciliation** (Payment & Receipt > Bank Reconciliation): import the bank statement (Excel or CSV: Date, Description, Reference, Debit / Credit or Amount) for a bank account (511 / 512 / 519 / 53), Auto Match (same amount, dates within 5 days), Match / Unmatch by hand, post statement-only items (bank charges 6739, interest...) as a voucher that is matched at once, and the reconciliation: book balance, deposits not yet at the bank, payments not yet cleared, statement items not booked, expected bank balance and the difference with the statement balance. Report in PDF / Excel / print.
+- **Dashboard charts** for the fiscal year (USD or LBP): sales vs purchases and expenses by month, receivables by age, top 5 clients, cash and bank balances.
+- **AI_RULES.md**: the rules for anyone (people, ChatGPT, Claude) who changes the program - start from the latest version, never remove features or tests, run the tests, deliver the whole project, accounting rules.
+- VAT declaration box numbers: kept as the section layout (A / B / C / E / F) until the official Ministry of Finance form is provided.
+
+## Version 2.8.3 (review)
+
+- New currencies (for example SAR) now work everywhere: payroll converts LBP -> USD -> the new currency when there is no direct rate, and VAT adjustments accept any currency set up under Exchange Rates.
+- Layout at 1366 x 768: "Due days from invoice" moved so its box is visible on Customers / Suppliers; Sales Invoice "Amount Paid", "Branch" and "VAT Treatment" moved to their own row so nothing is cut off.
+
 ## Version 2.8.2
 
 - Purchase Invoice actions sit beside the shorter entry form; the item table has more height and a wider description column.
