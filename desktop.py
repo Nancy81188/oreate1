@@ -1844,12 +1844,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Button(finder,text="Clear",command=lambda:(self.journal_find.set(""),self.journal_find_details.set(""),self.load_journal()),bg=NAVY,fg="white",border=0,padx=10,pady=5).pack(side="left",padx=2)
         for text,mode in (("Print Preview","preview"),("PDF","pdf"),("Print","print")):
             tk.Button(finder,text=text,command=lambda m=mode:self.journal_document(m),bg=NAVY,fg="white",border=0,padx=10,pady=5).pack(side="right",padx=2)
-        self.journal_tree=self.table(self.journal_tab,[
-            ("entry","Entry No.",95),("date","Date",95),("description","Description",190),
-            ("source","Source",75),("reference","Reference",75),("currency","Currency",70),
-            ("account","Account",85),("account_name","Account Name",190),("party","Customer / Supplier",165),
-            ("debit","Debit",105),("credit","Credit",105),("balance","Balance",110)])
-        actions=tk.Frame(self.journal_tab,bg=LIGHT); actions.pack(pady=(0,10))
+        actions=tk.Frame(self.journal_tab,bg=LIGHT); actions.pack(anchor="w",padx=10,pady=(6,4))
         self.action_button(actions,"Refresh",self.load_journal).pack(side="left",padx=4)
         self.action_button(actions,"Export Excel",lambda:self.journal_report("xlsx")).pack(side="left",padx=4)
         self.action_button(actions,"Export PDF",lambda:self.journal_report("pdf")).pack(side="left",padx=4)
@@ -1857,6 +1852,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Button(actions,text="Delete Selected Voucher",command=self.delete_selected_journal_voucher,bg="#6B1010",fg="white",border=0,padx=14,pady=7).pack(side="left",padx=4)
         self.journal_totals=tk.Label(actions,text="Debit: 0.00   Credit: 0.00",bg=LIGHT,font=("Segoe UI",10,"bold"))
         self.journal_totals.pack(side="left",padx=15)
+        self.journal_tree=self.table(self.journal_tab,[
+            ("entry","Entry No.",95),("date","Date",95),("description","Description",190),
+            ("source","Source",75),("reference","Reference",75),("currency","Currency",70),
+            ("account","Account",85),("account_name","Account Name",190),("party","Customer / Supplier",165),
+            ("debit","Debit",105),("credit","Credit",105),("balance","Balance",110)])
         self.load_journal()
 
     def journal_date_range(self):
