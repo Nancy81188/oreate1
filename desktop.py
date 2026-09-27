@@ -334,7 +334,18 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         nav_canvas.configure(xscrollcommand=nav_scroll.set)
         tab_nav=tk.Frame(nav_canvas,bg=LIGHT)
         nav_window=nav_canvas.create_window((0,0),window=tab_nav,anchor="nw")
+        nav_buttons=[]; navigation_columns=None
         def size_navigation(_event=None):
+            nonlocal navigation_columns
+            columns=min(8,max(2,nav_canvas.winfo_width()//155))
+            if nav_buttons and columns!=navigation_columns:
+                navigation_columns=columns
+                for button in nav_buttons: button.grid_forget()
+                for column in range(8): tab_nav.grid_columnconfigure(column,weight=0,uniform="")
+                for row in range(8): tab_nav.grid_rowconfigure(row,weight=0,uniform="")
+                for column in range(columns): tab_nav.grid_columnconfigure(column,weight=1,uniform="main_tabs")
+                for index,button in enumerate(nav_buttons):
+                    button.grid(row=index//columns,column=index%columns,sticky="nsew",padx=1,pady=0)
             nav_canvas.itemconfigure(nav_window,width=max(nav_canvas.winfo_width(),tab_nav.winfo_reqwidth()))
             nav_canvas.configure(height=max(56,tab_nav.winfo_reqheight()+2),scrollregion=nav_canvas.bbox("all"))
             if tab_nav.winfo_reqwidth()>nav_canvas.winfo_width()+1:
@@ -382,14 +393,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             frame=tk.Frame(account_notebook,bg=LIGHT); setattr(self,attribute,frame); account_notebook.add(frame,text=name)
         self.tab_names=[notebook.tab(tab,"text") for tab in notebook.tabs()]
         self.tab_choice=tk.StringVar(value=self.tab_names[0])
-        self.tab_buttons=[]; per_row=(len(self.main_tab_pages)+1)//2
+        self.tab_buttons=nav_buttons
         for index,(page,name) in enumerate(zip(self.main_tab_pages,self.tab_names)):
-            row,column=divmod(index,per_row)
-            tab_nav.grid_columnconfigure(column,weight=1,uniform="main_tabs")
-            tab_nav.grid_rowconfigure(row,weight=1,uniform="main_tab_rows")
             button=tk.Button(tab_nav,text=name,command=lambda p=page:self.select_main_tab(p),bg=NAVY,fg="white",
                 activebackground=GOLD,activeforeground=NAVY,border=0,font=("Segoe UI",8,"bold"),pady=1,wraplength=120,cursor="hand2")
-            button.grid(row=row,column=column,sticky="nsew",padx=1,pady=0); self.tab_buttons.append(button)
+            nav_buttons.append(button)
         self.after_idle(size_navigation)
         notebook.bind("<<NotebookTabChanged>>",lambda _event:self.highlight_main_tab())
         self.highlight_main_tab()
