@@ -147,6 +147,12 @@ CREATE TABLE IF NOT EXISTS employees (
  salary_account TEXT, payable_account TEXT, active INTEGER NOT NULL DEFAULT 1,
  created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS nssf_filed_wages (
+ year INTEGER NOT NULL, month INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12),
+ sickness_wages TEXT, family_wages TEXT, end_service_wages TEXT, amount_paid TEXT,
+ note TEXT, updated_by INTEGER REFERENCES users(id), updated_at TEXT NOT NULL,
+ PRIMARY KEY(year,month)
+);
 CREATE TABLE IF NOT EXISTS payroll_settings (
  id INTEGER PRIMARY KEY, date_from TEXT NOT NULL, date_to TEXT,
  tax_brackets TEXT NOT NULL, single_allowance TEXT NOT NULL DEFAULT '450000000',
@@ -2338,6 +2344,33 @@ class Database:
                 FROM employees e LEFT JOIN branches b ON b.id=e.branch_id {where}
                 ORDER BY e.employee_number""")]
 
+    def nssf_filed_wages(self,year):
+        year=int(year)
+        if year<2000 or year>2100: raise ValueError("Enter a valid year")
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM nssf_filed_wages WHERE year=? ORDER BY month",(year,))]
+
+    def save_nssf_filed_wages(self,item,user_id):
+        year=int(item.get("year")); month=int(item.get("month"))
+        if year<2000 or year>2100 or month<1 or month>12: raise ValueError("Enter a valid year and month")
+        values=[]
+        for key in ("sickness_wages","family_wages","end_service_wages","amount_paid"):
+            raw=str(item.get(key) or "").strip().replace(",","")
+            if raw:
+                amount=Decimal(raw)
+                if not amount.is_finite() or amount<0: raise ValueError(f"{key.replace('_',' ')} must be zero or positive")
+                values.append(str(amount))
+            else: values.append(None)
+        with self.connect() as db:
+            db.execute("""INSERT INTO nssf_filed_wages(year,month,sickness_wages,family_wages,end_service_wages,amount_paid,note,updated_by,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(year,month) DO UPDATE SET sickness_wages=excluded.sickness_wages,
+                family_wages=excluded.family_wages,end_service_wages=excluded.end_service_wages,amount_paid=excluded.amount_paid,
+                note=excluded.note,updated_by=excluded.updated_by,updated_at=excluded.updated_at""",
+                (year,month,*values,str(item.get("note") or "").strip(),user_id,utcnow()))
+            db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
+                (user_id,"update","nssf_filed_wages",None,json.dumps({"year":year,"month":month}),utcnow()))
+        return next(row for row in self.nssf_filed_wages(year) if row["month"]==month)
+
     def next_employee_number(self, prefix="1000"):
         prefix="".join(ch for ch in str(prefix or "1000") if ch.isdigit())[:4]
         if len(prefix)!=4: raise ValueError("Employee prefix must contain 4 digits")
@@ -2366,7 +2399,9 @@ class Database:
             str(item.get("nssf_number") or "").strip(),str(item.get("address") or "").strip(),str(item.get("contact_number") or "").strip(),
             str(item.get("nationality") or "").strip(),str(item.get("father_name") or "").strip(),str(item.get("mother_name") or "").strip(),
             iso_date(item["birth_date"]) if item.get("birth_date") else None,str(item.get("birth_place") or "").strip(),
-            str(item.get("marital_status") or "single").lower(),spouse_works,children,employee_group,item.get("hire_date") or None,item.get("leave_date") or None,
+            str(item.get("marital_status") or "single").lower(),spouse_works,children,employee_group,
+            iso_date(item["hire_date"]) if item.get("hire_date") else None,
+            iso_date(item["leave_date"]) if item.get("leave_date") else None,
             str(item.get("job_title") or "").strip(),int(item["branch_id"]) if item.get("branch_id") else None,currency,
             str(Decimal(str(item.get("base_salary") or 0))),item.get("salary_account") or "621100001",
             item.get("payable_account") or "421100001",active)
