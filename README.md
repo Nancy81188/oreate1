@@ -1,5 +1,10 @@
 # Saber Accounting MVP
 
+## Version 2.8.3 (review)
+
+- New currencies (for example SAR) now work everywhere: payroll converts LBP -> USD -> the new currency when there is no direct rate, and VAT adjustments accept any currency set up under Exchange Rates.
+- Layout at 1366 x 768: "Due days from invoice" moved so its box is visible on Customers / Suppliers; Sales Invoice "Amount Paid", "Branch" and "VAT Treatment" moved to their own row so nothing is cut off.
+
 ## Version 2.8.2
 
 - Purchase Invoice actions sit beside the shorter entry form; the item table has more height and a wider description column.

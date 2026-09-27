@@ -903,6 +903,18 @@ class BusinessReportsTest(unittest.TestCase):
         after = self.db.delete_payroll_period(last, self.user)
         self.assertEqual(len(after), len(periods) - 1); self.assertIsNone(after[-1]["date_to"])
 
+class NewCurrencyTest(unittest.TestCase):
+    def test_payroll_and_vat_adjustment_in_a_new_currency(self):
+        folder = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); db, user = new_db(folder.name)
+        db.save_currency("SAR", "Saudi Riyal", user)
+        db.save_exchange_rate({"date_from": "01-01-2026", "date_to": "31-12-2026", "from_currency": "SAR", "to_currency": "USD", "rate": "0.2667"}, user)
+        employee = db.save_employee({"employee_number": "1000", "full_name": "E", "currency": "SAR", "base_salary": "5000", "nssf_number": "1", "mof_number": "2"}, user)
+        result = db.calculate_payroll({"employee_id": employee["id"], "period_date": "28-02-2026"})  # LBP -> USD -> SAR
+        self.assertEqual((result["income_tax_lbp"], result["employee_nssf"]), (2880000, 150))
+        self.assertTrue(vat_return.add_adjustment(db, {"year": 2026, "quarter": 1, "adjustment_type": "output", "currency": "SAR", "amount": "5", "reason": "test"}, user))
+        with self.assertRaisesRegex(ValueError, "not set up"): vat_return.add_adjustment(db, {"year": 2026, "quarter": 1, "adjustment_type": "output", "currency": "XYZ", "amount": "5", "reason": "test"}, user)
+        folder.cleanup()
+
 class StandaloneEndToEndTest(unittest.TestCase):
     """Runs the embedded data service exactly as the installed app does and drives it through the API."""
 

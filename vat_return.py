@@ -285,7 +285,7 @@ def add_adjustment(db, item, user_id, user_name=""):
     kind = str(item.get("adjustment_type") or "").lower()
     if kind not in ADJUSTMENT_TYPES: raise ValueError("Choose Output, Deductible or Non-deductible VAT adjustment")
     currency = str(item.get("currency") or "LBP").upper()
-    if currency not in ("USD", "EUR", "LBP", "AED"): raise ValueError("Invalid adjustment currency")
+    if currency not in db.currency_codes(): raise ValueError(f"Currency {currency} is not set up (Security / Backup / Rates > Exchange Rates)")
     try: amount = Decimal(str(item.get("amount") or "").replace(",", ""))
     except Exception as exc: raise ValueError("Adjustment amount must be a number (use a minus sign to reduce)") from exc
     if not amount: raise ValueError("Adjustment amount cannot be zero")

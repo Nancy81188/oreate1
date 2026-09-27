@@ -1898,7 +1898,9 @@ class Database:
             from_usd=find_rate("USD",target)
             if from_usd is None: from_usd=Decimal("1")/usd_rates[target]
             return amount*to_usd*from_usd
+        # any other currency goes through USD (for example LBP -> USD -> SAR for payroll paid in SAR)
         first=find_rate(source,"USD") if source!="USD" else Decimal("1")
+        if first is None and source in usd_rates: first=usd_rates[source]
         second=find_rate("USD",target) if target!="USD" else Decimal("1")
         if second is None and target in usd_rates: second=Decimal("1")/usd_rates[target]
         if first is not None and second is not None: return amount*first*second

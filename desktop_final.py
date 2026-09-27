@@ -358,7 +358,7 @@ class FinalFeaturesMixin:
         form = tk.Frame(adjustments, bg=LIGHT); form.pack(fill="x", padx=10, pady=8)
         self.vat_adj_type = tk.StringVar(value="Output VAT"); self.vat_adj_currency = tk.StringVar(value="LBP"); self.vat_adj_amount = tk.StringVar(); self.vat_adj_reason = tk.StringVar()
         ttk.Combobox(form, textvariable=self.vat_adj_type, values=["Output VAT", "Deductible VAT", "Non-deductible VAT"], state="readonly", width=18).pack(side="left", padx=3)
-        ttk.Combobox(form, textvariable=self.vat_adj_currency, values=["LBP", "USD", "EUR", "AED"], state="readonly", width=6).pack(side="left", padx=3)
+        ttk.Combobox(form, textvariable=self.vat_adj_currency, values=getattr(self, "currency_codes", ["LBP", "USD", "EUR", "AED"]), state="readonly", width=6).pack(side="left", padx=3)
         tk.Label(form, text="Amount (+/-)", bg=LIGHT).pack(side="left"); tk.Entry(form, textvariable=self.vat_adj_amount, width=14).pack(side="left", padx=3)
         tk.Label(form, text="Reason", bg=LIGHT).pack(side="left"); tk.Entry(form, textvariable=self.vat_adj_reason, width=38).pack(side="left", padx=3)
         self.action_button(form, "Add Adjustment", self.add_vat_adjustment).pack(side="left", padx=3)
