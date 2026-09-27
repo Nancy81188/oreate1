@@ -134,6 +134,7 @@ class FinalFeaturesMixin:
         tk.Button(buttons, text="Generate", command=self.generate_payroll_report, bg=GOLD, fg=NAVY, border=0, padx=16, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
         self.action_button(buttons, "Export Excel", lambda: self.export_payroll_report("xlsx")).pack(side="left", padx=3)
         self.action_button(buttons, "Export PDF", lambda: self.export_payroll_report("pdf")).pack(side="left", padx=3)
+        self.action_button(buttons, "Employee List / Edit", lambda:self.payroll_notebook.select(self.payroll_employees_page)).pack(side="left",padx=3)
         self.nssf_pay_button = tk.Button(buttons, text="Record NSSF Payment", command=self.record_nssf_payment, bg=GOLD, fg=NAVY, border=0, padx=12, pady=6, font=("Segoe UI", 9, "bold"))
         self.nssf_pay_button.pack(side="left", padx=3)
         def refresh_index(*_args):
@@ -205,7 +206,8 @@ class FinalFeaturesMixin:
         note = f"{result['title']}  |  {result['period_label']}  |  {result['record_count']} payroll record(s)"
         if not result["record_count"]:
             note += "  |  No posted payroll in this period. Post payroll records, or tick 'Include draft payroll' to preview."
-        if result.get("report") == "NSSF": note += f"  |  Net payable to the NSSF: {result['net_payable_lbp']:,.0f} LBP"
+        if result.get("report") == "NSSF": note += (f"  |  {result['employee_count']} employee(s) in period, "
+            f"{result['payroll_employee_count']} with payroll  |  Net payable: {result['net_payable_lbp']:,.0f} LBP")
         self.pr_info.config(text=note, fg=RED if not result["record_count"] else NAVY)
 
     def record_nssf_payment(self):
