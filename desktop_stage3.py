@@ -508,7 +508,7 @@ class Stage3Mixin:
         for key,var in self.asset_fields.items():
             value=asset.get(key) or ""
             var.set(_dd(value) if key in ("acquired_on","start_on") and value else str(value))
-        self.asset_rate.set(f'{1200/int(asset["useful_months"]):g}')
+        self.asset_rate.set(str(asset.get("annual_rate") or f'{1200/int(asset["useful_months"]):g}'))
         self.asset_schedule_tree.delete(*self.asset_schedule_tree.get_children())
         try: rows=self.client.asset_schedule(self.asset_edit_id)
         except Exception as exc: return messagebox.showerror("Assets",str(exc))
@@ -516,6 +516,7 @@ class Stage3Mixin:
 
     def save_asset_entry(self):
         payload={key:var.get().strip() for key,var in self.asset_fields.items()}
+        payload["annual_rate"]=self.asset_rate.get().strip()
         if not payload["invoice_id"]: payload["invoice_id"]=None
         try: asset=self.client.save_asset(payload,self.asset_edit_id)
         except Exception as exc: return messagebox.showerror("Assets",str(exc))
@@ -525,7 +526,11 @@ class Stage3Mixin:
     def asset_rate_changed(self,*_args):
         try:
             rate=float(self.asset_rate.get())
-            if 0<rate<=100: self.asset_fields["useful_months"].set(str(round(1200/rate)))
+            cost=float(self.asset_fields["cost"].get().replace(",",""))
+            residual=float(self.asset_fields["residual"].get().replace(",",""))
+            if 0<rate<=100 and 0<=residual<cost:
+                import math
+                self.asset_fields["useful_months"].set(str(math.ceil((cost-residual)*1200/(cost*rate))))
         except ValueError: pass
 
     def open_asset_purchase(self):

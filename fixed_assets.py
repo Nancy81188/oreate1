@@ -1,6 +1,7 @@
 """Straight-line fixed asset register and auditable depreciation postings."""
 import calendar
 import json
+from decimal import ROUND_CEILING
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -21,6 +22,8 @@ def migrate(db):
             UNIQUE(asset_id, period_end)
         );
     """)
+    if "annual_rate" not in {row[1] for row in db.execute("PRAGMA table_info(fixed_assets)")}:
+        db.execute("ALTER TABLE fixed_assets ADD COLUMN annual_rate TEXT")
 
 
 def _iso(value):
@@ -52,6 +55,13 @@ def save_asset(database, payload, asset_id=None, user_id=None):
     try: months=int(payload.get("useful_months"))
     except (ValueError, TypeError): raise ValueError("Useful life must be a whole number of months")
     if months<1 or months>1200: raise ValueError("Useful life must be between 1 and 1200 months")
+    annual_rate=None
+    if payload.get("annual_rate") not in (None, ""):
+        annual_rate=_money(payload["annual_rate"],"Annual amortisation rate")
+        if not 0<annual_rate<=100: raise ValueError("Annual amortisation rate must be above 0 and at most 100%")
+        monthly=cost*annual_rate/Decimal(1200)
+        months=int(((cost-residual)/monthly).to_integral_value(rounding=ROUND_CEILING))
+        if months>1200: raise ValueError("Annual rate is too small to amortise the asset within 100 years")
     currency=str(payload.get("currency") or "USD").upper(); frequency=str(payload.get("frequency") or "monthly").lower()
     if currency not in ("USD","LBP","EUR","AED") or frequency not in ("monthly","yearly"):
         raise ValueError("Choose a supported currency and monthly or yearly posting")
@@ -68,17 +78,17 @@ def save_asset(database, payload, asset_id=None, user_id=None):
         for account in accounts:
             if not db.execute("SELECT 1 FROM accounts WHERE code=?",(account,)).fetchone():
                 raise ValueError(f"Account {account} was not found")
-        values=(code,name,acquired,start,currency,str(cost),str(residual),months,frequency,*accounts,invoice_id)
+        values=(code,name,acquired,start,currency,str(cost),str(residual),months,frequency,*accounts,invoice_id,str(annual_rate) if annual_rate else None)
         action="update" if asset_id else "create"
         if asset_id:
             if not db.execute("SELECT 1 FROM fixed_assets WHERE id=? AND status='active'",(asset_id,)).fetchone(): raise KeyError(asset_id)
             if db.execute("SELECT 1 FROM fixed_asset_postings WHERE asset_id=?",(asset_id,)).fetchone():
                 raise ValueError("This asset has posted depreciation; reverse those vouchers before changing the schedule")
             db.execute("""UPDATE fixed_assets SET asset_code=?,name=?,acquired_on=?,start_on=?,currency=?,cost=?,residual=?,useful_months=?,frequency=?,
-                asset_account=?,depreciation_account=?,accumulated_account=?,invoice_id=? WHERE id=?""",values+(asset_id,))
+                asset_account=?,depreciation_account=?,accumulated_account=?,invoice_id=?,annual_rate=? WHERE id=?""",values+(asset_id,))
         else:
             db.execute("""INSERT INTO fixed_assets(asset_code,name,acquired_on,start_on,currency,cost,residual,useful_months,frequency,
-                asset_account,depreciation_account,accumulated_account,invoice_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))""",values)
+                asset_account,depreciation_account,accumulated_account,invoice_id,annual_rate,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))""",values)
             asset_id=db.execute("SELECT last_insert_rowid()").fetchone()[0]
         db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,datetime('now'))",
                    (user_id,action,"fixed_asset",asset_id,json.dumps({"code":code,"name":name})))
@@ -96,7 +106,13 @@ def schedule(database, asset_id):
         total_month=start.year*12+start.month-1+index
         year,month=divmod(total_month,12); month+=1
         end=date(year,month,calendar.monthrange(year,month)[1]).isoformat()
-        amount=(depreciable*Decimal(index+1)/months).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)-assigned
+        if asset["annual_rate"]:
+            monthly=Decimal(asset["cost"])*Decimal(asset["annual_rate"])/Decimal(1200)
+            cumulative=min(depreciable,(monthly*Decimal(index+1)).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP))
+            if index==months-1: cumulative=depreciable
+            amount=cumulative-assigned
+        else:
+            amount=(depreciable*Decimal(index+1)/months).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)-assigned
         assigned+=amount; amounts.append((end,amount))
     if asset["frequency"]=="yearly":
         grouped={}
@@ -160,9 +176,9 @@ def carry_forward(source, target, target_year):
         for asset in assets:
             values=(asset["asset_code"],asset["name"],asset["acquired_on"],asset["start_on"],asset["currency"],
                     asset["cost"],asset["residual"],asset["useful_months"],asset["frequency"],asset["asset_account"],
-                    asset["depreciation_account"],asset["accumulated_account"],None,asset["created_at"])
+                    asset["depreciation_account"],asset["accumulated_account"],None,asset["annual_rate"],asset["created_at"])
             new_id=db.execute("""INSERT INTO fixed_assets(asset_code,name,acquired_on,start_on,currency,cost,residual,useful_months,frequency,
-                asset_account,depreciation_account,accumulated_account,invoice_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",values).lastrowid
+                asset_account,depreciation_account,accumulated_account,invoice_id,annual_rate,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",values).lastrowid
             for row in schedule(source,asset["id"]):
                 if row["posted"] and row["period_end"][:4]<str(target_year):
                     db.execute("INSERT INTO fixed_asset_postings(asset_id,period_end,amount,entry_id) VALUES(?,?,?,NULL)",

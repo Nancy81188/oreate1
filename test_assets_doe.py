@@ -47,6 +47,21 @@ class AssetAndDoeTest(unittest.TestCase):
             fixed_assets.post_period(self.db,asset["id"],"2025-02-28",1,2024)
         fixed_assets.post_period(target,continued["id"],"2025-02-28",1,2025)
 
+    def test_exact_annual_rate_caps_net_at_residual_and_carries_forward(self):
+        asset=fixed_assets.save_asset(self.db,{"asset_code":"RATE-7","name":"Seven percent","acquired_on":"01-01-2024",
+            "start_on":"01-01-2024","currency":"USD","cost":"1000","residual":"50","useful_months":60,
+            "annual_rate":"7","frequency":"yearly","asset_account":"211","depreciation_account":"6811","accumulated_account":"2811"})
+        periods=fixed_assets.schedule(self.db,asset["id"])
+        self.assertEqual(periods[0]["amount"],"70.00")
+        self.assertEqual(periods[-1]["net_book_value"],"50.00")
+        self.assertTrue(all(float(row["net_book_value"])>=50 for row in periods))
+        fixed_assets.post_period(self.db,asset["id"],"2024-12-31",1,2024)
+        target=Database(Path(self.folder.name)/"rate-next.db"); target.initialize("secret12345")
+        fixed_assets.carry_forward(self.db,target,2025)
+        copied=fixed_assets.list_assets(target)[0]
+        self.assertEqual(copied["annual_rate"],"7.00")
+        self.assertEqual(fixed_assets.schedule(target,copied["id"])[0]["amount"],"70.00")
+
     def test_doe_enforces_class_and_gain_loss_sides(self):
         with self.assertRaisesRegex(ValueError,"gains credit"):
             self.db.save_journal_voucher({"entry_date":"01-09-2024","description":"DOE","currency":"LBP","voucher_type":"07"},
