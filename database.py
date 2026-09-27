@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS currencies (
 CREATE TABLE IF NOT EXISTS employees (
  id INTEGER PRIMARY KEY, employee_number TEXT NOT NULL UNIQUE, full_name TEXT NOT NULL,
  national_id TEXT, mof_number TEXT, nssf_number TEXT, address TEXT, contact_number TEXT,
+ nationality TEXT, father_name TEXT, mother_name TEXT, birth_date TEXT, birth_place TEXT,
  marital_status TEXT NOT NULL DEFAULT 'single', spouse_works INTEGER NOT NULL DEFAULT 0, children INTEGER NOT NULL DEFAULT 0, employee_group TEXT NOT NULL DEFAULT 'employee',
  hire_date TEXT, leave_date TEXT, job_title TEXT, branch_id INTEGER REFERENCES branches(id),
  currency TEXT NOT NULL DEFAULT 'LBP', base_salary TEXT NOT NULL DEFAULT '0',
@@ -418,6 +419,9 @@ class Database:
             fixed_assets.migrate(db)
             import bank_rec
             bank_rec.migrate(db)
+            employee_cols={row["name"] for row in db.execute("PRAGMA table_info(employees)")}
+            for column in ("nationality","father_name","mother_name","birth_date","birth_place"):
+                if column not in employee_cols: db.execute(f"ALTER TABLE employees ADD COLUMN {column} TEXT")
             import chart_extra
             chart_extra.ensure_accounts(db)
             item_cols={row["name"] for row in db.execute("PRAGMA table_info(invoice_items)")}
@@ -2360,6 +2364,8 @@ class Database:
         employee_id=item.get("id")
         values=(number,name,str(item.get("national_id") or "").strip(),str(item.get("mof_number") or "").strip(),
             str(item.get("nssf_number") or "").strip(),str(item.get("address") or "").strip(),str(item.get("contact_number") or "").strip(),
+            str(item.get("nationality") or "").strip(),str(item.get("father_name") or "").strip(),str(item.get("mother_name") or "").strip(),
+            iso_date(item["birth_date"]) if item.get("birth_date") else None,str(item.get("birth_place") or "").strip(),
             str(item.get("marital_status") or "single").lower(),spouse_works,children,employee_group,item.get("hire_date") or None,item.get("leave_date") or None,
             str(item.get("job_title") or "").strip(),int(item["branch_id"]) if item.get("branch_id") else None,currency,
             str(Decimal(str(item.get("base_salary") or 0))),item.get("salary_account") or "621100001",
@@ -2367,12 +2373,14 @@ class Database:
         with self.connect() as db:
             if employee_id:
                 db.execute("""UPDATE employees SET employee_number=?,full_name=?,national_id=?,mof_number=?,nssf_number=?,address=?,contact_number=?,
+                    nationality=?,father_name=?,mother_name=?,birth_date=?,birth_place=?,
                     marital_status=?,spouse_works=?,children=?,employee_group=?,hire_date=?,leave_date=?,job_title=?,branch_id=?,currency=?,base_salary=?,salary_account=?,payable_account=?,active=? WHERE id=?""",
                     values+(int(employee_id),)); saved_id=int(employee_id); action="update"
             else:
                 saved_id=db.execute("""INSERT INTO employees(employee_number,full_name,national_id,mof_number,nssf_number,address,contact_number,
+                    nationality,father_name,mother_name,birth_date,birth_place,
                     marital_status,spouse_works,children,employee_group,hire_date,leave_date,job_title,branch_id,currency,base_salary,salary_account,payable_account,active,created_by,created_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",values+(user_id,utcnow())).lastrowid; action="create"
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",values+(user_id,utcnow())).lastrowid; action="create"
             db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
                 (user_id,action,"employee",saved_id,json.dumps({"employee_number":number,"name":name}),utcnow()))
         return next(row for row in self.list_employees() if row["id"]==saved_id)
