@@ -4,6 +4,7 @@
 
 - Main window opens within the available screen dimensions and its minimum size respects smaller displays.
 - Every main page now has vertical and horizontal scrollbars so forms, tables, and action buttons remain reachable on smaller screens or with larger Windows display scaling. The two-row navigation can scroll horizontally as well.
+- General Journal action buttons and totals now appear above the table, so they are immediately visible instead of being squeezed against the bottom of the window.
 
 ## Version 2.9.0
 
