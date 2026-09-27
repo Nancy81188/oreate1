@@ -187,6 +187,7 @@ def _r6_sections(label, records, employee_label):
 def build_payroll_report(db, report="R10", period_type="quarterly", year=None, index=1, group="both", include_drafts=False):
     report = str(report or "R10").upper()
     if report == "NSSF": return build_nssf_statement(db, period_type, year, index, include_drafts)
+    if report == "SETTLEMENT": return build_nssf_settlement(db, year or date.today().year)
     if report == "CEILINGS": return build_ceilings_by_month(db, year or date.today().year)
     if report not in REPORTS: raise ValueError("Report must be R5, R6, R10, NSSF or CEILINGS")
     start, end, label = period_range(period_type, year or date.today().year, index)
@@ -251,9 +252,12 @@ def build_nssf_statement(db, period_type="monthly", year=None, index=1, include_
     rows = []; payroll_employee_ids = {row["employee_id"] for row in records}
     company_employees = db.list_employees()
     current_employee_count = sum(bool(employee["active"]) for employee in company_employees)
+    def stored_date(value):
+        value=str(value or "")
+        return value[6:]+"-"+value[3:5]+"-"+value[:2] if len(value)==10 and value[2:3]=="-" else value
     period_employees = [employee for employee in company_employees
-                        if (not employee.get("hire_date") or employee["hire_date"] <= end)
-                        and (not employee.get("leave_date") or employee["leave_date"] >= start)]
+                        if (not employee.get("hire_date") or stored_date(employee["hire_date"]) <= end)
+                        and (not employee.get("leave_date") or stored_date(employee["leave_date"]) >= start)]
     roster = [[employee["employee_number"],employee["full_name"],employee.get("nssf_number") or "MISSING",
                employee.get("nationality") or "MISSING",employee.get("hire_date") or "-",employee.get("leave_date") or "-",
                "Yes" if employee["id"] in payroll_employee_ids else "No"] for employee in period_employees]
@@ -284,12 +288,15 @@ def build_nssf_statement(db, period_type="monthly", year=None, index=1, include_
                     ("salary", "sick_base", "employee", "employer_sick", "family_base", "family", "eos_base", "eos", "total", "allowance", "net")])
     rows.sort(key=lambda r: (r[1], r[2][3:] + r[2][:2]))
     rows.append(["TOTAL | المجموع", f"{len(payroll_employee_ids)} employee(s)", ""] + [totals[k] for k in ("salary", "sick_base", "employee", "employer_sick", "family_base", "family", "eos_base", "eos", "total", "allowance", "net")])
-    headers = ["NSSF No. | رقم الضمان", "Employee | الأجير", "Month | الشهر", "Salary subject | الأجر الخاضع", "Sickness base | أساس المرض", "Employee 3% | حصة الأجير",
-               "Employer 8% | صاحب العمل", "Family base | أساس العائلية", "Family 6% | العائلية", "EOS base | أساس نهاية الخدمة", "EOS 8.5% | نهاية الخدمة",
+    def rate_label(position):
+        labels=sorted({_rate_text(values[position]) for values in rates_seen.values()})
+        return " / ".join(labels) if labels else "saved rate"
+    headers = ["NSSF No. | رقم الضمان", "Employee | الأجير", "Month | الشهر", "Salary subject | الأجر الخاضع", "Sickness base | أساس المرض", f"Employee {rate_label(2)} | حصة الأجير",
+               f"Employer {rate_label(3)} | صاحب العمل", "Family base | أساس العائلية", f"Family {rate_label(4)} | العائلية", "EOS base | أساس نهاية الخدمة", f"EOS {rate_label(5)} | نهاية الخدمة",
                "Total | المجموع", "Allowances | تعويضات مدفوعة", "Net due | الصافي"]
-    summary = [["Sickness & maternity - employee share (3%)", "المرض والأمومة - حصة الأجير", totals["employee"]],
-               ["Sickness & maternity - employer share (8%)", "المرض والأمومة - حصة صاحب العمل", totals["employer_sick"]],
-               ["Sickness & maternity - total (11%)", "مجموع المرض والأمومة (11%)", totals["employee"] + totals["employer_sick"]],
+    summary = [[f"Sickness & maternity - employee share ({rate_label(2)})", "المرض والأمومة - حصة الأجير", totals["employee"]],
+               [f"Sickness & maternity - employer share ({rate_label(3)})", "المرض والأمومة - حصة صاحب العمل", totals["employer_sick"]],
+               ["Sickness & maternity - total", "مجموع المرض والأمومة", totals["employee"] + totals["employer_sick"]],
                ["Family allowances branch", "فرع التعويضات العائلية", totals["family"]],
                ["End-of-service indemnity branch", "فرع تعويض نهاية الخدمة", totals["eos"]],
                ["TOTAL CONTRIBUTIONS", "مجموع الاشتراكات", totals["total"]],
@@ -309,6 +316,58 @@ def build_nssf_statement(db, period_type="monthly", year=None, index=1, include_
     return {"report": "NSSF", "title": NSSF_TITLE, "period_label": label, "date_from": start, "date_to": end, "meta": meta, "sections": sections,
             "record_count": len(records), "employee_count": len(period_employees), "active_employee_count": current_employee_count,
             "payroll_employee_count": len(payroll_employee_ids), "net_payable_lbp": totals["net"], "summary": {k: v for k, v in totals.items()}}
+
+
+def build_nssf_settlement(db,year):
+    """Reconcile annual posted payroll with wages previously filed at the NSSF.
+
+    Missing filed wages/payments remain missing: never treat an unknown filing as zero.
+    This is a review worksheet, not an official submission or a posting instruction.
+    """
+    year=int(year)
+    statement=build_nssf_statement(db,"yearly",year,include_drafts=False)
+    filed={row["month"]:row for row in db.nssf_filed_wages(year)}
+    actual={month:{"sick":ZERO,"family":ZERO,"eos":ZERO,"net":ZERO} for month in range(1,13)}
+    for row in statement["sections"][0]["rows"][:-1]:
+        month=int(row[2][:2]); total=actual[month]
+        for key,column in (("sick",4),("family",7),("eos",9),("net",13)): total[key]+=Decimal(str(row[column]))
+    lines=[]; payments=[]; missing=[]; wage_difference=ZERO; amount_paid=ZERO
+    for month in range(1,13):
+        data=filed.get(month,{})
+        values=[data.get(field) for field in ("sickness_wages","family_wages","end_service_wages","amount_paid")]
+        if any(value is None for value in values): missing.append(month)
+        rates=db.payroll_settings_for(_month_end(f"{year}-{month:02d}-01"))
+        rate=lambda key: Decimal(str(rates.get(key) or 0))
+        if all(value is not None for value in values[:3]):
+            difference=_lbp((actual[month]["sick"]-Decimal(values[0]))*(rate("employee_nssf_rate")+rate("medical_rate"))
+                +(actual[month]["family"]-Decimal(values[1]))*rate("family_rate")
+                +(actual[month]["eos"]-Decimal(values[2]))*rate("end_service_rate"))
+            wage_difference+=difference
+        else: difference="MISSING FILED WAGES"
+        if values[3] is not None: amount_paid+=Decimal(values[3])
+        lines.append([f"{month:02d}-{year}",actual[month]["sick"],values[0] if values[0] is not None else "MISSING",
+                      actual[month]["family"],values[1] if values[1] is not None else "MISSING",
+                      actual[month]["eos"],values[2] if values[2] is not None else "MISSING",
+                      difference])
+        payments.append([f"{month:02d}-{year}",actual[month]["net"],values[3] if values[3] is not None else "MISSING"])
+    complete=not missing
+    summary=[["Annual NSSF net contribution from posted payroll",statement["net_payable_lbp"]],
+             ["Payments entered from filed NSSF declarations",amount_paid if complete else "INCOMPLETE"],
+             ["Balance after entered payments",statement["net_payable_lbp"]-amount_paid if complete else "INCOMPLETE"],
+             ["Wage-base settlement difference at each month's saved rates",wage_difference if complete else "INCOMPLETE"]]
+    meta=statement["meta"]+["Annual settlement review: compare actual payroll with amounts filed and paid outside the application.",
+        "Enter all 12 months of filed wage bases and payments; a blank is unknown, not zero."]
+    if missing: meta.append("Incomplete months: "+", ".join(str(month) for month in missing))
+    return {"report":"SETTLEMENT","title":f"NSSF Annual Settlement Review {year}","period_label":f"Year {year}",
+            "date_from":f"{year}-01-01","date_to":f"{year}-12-31","record_count":statement["record_count"],
+            "employee_count":statement["employee_count"],"complete":complete,"meta":meta,"summary":{},
+            "sections":[{"heading":"Monthly payroll vs filed wage bases (LBP)",
+                "headers":["Month","Actual sickness base","Filed sickness base","Actual family base","Filed family base",
+                           "Actual EOS base","Filed EOS base","Wage settlement difference"],
+                "rows":lines,"total_rows":[]},
+                {"heading":"Monthly NSSF contribution and payment (LBP)",
+                 "headers":["Month","Payroll NSSF net","Payments filed"],"rows":payments,"total_rows":[]},
+                {"heading":"Annual settlement review","headers":["Item","Amount (LBP)"],"rows":summary,"total_rows":[2,3]}]}
 
 
 def build_ceilings_by_month(db, year):
