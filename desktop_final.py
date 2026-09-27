@@ -119,7 +119,7 @@ class FinalFeaturesMixin:
         self.pr_year = tk.StringVar(value=str(getattr(self, "current_fiscal_year", now.year))); self.pr_index = tk.StringVar(value=f"Q{(now.month - 1) // 3 + 1}")
         self.pr_group = tk.StringVar(value="Employees and Managers (separate)"); self.pr_drafts = tk.BooleanVar(value=False)
         reports = ["R10 - Quarterly withholding", "R5 - Annual employer declaration", "R6 - Individual annual statement",
-                   "NSSF - Contributions statement (payment)", "CEILINGS - NSSF ceilings by month"]
+                   "NSSF - Contributions statement (payment)", "SETTLEMENT - NSSF annual reconciliation", "CEILINGS - NSSF ceilings by month"]
         tk.Label(controls, text="Report", bg=LIGHT).grid(row=0, column=0, padx=4, sticky="w")
         ttk.Combobox(controls, textvariable=self.pr_report, values=reports, state="readonly", width=31).grid(row=0, column=1, padx=4)
         tk.Label(controls, text="Period", bg=LIGHT).grid(row=0, column=2, padx=4, sticky="w")
@@ -134,8 +134,14 @@ class FinalFeaturesMixin:
         tk.Button(buttons, text="Generate", command=self.generate_payroll_report, bg=GOLD, fg=NAVY, border=0, padx=16, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
         self.action_button(buttons, "Export Excel", lambda: self.export_payroll_report("xlsx")).pack(side="left", padx=3)
         self.action_button(buttons, "Export PDF", lambda: self.export_payroll_report("pdf")).pack(side="left", padx=3)
+        self.action_button(buttons, "Employee List / Edit", lambda:self.payroll_notebook.select(self.payroll_employees_page)).pack(side="left",padx=3)
+        self.action_button(buttons, "Filed NSSF Wages", self.edit_nssf_filed_wages).pack(side="left",padx=3)
         self.nssf_pay_button = tk.Button(buttons, text="Record NSSF Payment", command=self.record_nssf_payment, bg=GOLD, fg=NAVY, border=0, padx=12, pady=6, font=("Segoe UI", 9, "bold"))
         self.nssf_pay_button.pack(side="left", padx=3)
+        forms=tk.Frame(controls,bg=LIGHT); forms.grid(row=2,column=0,columnspan=9,sticky="w",pady=(0,5))
+        for label,code in (("CNSS Contributions Form","NSSF-DUE"),("CNSS Annual Settlement Form","NSSF-SETTLEMENT"),
+                           ("CNSS Annual Employee Declaration","NSSF-ANNUAL")):
+            self.action_button(forms,label,lambda key=code:self.download_payroll_form(key)).pack(side="left",padx=3)
         def refresh_index(*_args):
             kind = self.pr_period_type.get()
             if kind == "Monthly":
@@ -205,8 +211,43 @@ class FinalFeaturesMixin:
         note = f"{result['title']}  |  {result['period_label']}  |  {result['record_count']} payroll record(s)"
         if not result["record_count"]:
             note += "  |  No posted payroll in this period. Post payroll records, or tick 'Include draft payroll' to preview."
-        if result.get("report") == "NSSF": note += f"  |  Net payable to the NSSF: {result['net_payable_lbp']:,.0f} LBP"
+        if result.get("report") == "NSSF": note += (f"  |  {result['employee_count']} employee(s) in period, "
+            f"{result['payroll_employee_count']} with payroll  |  Net payable: {result['net_payable_lbp']:,.0f} LBP")
+        if result.get("report") == "SETTLEMENT" and not result.get("complete"):
+            note += "  |  Add the filed wage bases and payments for every month to complete the settlement."
         self.pr_info.config(text=note, fg=RED if not result["record_count"] else NAVY)
+
+    def edit_nssf_filed_wages(self):
+        try:
+            year=int(self.pr_year.get().strip()); records={row["month"]:row for row in self.client.nssf_filed_wages(year)}
+        except Exception as exc: return messagebox.showerror("NSSF Filed Wages",str(exc))
+        window=tk.Toplevel(self); window.title(f"NSSF filed wages and payments - {year}")
+        window.configure(bg=LIGHT); window.transient(self); window.grab_set()
+        window.geometry(f"{min(1000,self.winfo_screenwidth())}x{min(600,self.winfo_screenheight()-80)}")
+        outer,form=self.scrollable_page(window); outer.pack(fill="both",expand=True)
+        columns=("Month","Sickness filed (LBP)","Family filed (LBP)","End of service filed (LBP)","NSSF paid (LBP)")
+        for col,title in enumerate(columns):
+            tk.Label(form,text=title,bg=LIGHT,fg=NAVY,font=("Segoe UI",9,"bold")).grid(row=0,column=col,padx=5,pady=7)
+        fields={}
+        for month in range(1,13):
+            record=records.get(month,{})
+            tk.Label(form,text=f"{month:02d}-{year}",bg=LIGHT).grid(row=month,column=0,padx=5,pady=5)
+            fields[month]={}
+            for col,key in enumerate(("sickness_wages","family_wages","end_service_wages","amount_paid"),1):
+                value=record.get(key)
+                variable=tk.StringVar(value="" if value is None else str(value)); fields[month][key]=variable
+                tk.Entry(form,textvariable=variable,width=21).grid(row=month,column=col,padx=5,pady=5)
+        tk.Label(form,text="Enter 0 when nothing was filed or paid. Leave blank only when unknown; blank months keep the settlement incomplete.",
+            bg=LIGHT,fg=MUTED,wraplength=850,justify="left").grid(row=13,column=0,columnspan=5,sticky="w",padx=10,pady=8)
+        def save():
+            try:
+                for month in range(1,13):
+                    item={"year":year,"month":month,**{key:var.get().strip() for key,var in fields[month].items()}}
+                    self.client.save_nssf_filed_wages(item)
+            except Exception as exc: return messagebox.showerror("NSSF Filed Wages",f"Check month {month:02d}: {exc}",parent=window)
+            window.destroy()
+            if self.pr_report.get().startswith("SETTLEMENT"): self.generate_payroll_report()
+        self.action_button(window,"Save 12 Months",save).pack(pady=8)
 
     def record_nssf_payment(self):
         result = getattr(self, "payroll_report_result", None)

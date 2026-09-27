@@ -332,6 +332,11 @@ def build_report(database, report, options):
     date_from = iso_date(options["date_from"]) if options.get("date_from") else f"{date_to[:4]}-01-01"
     warehouse = options.get("warehouse_id"); warehouse = int(warehouse) if str(warehouse or "").isdigit() else None
     items, warehouses = _names(database); company = database.settings(); sections = []
+    first_item=items.get(int(options["item_id"])) if options.get("item_id") else None
+    last_item=items.get(int(options["item_to_id"])) if options.get("item_to_id") else first_item
+    if options.get("item_id") and not first_item: raise ValueError("Choose a valid Item From")
+    if options.get("item_to_id") and not last_item: raise ValueError("Choose a valid Item To")
+    if first_item and last_item and first_item["sku"]>last_item["sku"]: raise ValueError("Item From must be before Item To")
     filters = [f"{label}: {options[key]}" for key, label in (("category", "Category"), ("subcategory", "Subcategory"), ("unit", "Unit"), ("supplier_name", "Supplier")) if options.get(key)]
     wanted = lambda item_id: not options.get("item_id") or int(options["item_id"]) == item_id
     category = str(options.get("category") or "").strip(); subcategory = str(options.get("subcategory") or "").strip()
@@ -339,6 +344,7 @@ def build_report(database, report, options):
     listed = {i["id"]: i for i in list_items(database)} if supplier_filter else {}
     def in_category(item_id):
         item = items[item_id]
+        if first_item and not (first_item["sku"]<=item["sku"]<=last_item["sku"]): return False
         if category and (item.get("category") or "") != category: return False
         if subcategory and (item.get("subcategory") or "") != subcategory: return False
         if unit_filter and (item.get("unit") or "") != unit_filter: return False
@@ -355,7 +361,7 @@ def build_report(database, report, options):
     if report == "valuation":
         state = run_costing(database, date_to, method)
         headers = ["Item Code", "Item", "Category", "Unit", "Quantity", f"Unit Cost ({currency})", f"Stock Value ({currency})", "Sales Price", "Value at Sales Price", "Reorder Level", "Status"]
-        rows = []; total = ZERO; sales_total = ZERO
+        rows = []; total = ZERO; sales_total = ZERO; quantities_by_unit = {}
         for item_id, item in sorted(items.items(), key=lambda pair: pair[1]["sku"]):
             if not in_category(item_id): continue
             data = state.get(item_id, {"qty": ZERO, "avg": ZERO, "by_warehouse": {}})
@@ -363,6 +369,7 @@ def build_report(database, report, options):
             if not qty and not options.get("include_zero"): continue
             value = (qty * data["avg"]).quantize(Decimal("0.01")); price = _d(item.get("sales_price")); reorder = _d(item.get("reorder_level"))
             total += value; sales_total += qty * price
+            quantities_by_unit[item["unit"]]=quantities_by_unit.get(item["unit"],ZERO)+qty
             rows.append([item["sku"], item["name"], item.get("category") or "", item["unit"], qty, data["avg"].quantize(Decimal("0.0001")), value, price, (qty * price).quantize(Decimal("0.01")), reorder,
                          "Reorder" if reorder and qty <= reorder else "OK"])
         # group by category with a subtotal per category
@@ -379,6 +386,8 @@ def build_report(database, report, options):
         if not warehouse and len(warehouses) > 1:
             by_wh = [[w["code"], w["name"], sum((data["by_warehouse"].get(wid, ZERO) * data["avg"] for data in state.values()), ZERO).quantize(Decimal("0.01"))] for wid, w in warehouses.items()]
             sections.append({"heading": "Value by warehouse", "headers": ["Warehouse", "Name", f"Value ({currency})"], "rows": by_wh, "total_rows": []})
+        sections.append({"heading":"Total stock quantity by unit", "headers":["Unit","Total stock quantity"],
+                         "rows":[[unit,quantity] for unit,quantity in sorted(quantities_by_unit.items())],"total_rows":[]})
     elif report == "stock_card":
         first = items.get(int(options.get("item_id") or 0))
         if not first: raise ValueError("Choose Stock Card Item From")
@@ -397,6 +406,7 @@ def build_report(database, report, options):
             card["lines"].append([display_date(row["doc_date"]), row["number"], DOC_TYPES[row["doc_type"]][1], row.get("warehouse_code") or "", row.get("party_name") or row.get("reference") or "",
                                   qty if qty > 0 else "", -qty if qty < 0 else "", (unit if qty < 0 or row["doc_type"] == "transfer" else _d(row["unit_cost"])).quantize(Decimal("0.0001")), cost_value.quantize(Decimal("0.01"))])
         run_costing(database, date_to, method, record)
+        card_totals={}
         for item_id in selected:
             card = cards[item_id]; qty_balance = card["opening_qty"]; value_balance = card["opening_value"]
             rows = [["", "", "Opening balance", "", "", "", "", "", value_balance.quantize(Decimal("0.01")), qty_balance, value_balance.quantize(Decimal("0.01"))]]
@@ -407,10 +417,13 @@ def build_report(database, report, options):
                 rows.append(line + [qty_balance, value_balance.quantize(Decimal("0.01"))])
             rows.append(["", "", "TOTAL / CLOSING", "", "", total_in, total_out, "", "", qty_balance, value_balance.quantize(Decimal("0.01"))])
             item = items[item_id]
+            unit=item["unit"]; card_totals[unit]=card_totals.get(unit,ZERO)+qty_balance
             sections.append({"heading": f"{item['sku']} - {item['name']} ({item['unit']}) | {display_date(date_from)} to {display_date(date_to)}" + (f" - {warehouses[warehouse]['code']}" if warehouse else ""),
                              "headers": ["Date", "Document", "Type", "Warehouse", "Party / Reference", "In", "Out", f"Unit Cost ({currency})", "Value", "Balance Qty", "Balance Value"],
                              "rows": rows, "total_rows": [0, len(rows) - 1]})
         title = "Stock Cards" if options.get("item_to_id") else "Stock Card"
+        sections.append({"heading":"Total closing stock by unit", "headers":["Unit","Total closing quantity"],
+                         "rows":[[unit,quantity] for unit,quantity in sorted(card_totals.items())],"total_rows":[]})
     elif report == "movements":
         rows = []
         def record(row, unit, value):

@@ -140,11 +140,18 @@ CREATE TABLE IF NOT EXISTS currencies (
 CREATE TABLE IF NOT EXISTS employees (
  id INTEGER PRIMARY KEY, employee_number TEXT NOT NULL UNIQUE, full_name TEXT NOT NULL,
  national_id TEXT, mof_number TEXT, nssf_number TEXT, address TEXT, contact_number TEXT,
+ nationality TEXT, father_name TEXT, mother_name TEXT, birth_date TEXT, birth_place TEXT,
  marital_status TEXT NOT NULL DEFAULT 'single', spouse_works INTEGER NOT NULL DEFAULT 0, children INTEGER NOT NULL DEFAULT 0, employee_group TEXT NOT NULL DEFAULT 'employee',
  hire_date TEXT, leave_date TEXT, job_title TEXT, branch_id INTEGER REFERENCES branches(id),
  currency TEXT NOT NULL DEFAULT 'LBP', base_salary TEXT NOT NULL DEFAULT '0',
  salary_account TEXT, payable_account TEXT, active INTEGER NOT NULL DEFAULT 1,
  created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS nssf_filed_wages (
+ year INTEGER NOT NULL, month INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12),
+ sickness_wages TEXT, family_wages TEXT, end_service_wages TEXT, amount_paid TEXT,
+ note TEXT, updated_by INTEGER REFERENCES users(id), updated_at TEXT NOT NULL,
+ PRIMARY KEY(year,month)
 );
 CREATE TABLE IF NOT EXISTS payroll_settings (
  id INTEGER PRIMARY KEY, date_from TEXT NOT NULL, date_to TEXT,
@@ -414,8 +421,13 @@ class Database:
             if "voucher_type" not in entry_columns: db.execute("ALTER TABLE journal_entries ADD COLUMN voucher_type TEXT NOT NULL DEFAULT '01'")
             import inventory
             inventory.migrate(db)
+            import fixed_assets
+            fixed_assets.migrate(db)
             import bank_rec
             bank_rec.migrate(db)
+            employee_cols={row["name"] for row in db.execute("PRAGMA table_info(employees)")}
+            for column in ("nationality","father_name","mother_name","birth_date","birth_place"):
+                if column not in employee_cols: db.execute(f"ALTER TABLE employees ADD COLUMN {column} TEXT")
             import chart_extra
             chart_extra.ensure_accounts(db)
             item_cols={row["name"] for row in db.execute("PRAGMA table_info(invoice_items)")}
@@ -1070,6 +1082,15 @@ class Database:
             if not code or min(debit,credit)<0 or (debit>0 and credit>0) or (debit==0 and credit==0): raise ValueError(f"Line {index}: choose an account and enter either Debit or Credit")
             normalized.append((code,str(line.get("description") or "").strip(),debit,credit,extra,line)); total_debit+=debit; total_credit+=credit
         if abs(total_debit-total_credit)>=Decimal("0.005"): raise ValueError(f"Journal Voucher is unbalanced. Debit {total_debit}; Credit {total_credit}; Remaining {abs(total_debit-total_credit)}")
+        if voucher_type=="07":
+            from chart_extra import EXCHANGE_GAIN_ACCOUNT, EXCHANGE_LOSS_ACCOUNT
+            affected=[(code,debit,credit) for code,_desc,debit,credit,_extra,_raw in normalized if code.startswith(("4","5"))]
+            offsets=[(code,debit,credit) for code,_desc,debit,credit,_extra,_raw in normalized if code in (EXCHANGE_GAIN_ACCOUNT,EXCHANGE_LOSS_ACCOUNT)]
+            if len(normalized)!=2 or len(affected)!=1 or len(offsets)!=1:
+                raise ValueError("DOE needs one class 4 or 5 account and one exchange gain (7751) or loss (6751) account")
+            code,debit,credit=offsets[0]
+            if (code==EXCHANGE_GAIN_ACCOUNT and not credit) or (code==EXCHANGE_LOSS_ACCOUNT and not debit):
+                raise ValueError("DOE gains credit 7751 and losses debit 6751")
         with self.connect() as db:
             branch_id=self._branch_id(db,item)
             if entry_id:
@@ -1108,6 +1129,50 @@ class Database:
         if currency=="LBP": return {"currency":"LBP","rate_lbp":Decimal("1"),"rate_usd":usd_lbp}
         if currency=="USD": return {"currency":"USD","rate_lbp":usd_lbp,"rate_usd":Decimal("1")}
         return {"currency":currency,"rate_lbp":self._converted_amount(Decimal("1"),currency,"LBP",day),"rate_usd":self._converted_amount(Decimal("1"),currency,"USD",day)}
+
+    def doe_candidates(self, posting_date):
+        """Foreign class 4/5 balances and their original LBP carrying amounts as of a date.
+
+        Local-currency activity is ignored except prior DOE corrections. Accounts with
+        multiple foreign currencies are excluded because their DOE corrections cannot
+        be assigned to one currency without an explicit allocation.
+        """
+        day=iso_date(posting_date)
+        normal="CASE WHEN e.entry_date GLOB '??-??-????' THEN substr(e.entry_date,7,4)||'-'||substr(e.entry_date,4,2)||'-'||substr(e.entry_date,1,2) ELSE e.entry_date END"
+        with self.connect() as db:
+            lines=[dict(row) for row in db.execute(f"""SELECT a.code,a.name_en,e.currency voucher_currency,e.voucher_type,e.source_type,
+                e.entry_date,COALESCE(j.line_currency,e.currency) line_currency,j.amount,j.amount_lbp,j.debit,j.credit
+                FROM journal_lines j JOIN journal_entries e ON e.id=j.entry_id JOIN accounts a ON a.id=j.account_id
+                LEFT JOIN invoices i ON e.source_type='invoice' AND i.id=e.source_id
+                WHERE (a.code LIKE '4%' OR a.code LIKE '5%') AND {normal}<=?
+                AND (e.source_type!='invoice' OR i.status='posted') ORDER BY a.code,e.id,j.id""",(day,))]
+        groups={}; doe_corrections={}; currencies_by_account={}
+        for line in lines:
+            code=line["code"]; currency=line["line_currency"]
+            signed=Decimal("1") if Decimal(str(line["debit"] or 0))>0 else Decimal("-1")
+            if currency=="LBP":
+                if line["source_type"]=="journal_voucher" and line["voucher_type"]=="07":
+                    doe_corrections[code]=doe_corrections.get(code,Decimal("0"))+Decimal(str(line["debit"] or 0))-Decimal(str(line["credit"] or 0))
+                continue
+            native=Decimal(str(line["amount"] or 0)) if line["amount"] not in (None,"") else abs(Decimal(str(line["debit"] or 0))-Decimal(str(line["credit"] or 0)))
+            if native<=0: continue
+            key=(code,currency); currencies_by_account.setdefault(code,set()).add(currency)
+            item=groups.setdefault(key,{"account":code,"name":line["name_en"],"currency":currency,"balance":Decimal("0"),"carrying_lbp":Decimal("0")})
+            item["balance"]+=signed*native
+            if line["amount_lbp"] not in (None,""):
+                item["carrying_lbp"]+=signed*Decimal(str(line["amount_lbp"]))
+            else:
+                item["carrying_lbp"]+=signed*self._converted_amount(native,currency,"LBP",line["entry_date"])
+        results=[]; skipped=[]; rates={}
+        for (account,currency),item in sorted(groups.items()):
+            if len(currencies_by_account[account])>1:
+                if account not in skipped: skipped.append(account)
+                continue
+            if not item["balance"]: continue
+            item["carrying_lbp"]+=doe_corrections.get(account,Decimal("0"))
+            if currency not in rates: rates[currency]=Decimal(str(self.suggested_rates(currency,posting_date)["rate_lbp"]))
+            results.append({**item,"balance":str(item["balance"]),"carrying_lbp":str(item["carrying_lbp"]),"suggested_rate":str(rates[currency])})
+        return {"items":results,"skipped_accounts":skipped}
 
     def _voucher_line_amounts(self,line,voucher_currency,date,index):
         """Lines entered like BRAINS: currency, D/C, amount in the account currency and LBP / USD rates."""
@@ -2065,8 +2130,9 @@ class Database:
         parameters.append(int(limit))
         with self.connect() as db:
             rows = [dict(row) for row in db.execute(f"""SELECT e.id entry_id,e.entry_number,e.entry_date,
-                e.description,e.source_type,e.source_id,e.currency,e.branch_id,COALESCE(b.name,'Head Office') branch_name,a.code account_code,a.name_en account_name,
+                e.description,e.source_type,e.source_id,e.voucher_type,e.currency,e.branch_id,COALESCE(b.name,'Head Office') branch_name,a.code account_code,a.name_en account_name,
                 CASE WHEN e.source_type='payroll' THEN 'Payroll' WHEN e.source_type='expense' THEN 'Expenses'
+                     WHEN e.source_type='journal_voucher' AND e.voucher_type='07' THEN 'DOE'
                      WHEN e.source_type='journal_voucher' THEN 'Journal Vouchers' WHEN e.source_type IN ('opening','year_close') THEN 'Opening / Closing'
                      WHEN e.source_type='invoice' AND i.kind='sale' THEN 'Sales'
                      WHEN e.source_type='invoice' AND COALESCE(i.entry_type,i.kind)='expenses' THEN 'Expenses'
@@ -2198,14 +2264,17 @@ class Database:
     def aging_report(self,as_of_date=None,kind=None,currency=None):
         as_of=datetime.now().date()
         if as_of_date:
+            parsed=False
             for pattern in ("%Y-%m-%d","%d-%m-%Y"):
-                try: as_of=datetime.strptime(as_of_date,pattern).date(); break
+                try: as_of=datetime.strptime(as_of_date,pattern).date(); parsed=True; break
                 except ValueError: pass
-        conditions=["i.status='posted'","CAST(i.total AS REAL)>CAST(i.amount_paid AS REAL)"] ; parameters=[]
+            if not parsed: raise ValueError("As of Date must be DD-MM-YYYY")
+        invoice_day="CASE WHEN i.invoice_date GLOB '??-??-????' THEN substr(i.invoice_date,7,4)||'-'||substr(i.invoice_date,4,2)||'-'||substr(i.invoice_date,1,2) ELSE i.invoice_date END"
+        conditions=["i.status='posted'","CAST(i.total AS REAL)>CAST(i.amount_paid AS REAL)",f"{invoice_day}<=?"] ; parameters=[as_of.isoformat()]
         if kind in ("sale","purchase"): conditions.append("i.kind=?"); parameters.append(kind)
         if currency: conditions.append("i.currency=?"); parameters.append(currency)
         with self.connect() as db:
-            rows=[dict(row) for row in db.execute(f"""SELECT i.id,i.invoice_number,i.invoice_date,i.due_date,i.kind,i.currency,p.name party_name,
+            rows=[dict(row) for row in db.execute(f"""SELECT i.id,i.invoice_number,i.invoice_date,i.due_date,i.kind,i.currency,p.name party_name,p.account_number,
                 CAST(i.total AS REAL)-CAST(i.amount_paid AS REAL) outstanding FROM invoices i LEFT JOIN parties p ON p.id=i.party_id
                 WHERE {' AND '.join(conditions)} ORDER BY p.name,i.due_date,i.invoice_date""",parameters)]
         for row in rows:
@@ -2275,6 +2344,33 @@ class Database:
                 FROM employees e LEFT JOIN branches b ON b.id=e.branch_id {where}
                 ORDER BY e.employee_number""")]
 
+    def nssf_filed_wages(self,year):
+        year=int(year)
+        if year<2000 or year>2100: raise ValueError("Enter a valid year")
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM nssf_filed_wages WHERE year=? ORDER BY month",(year,))]
+
+    def save_nssf_filed_wages(self,item,user_id):
+        year=int(item.get("year")); month=int(item.get("month"))
+        if year<2000 or year>2100 or month<1 or month>12: raise ValueError("Enter a valid year and month")
+        values=[]
+        for key in ("sickness_wages","family_wages","end_service_wages","amount_paid"):
+            raw=str(item.get(key) or "").strip().replace(",","")
+            if raw:
+                amount=Decimal(raw)
+                if not amount.is_finite() or amount<0: raise ValueError(f"{key.replace('_',' ')} must be zero or positive")
+                values.append(str(amount))
+            else: values.append(None)
+        with self.connect() as db:
+            db.execute("""INSERT INTO nssf_filed_wages(year,month,sickness_wages,family_wages,end_service_wages,amount_paid,note,updated_by,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(year,month) DO UPDATE SET sickness_wages=excluded.sickness_wages,
+                family_wages=excluded.family_wages,end_service_wages=excluded.end_service_wages,amount_paid=excluded.amount_paid,
+                note=excluded.note,updated_by=excluded.updated_by,updated_at=excluded.updated_at""",
+                (year,month,*values,str(item.get("note") or "").strip(),user_id,utcnow()))
+            db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
+                (user_id,"update","nssf_filed_wages",None,json.dumps({"year":year,"month":month}),utcnow()))
+        return next(row for row in self.nssf_filed_wages(year) if row["month"]==month)
+
     def next_employee_number(self, prefix="1000"):
         prefix="".join(ch for ch in str(prefix or "1000") if ch.isdigit())[:4]
         if len(prefix)!=4: raise ValueError("Employee prefix must contain 4 digits")
@@ -2301,19 +2397,25 @@ class Database:
         employee_id=item.get("id")
         values=(number,name,str(item.get("national_id") or "").strip(),str(item.get("mof_number") or "").strip(),
             str(item.get("nssf_number") or "").strip(),str(item.get("address") or "").strip(),str(item.get("contact_number") or "").strip(),
-            str(item.get("marital_status") or "single").lower(),spouse_works,children,employee_group,item.get("hire_date") or None,item.get("leave_date") or None,
+            str(item.get("nationality") or "").strip(),str(item.get("father_name") or "").strip(),str(item.get("mother_name") or "").strip(),
+            iso_date(item["birth_date"]) if item.get("birth_date") else None,str(item.get("birth_place") or "").strip(),
+            str(item.get("marital_status") or "single").lower(),spouse_works,children,employee_group,
+            iso_date(item["hire_date"]) if item.get("hire_date") else None,
+            iso_date(item["leave_date"]) if item.get("leave_date") else None,
             str(item.get("job_title") or "").strip(),int(item["branch_id"]) if item.get("branch_id") else None,currency,
             str(Decimal(str(item.get("base_salary") or 0))),item.get("salary_account") or "621100001",
             item.get("payable_account") or "421100001",active)
         with self.connect() as db:
             if employee_id:
                 db.execute("""UPDATE employees SET employee_number=?,full_name=?,national_id=?,mof_number=?,nssf_number=?,address=?,contact_number=?,
+                    nationality=?,father_name=?,mother_name=?,birth_date=?,birth_place=?,
                     marital_status=?,spouse_works=?,children=?,employee_group=?,hire_date=?,leave_date=?,job_title=?,branch_id=?,currency=?,base_salary=?,salary_account=?,payable_account=?,active=? WHERE id=?""",
                     values+(int(employee_id),)); saved_id=int(employee_id); action="update"
             else:
                 saved_id=db.execute("""INSERT INTO employees(employee_number,full_name,national_id,mof_number,nssf_number,address,contact_number,
+                    nationality,father_name,mother_name,birth_date,birth_place,
                     marital_status,spouse_works,children,employee_group,hire_date,leave_date,job_title,branch_id,currency,base_salary,salary_account,payable_account,active,created_by,created_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",values+(user_id,utcnow())).lastrowid; action="create"
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",values+(user_id,utcnow())).lastrowid; action="create"
             db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
                 (user_id,action,"employee",saved_id,json.dumps({"employee_number":number,"name":name}),utcnow()))
         return next(row for row in self.list_employees() if row["id"]==saved_id)

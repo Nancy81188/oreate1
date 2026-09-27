@@ -7,6 +7,7 @@ import traceback
 import mimetypes
 import time
 import json
+from urllib.request import urlopen
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -83,9 +84,10 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.8.2")
-        self.geometry("1180x720")
-        self.minsize(940, 600)
+        self.title("Saber Accounting 2.9.4")
+        screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
+        self.minsize(min(760, screen_width), min(480, screen_height))
         if sys.platform == "win32":
             try: self.state("zoomed")
             except tk.TclError: pass
@@ -98,6 +100,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.sales_items = []
         self.manual_items = []
         self.view_currency = tk.StringVar(value="All Currencies")
+        self.dashboard_base_currency=tk.StringVar(value="All Currencies")
+        self.dashboard_display_currency=tk.StringVar(value="Original")
         self.import_view_currency = tk.StringVar(value="All Currencies")
         self.trial_from_date = tk.StringVar()
         self.trial_to_date = tk.StringVar()
@@ -122,6 +126,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.close_year = tk.StringVar(value=str(datetime.now().year))
         self.report_from_date = tk.StringVar(value=f"01-01-{datetime.now().year}")
         self.report_to_date = tk.StringVar(value=f"31-12-{datetime.now().year}")
+        self.ageing_as_of=tk.StringVar(value=datetime.now().strftime("%d-%m-%Y"))
+        self.ageing_from=tk.StringVar(); self.ageing_to=tk.StringVar()
         self.ledger_account = tk.StringVar()
         self.report_account_from=tk.StringVar(); self.report_account_to=tk.StringVar()
         self.active_account_variable=None
@@ -320,7 +326,35 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.alerts_button.pack(side="right",padx=5)
         tk.Label(top,text=f'{getattr(self,"current_company",{}).get("name","")} · {getattr(self,"current_fiscal_year","")}',bg=NAVY,fg="white",font=("Segoe UI",9,"bold")).pack(side="right",padx=8)
         self.status_bar()
-        tab_nav=tk.Frame(self,bg=LIGHT); tab_nav.pack(fill="x",padx=18,pady=(4,0))
+        nav_outer=tk.Frame(self,bg=LIGHT); nav_outer.pack(fill="x",padx=8,pady=(4,0))
+        nav_canvas=tk.Canvas(nav_outer,bg=LIGHT,highlightthickness=0,height=56)
+        nav_canvas.pack(side="top",fill="x",expand=True)
+        nav_scroll=ttk.Scrollbar(nav_outer,orient="horizontal",command=nav_canvas.xview)
+        nav_scroll.pack(side="bottom",fill="x")
+        nav_canvas.configure(xscrollcommand=nav_scroll.set)
+        tab_nav=tk.Frame(nav_canvas,bg=LIGHT)
+        nav_window=nav_canvas.create_window((0,0),window=tab_nav,anchor="nw")
+        nav_buttons=[]; navigation_columns=None
+        def size_navigation(_event=None):
+            nonlocal navigation_columns
+            columns=min(8,max(2,nav_canvas.winfo_width()//155))
+            if nav_buttons and columns!=navigation_columns:
+                navigation_columns=columns
+                for button in nav_buttons: button.grid_forget()
+                for column in range(8): tab_nav.grid_columnconfigure(column,weight=0,uniform="")
+                for row in range(8): tab_nav.grid_rowconfigure(row,weight=0,uniform="")
+                for column in range(columns): tab_nav.grid_columnconfigure(column,weight=1,uniform="main_tabs")
+                for row in range((len(nav_buttons)+columns-1)//columns):
+                    tab_nav.grid_rowconfigure(row,weight=1,uniform="main_tab_rows")
+                for index,button in enumerate(nav_buttons):
+                    button.grid(row=index//columns,column=index%columns,sticky="nsew",padx=4,pady=3)
+            nav_canvas.itemconfigure(nav_window,width=max(nav_canvas.winfo_width(),tab_nav.winfo_reqwidth()))
+            nav_canvas.configure(height=max(56,tab_nav.winfo_reqheight()+2),scrollregion=nav_canvas.bbox("all"))
+            if tab_nav.winfo_reqwidth()>nav_canvas.winfo_width()+1:
+                if not nav_scroll.winfo_manager(): nav_scroll.pack(side="bottom",fill="x")
+            elif nav_scroll.winfo_manager(): nav_scroll.pack_forget()
+        tab_nav.bind("<Configure>",size_navigation)
+        nav_canvas.bind("<Configure>",size_navigation)
         ttk.Style(self).layout("Tabless.TNotebook.Tab",[])
         notebook=ttk.Notebook(self,style="Tabless.TNotebook"); self.main_notebook=notebook
         filter_bar=tk.Frame(self,bg=LIGHT); filter_bar.pack(fill="x",padx=28)
@@ -329,21 +363,44 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             ("import_tab",tr(lang,"import")),("parties_tab",tr(lang,"customers_suppliers")),("transactions_tab",tr(lang,"payments_expenses")),("purchases_tab","Purchases & Expenses"),("inventory_tab","Inventory")]
         if self.can_use("payroll"): pages.append(("payroll_tab","Payroll"))
         if self.can_use("vat"): pages.append(("vat_tab","Quarterly VAT"))
-        pages+=[("journal_tab",tr(lang,"general_journal")),("trial_tab",tr(lang,"trial_balance")),("pnl_tab",tr(lang,"profit_loss")),("reports_tab",tr(lang,"financial_reports")),
-            ("statement_tab",tr(lang,"statement_account")),("accounts_tab",tr(lang,"chart_accounts")),("settings_tab",tr(lang,"security_backup_rates"))]
+        pages+=[("journal_tab",tr(lang,"general_journal")),("account_reports_tab","Accounts & Statements"),("pnl_tab",tr(lang,"profit_loss")),("reports_tab",tr(lang,"financial_reports")),
+            ("settings_tab",tr(lang,"security_backup_rates"))]
         self.main_tab_pages=[]
         for attribute,name in pages:
-            frame=tk.Frame(notebook,bg=LIGHT); setattr(self,attribute,frame); notebook.add(frame,text=name); self.main_tab_pages.append(frame)
+            container=tk.Frame(notebook,bg=LIGHT)
+            container.grid_rowconfigure(0,weight=1)
+            container.grid_columnconfigure(0,weight=1)
+            canvas=tk.Canvas(container,bg=LIGHT,highlightthickness=0)
+            vertical=ttk.Scrollbar(container,orient="vertical",command=canvas.yview)
+            horizontal=ttk.Scrollbar(container,orient="horizontal",command=canvas.xview)
+            canvas.configure(yscrollcommand=vertical.set,xscrollcommand=horizontal.set)
+            canvas.grid(row=0,column=0,sticky="nsew")
+            vertical.grid(row=0,column=1,sticky="ns")
+            horizontal.grid(row=1,column=0,sticky="ew")
+            frame=tk.Frame(canvas,bg=LIGHT)
+            item=canvas.create_window((0,0),window=frame,anchor="nw")
+            def resize_page(_event=None, *, page=frame, view=canvas, window=item, vbar=vertical, hbar=horizontal):
+                if page.winfo_reqheight()>view.winfo_height()+1: vbar.grid()
+                else: vbar.grid_remove()
+                if page.winfo_reqwidth()>view.winfo_width()+1: hbar.grid()
+                else: hbar.grid_remove()
+                view.itemconfigure(window,width=max(view.winfo_width(),page.winfo_reqwidth()),
+                                   height=max(view.winfo_height(),page.winfo_reqheight()))
+                view.configure(scrollregion=view.bbox("all"))
+            frame.bind("<Configure>",resize_page)
+            canvas.bind("<Configure>",resize_page)
+            setattr(self,attribute,frame); notebook.add(container,text=name); self.main_tab_pages.append(container)
+        account_notebook=ttk.Notebook(self.account_reports_tab); account_notebook.pack(fill="both",expand=True,padx=8,pady=8)
+        for attribute,name in (("trial_tab",tr(lang,"trial_balance")),("statement_tab",tr(lang,"statement_account")),("accounts_tab",tr(lang,"chart_accounts"))):
+            frame=tk.Frame(account_notebook,bg=LIGHT); setattr(self,attribute,frame); account_notebook.add(frame,text=name)
         self.tab_names=[notebook.tab(tab,"text") for tab in notebook.tabs()]
         self.tab_choice=tk.StringVar(value=self.tab_names[0])
-        self.tab_buttons=[]; per_row=(len(self.main_tab_pages)+1)//2
+        self.tab_buttons=nav_buttons
         for index,(page,name) in enumerate(zip(self.main_tab_pages,self.tab_names)):
-            row,column=divmod(index,per_row)
-            tab_nav.grid_columnconfigure(column,weight=1,uniform="main_tabs")
-            tab_nav.grid_rowconfigure(row,weight=1,uniform="main_tab_rows")
             button=tk.Button(tab_nav,text=name,command=lambda p=page:self.select_main_tab(p),bg=NAVY,fg="white",
                 activebackground=GOLD,activeforeground=NAVY,border=0,font=("Segoe UI",8,"bold"),pady=1,wraplength=120,cursor="hand2")
-            button.grid(row=row,column=column,sticky="nsew",padx=1,pady=0); self.tab_buttons.append(button)
+            nav_buttons.append(button)
+        self.after_idle(size_navigation)
         notebook.bind("<<NotebookTabChanged>>",lambda _event:self.highlight_main_tab())
         self.highlight_main_tab()
         tk.Label(filter_bar,text="Show currency:",bg=LIGHT,font=("Segoe UI",10,"bold")).pack(side="left")
@@ -426,7 +483,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         except ValueError: pass
 
     def currency_changed(self):
-        self.load_dashboard(); self.load_invoices(); self.load_journal(); self.load_trial(); self.load_profit_loss(); self.load_financial_reports()
+        self.load_dashboard(); self.load_invoices(); self.load_journal(); self.load_trial(); self.load_profit_loss(); self.load_financial_reports(); self.load_ageing_report()
 
     def table(self,parent,columns):
         search_bar=tk.Frame(parent,bg=LIGHT); search_bar.pack(fill="x",padx=10,pady=(10,0))
@@ -497,6 +554,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         actions=tk.Frame(self.dashboard_tab,bg=LIGHT); actions.pack(fill="x",padx=12,pady=(8,6))
         tk.Label(actions,text="Company overview",bg=LIGHT,fg=NAVY,font=("Segoe UI",12,"bold")).pack(side="left",padx=(0,16))
         self.action_button(actions,tr(self.language.get(),"refresh"),self.load_dashboard).pack(side="left",padx=4)
+        tk.Label(actions,text="Base currency",bg=LIGHT).pack(side="left",padx=(10,3))
+        ttk.Combobox(actions,textvariable=self.dashboard_base_currency,values=["All Currencies","USD","LBP","EUR","AED"],state="readonly",width=13).pack(side="left")
+        tk.Label(actions,text="Convert to",bg=LIGHT).pack(side="left",padx=(10,3))
+        ttk.Combobox(actions,textvariable=self.dashboard_display_currency,values=["Original","USD","LBP","EUR","AED"],state="readonly",width=9).pack(side="left")
+        self.action_button(actions,"Apply",self.load_dashboard).pack(side="left",padx=4)
         self.action_button(actions,"Export Excel",lambda:self.export_report("dashboard","xlsx")).pack(side="left",padx=4)
         self.action_button(actions,"Export PDF",lambda:self.export_report("dashboard","pdf")).pack(side="left",padx=4)
         self.action_button(actions,"Print",lambda:self.export_report("dashboard","print")).pack(side="left",padx=4)
@@ -509,8 +571,19 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
     def load_dashboard(self):
         try: data=self.client.professional_dashboard(); rows=data["metrics"]
         except Exception as exc: return messagebox.showerror("Error",str(exc))
-        selected=self.view_currency.get()
+        selected=self.dashboard_base_currency.get()
         rows=[r for r in rows if selected=="All Currencies" or r["currency"]==selected]
+        target=self.dashboard_display_currency.get(); display_rows=[]
+        date=datetime.now().strftime("%d-%m-%Y")
+        for row in rows:
+            item=dict(row)
+            if target!="Original" and target!=row["currency"]:
+                try: rate=float(self.client.dashboard_conversion(row["currency"],target,date)["rate"])
+                except Exception as exc: return messagebox.showerror("Dashboard Exchange Rate",str(exc))
+                for key in ("sales","purchases","expenses","profit","receivables","payables"): item[key]=float(item[key])*rate
+                item["currency"]=f'{row["currency"]} → {target} (1 = {rate:,.4f}; {date})'
+            display_rows.append(item)
+        rows=display_rows
         self.dashboard_rows=rows
         for child in self.dashboard_cards.winfo_children(): child.destroy()
         if not rows:
@@ -527,7 +600,16 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                 tk.Label(line,text=value,bg="white",fg=NAVY,font=("Segoe UI",10,"bold"),anchor="w").pack(anchor="w")
             for col in range(4): card.grid_columnconfigure(col,weight=1)
         for col in range(2): self.dashboard_cards.grid_columnconfigure(col,weight=1)
-        self.draw_dashboard_chart([r for r in data.get("monthly",[]) if selected=="All Currencies" or r["currency"]==selected])
+        chart_rows=[]; chart_rates={}
+        for source_row in data.get("monthly",[]):
+            if selected!="All Currencies" and source_row["currency"]!=selected: continue
+            row=dict(source_row)
+            if target!="Original" and target!=row["currency"]:
+                if row["currency"] not in chart_rates:
+                    chart_rates[row["currency"]]=float(self.client.dashboard_conversion(row["currency"],target,date)["rate"])
+                row["amount"]=float(row["amount"])*chart_rates[row["currency"]]
+            chart_rows.append(row)
+        self.draw_dashboard_chart(chart_rows)
         self.load_dashboard_charts()
 
     def draw_dashboard_chart(self,rows):
@@ -543,7 +625,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def build_invoices(self):
         l=self.language.get(); self.invoice_tree=self.table(self.invoices_tab,[("no",tr(l,"invoice_no"),90),("status","Status",85),("date",tr(l,"date"),90),("party",tr(l,"party"),150),("branch","Branch",120),("kind","Type",90),("currency",tr(l,"currency"),60),("deductible","Deductible",95),("non_deductible","Non-Deductible",105),("total",tr(l,"total"),90),("payment_method","Payment Method",110),("paid","Paid Amount",100),("lbp","LBP Eq.",105),("usd","USD Eq.",90),("debit","D",80),("credit","C",80),("vat_status","VAT Deductible",95)])
-        invoice_actions=tk.Frame(self.invoices_tab,bg=LIGHT); invoice_actions.pack(pady=(0,10))
+        invoice_actions=tk.Frame(self.invoices_tab,bg=LIGHT); invoice_actions.pack(fill="x",anchor="w",pady=(0,10))
         tk.Label(invoice_actions,text="Branch:",bg=LIGHT).pack(side="left"); self.branch_selector(invoice_actions,self.invoice_branch,15,True).pack(side="left",padx=4)
         tk.Label(invoice_actions,text="Sort By:",bg=LIGHT).pack(side="left",padx=(8,2))
         ttk.Combobox(invoice_actions,textvariable=self.invoice_sort_by,state="readonly",width=16,
@@ -557,7 +639,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Button(invoice_actions,text="Add Item",command=self.add_item_to_selected_invoice,bg=NAVY,fg="white",border=0,padx=18,pady=7).pack(side="left",padx=4)
         tk.Button(invoice_actions,text="Edit Selected",command=self.edit_selected_invoice,bg=GOLD,fg=NAVY,
                   font=("Segoe UI",9,"bold"),border=0,padx=20,pady=7).pack(side="left",padx=4)
-        lifecycle=tk.Frame(self.invoices_tab,bg=LIGHT); lifecycle.pack(pady=(0,8))
+        lifecycle=tk.Frame(self.invoices_tab,bg=LIGHT); lifecycle.pack(fill="x",anchor="w",pady=(0,8))
         self.action_button(lifecycle,"Duplicate",self.duplicate_selected_invoice).pack(side="left",padx=4)
         tk.Button(lifecycle,text="Cancel Invoice",command=self.cancel_selected_invoice,bg="#8B1E1E",fg="white",border=0,padx=15,pady=7).pack(side="left",padx=4)
         tk.Button(lifecycle,text="Delete Selected",command=self.delete_selected_invoice,bg="#6B1010",fg="white",border=0,padx=15,pady=7).pack(side="left",padx=4)
@@ -1564,8 +1646,10 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         for row in rows: self.parties_tree.insert("","end",values=(row["id"],row.get("account_number") or "",row["name"],row.get("account_category") or row["kind"],row.get("tax_number") or "",row.get("mof_number") or "",row.get("address") or "",row.get("contact_number") or "",row["currency"],row.get("due_days") or 0))
 
     def open_party_ageing(self):
-        self.select_main_tab(self.reports_tab)
-        self.financial_notebook.select(self.ageing_page)
+        self.select_main_tab(self.inventory_tab)
+        for widget in self.inventory_tab.winfo_children():
+            if isinstance(widget,ttk.Notebook):
+                widget.select(self.ageing_tab); break
 
     def open_client_items_report(self):
         self.select_main_tab(self.reports_tab)
@@ -1610,12 +1694,18 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         refresh()
 
     def build_payroll(self):
-        nested=ttk.Notebook(self.payroll_tab); nested.pack(fill="both",expand=True,padx=8,pady=8)
+        nested=ttk.Notebook(self.payroll_tab); nested.pack(fill="both",expand=True,padx=8,pady=8); self.payroll_notebook=nested
         employees=tk.Frame(nested,bg=LIGHT); run=tk.Frame(nested,bg=LIGHT); settings_outer,settings_page=self.scrollable_page(nested); reports_page=tk.Frame(nested,bg=LIGHT)
+        self.payroll_employees_page=employees
         nested.add(employees,text="Employees"); nested.add(run,text="Payroll Entry"); nested.add(reports_page,text="Official Reports (R5 / R6 / R10)"); nested.add(settings_outer,text="Tax & NSSF Settings")
         employee_actions=tk.Frame(employees,bg=LIGHT); employee_actions.pack(fill="x",padx=10,pady=8)
         self.action_button(employee_actions,"New Employee",lambda:self.employee_dialog()).pack(side="left",padx=4)
         self.action_button(employee_actions,"Edit Selected",self.edit_selected_employee).pack(side="left",padx=4)
+        self.action_button(employee_actions,"R3 Registration Worksheet",lambda:self.employee_r3_worksheet("preview")).pack(side="left",padx=4)
+        self.action_button(employee_actions,"R3 PDF",lambda:self.employee_r3_worksheet("pdf")).pack(side="left",padx=4)
+        self.action_button(employee_actions,"R3 Excel",lambda:self.employee_r3_worksheet("xlsx")).pack(side="left",padx=4)
+        self.action_button(employee_actions,"Official R3 Form",lambda:self.download_payroll_form("R3")).pack(side="left",padx=4)
+        self.action_button(employee_actions,"Official R3-1 Form",lambda:self.download_payroll_form("R3-1")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Refresh",self.load_payroll).pack(side="left",padx=4)
         self.employee_tree=self.table(employees,[("number","Employee ID",105),("name","Employee Name",220),("job","Job Title",150),
             ("branch","Branch",120),("currency","Currency",70),("salary","Base Salary",120),("nssf","NSSF Number",120),("active","Active",65)])
@@ -1679,32 +1769,74 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def employee_dialog(self,employee=None):
         window=tk.Toplevel(self); window.title("Employee File"); window.configure(bg=LIGHT); window.transient(self); window.grab_set()
-        data=employee or {}; fields={key:tk.StringVar(value=str(data.get(key,""))) for key in ("employee_number","full_name","national_id","mof_number","nssf_number","address","contact_number","job_title","hire_date","leave_date","base_salary","salary_account","payable_account")}
+        window.geometry(f"{min(940,self.winfo_screenwidth())}x{min(650,self.winfo_screenheight()-80)}")
+        outer,form=self.scrollable_page(window); outer.pack(fill="both",expand=True)
+        data=employee or {}; fields={key:tk.StringVar(value=str(data.get(key) or "")) for key in ("employee_number","full_name","national_id","mof_number","nssf_number","address","contact_number","nationality","father_name","mother_name","birth_date","birth_place","job_title","hire_date","leave_date","base_salary","salary_account","payable_account")}
         if not fields["employee_number"].get(): fields["employee_number"].set("1000")
         marital=tk.StringVar(value=data.get("marital_status","single")); spouse_works=tk.BooleanVar(value=bool(data.get("spouse_works",0))); children=tk.StringVar(value=str(data.get("children",0))); employee_group=tk.StringVar(value=data.get("employee_group","employee")); currency=tk.StringVar(value=data.get("currency","LBP")); active=tk.BooleanVar(value=bool(data.get("active",1)))
-        rows=(("employee_number","Employee ID / 4-digit prefix"),("full_name","Full Name"),("national_id","National ID"),("mof_number","MOF Number"),("nssf_number","NSSF Number"),("address","Address"),("contact_number","Contact Number"),("job_title","Job Title"),("hire_date","Hire Date"),("leave_date","Leave Date"),("base_salary","Base Salary"),("salary_account","Salary Expense Account"),("payable_account","Salary Payable Account"))
+        rows=(("employee_number","Employee ID / 4-digit prefix"),("full_name","Full Name"),("national_id","National ID"),("mof_number","MOF Number"),("nssf_number","NSSF Number"),("address","Address"),("contact_number","Contact Number"),("nationality","Nationality"),("father_name","Father's Name"),("mother_name","Mother's Name"),("birth_date","Date of Birth"),("birth_place","Place of Birth"),("job_title","Job Title"),("hire_date","Hire Date"),("leave_date","Leave Date"),("base_salary","Base Salary"),("salary_account","Salary Expense Account"),("payable_account","Payable Account"))
         for index,(key,label) in enumerate(rows):
-            column=0 if index<7 else 2; row=index if index<7 else index-7
-            tk.Label(window,text=label,bg=LIGHT).grid(row=row,column=column,padx=10,pady=5,sticky="w")
-            (self.date_entry(window,fields[key],28) if key in ("hire_date","leave_date") else tk.Entry(window,textvariable=fields[key],width=28)).grid(row=row,column=column+1,padx=10,pady=5)
-        tk.Label(window,text="Marital Status",bg=LIGHT).grid(row=7,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=marital,values=["single","married"],state="readonly",width=25).grid(row=7,column=1)
-        tk.Label(window,text="Children",bg=LIGHT).grid(row=8,column=0,padx=10,pady=5,sticky="w"); tk.Entry(window,textvariable=children,width=28).grid(row=8,column=1)
-        tk.Label(window,text="Currency",bg=LIGHT).grid(row=7,column=2,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=currency,values=self.currency_codes,state="readonly",width=25).grid(row=7,column=3)
-        tk.Checkbutton(window,text="Spouse Works",variable=spouse_works,bg=LIGHT).grid(row=8,column=2,sticky="w")
-        tk.Checkbutton(window,text="Active",variable=active,bg=LIGHT).grid(row=8,column=3,sticky="w")
-        tk.Label(window,text="Payroll Group",bg=LIGHT).grid(row=9,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(window,textvariable=employee_group,values=["employee","manager"],state="readonly",width=25).grid(row=9,column=1)
+            column=0 if index<9 else 2; row=index if index<9 else index-9
+            tk.Label(form,text=label,bg=LIGHT).grid(row=row,column=column,padx=10,pady=5,sticky="w")
+            (self.date_entry(form,fields[key],28) if key in ("hire_date","leave_date","birth_date") else tk.Entry(form,textvariable=fields[key],width=28)).grid(row=row,column=column+1,padx=10,pady=5)
+        tk.Label(form,text="Marital Status",bg=LIGHT).grid(row=9,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(form,textvariable=marital,values=["single","married"],state="readonly",width=25).grid(row=9,column=1)
+        tk.Label(form,text="Children",bg=LIGHT).grid(row=10,column=0,padx=10,pady=5,sticky="w"); tk.Entry(form,textvariable=children,width=28).grid(row=10,column=1)
+        tk.Label(form,text="Currency",bg=LIGHT).grid(row=9,column=2,padx=10,pady=5,sticky="w"); ttk.Combobox(form,textvariable=currency,values=self.currency_codes,state="readonly",width=25).grid(row=9,column=3)
+        tk.Checkbutton(form,text="Spouse Works",variable=spouse_works,bg=LIGHT).grid(row=10,column=2,sticky="w")
+        tk.Checkbutton(form,text="Active",variable=active,bg=LIGHT).grid(row=10,column=3,sticky="w")
+        tk.Label(form,text="Payroll Group",bg=LIGHT).grid(row=11,column=0,padx=10,pady=5,sticky="w"); ttk.Combobox(form,textvariable=employee_group,values=["employee","manager"],state="readonly",width=25).grid(row=11,column=1)
         def save():
             payload={key:var.get().strip() for key,var in fields.items()}; payload.update({"id":data.get("id"),"marital_status":marital.get(),"spouse_works":spouse_works.get(),"children":children.get(),"employee_group":employee_group.get(),"currency":currency.get(),"active":active.get()})
             try: saved=self.client.save_employee(payload)
             except Exception as exc: return messagebox.showerror("Employee",str(exc),parent=window)
             window.destroy(); self.load_payroll(); messagebox.showinfo("Employee",f'Employee {saved["employee_number"]} saved successfully')
-        self.action_button(window,"Save Employee",save).grid(row=10,column=0,columnspan=4,pady=14)
+        self.action_button(window,"Save Employee",save).pack(pady=8)
 
     def edit_selected_employee(self):
         selected=self.employee_tree.selection()
         if not selected: return messagebox.showwarning("Employees","Select an employee first")
         employee=next((row for row in getattr(self,"employee_rows",[]) if str(row["id"])==str(selected[0])),None)
         if employee: self.employee_dialog(employee)
+
+    def employee_r3_worksheet(self,format_name):
+        selected=self.employee_tree.selection()
+        if not selected: return messagebox.showwarning("R3 Registration","Select an employee first")
+        employee=next((row for row in getattr(self,"employee_rows",[]) if str(row["id"])==str(selected[0])),None)
+        if not employee: return messagebox.showwarning("R3 Registration","Refresh the employee list and select an employee")
+        fields=(("Full name","full_name"),("Father's name","father_name"),("Mother's name","mother_name"),
+                ("Nationality","nationality"),("Date of birth","birth_date"),("Place of birth","birth_place"),
+                ("National ID","national_id"),("MOF personal number","mof_number"),("NSSF number","nssf_number"),
+                ("Marital status","marital_status"),("Children","children"),("Address","address"),
+                ("Phone","contact_number"),("Profession","job_title"),("Start date","hire_date"))
+        rows=[[label,employee.get(key) if employee.get(key) not in (None,"") else "MISSING"] for label,key in fields]
+        missing=[label for (label,key),row in zip(fields,rows) if row[1]=="MISSING"]
+        meta=[f'Employee ID: {employee["employee_number"]}',
+              "Preparation worksheet only. Complete and submit the Ministry of Finance R3 form separately.",
+              "Official form: https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf",
+              "Check the official form for other details and supporting documents."]
+        if missing: meta.append("Missing in employee file: " + ", ".join(missing))
+        self.output_sections("R3 Employee Registration Worksheet",meta,
+            [{"heading":"Employee information","headers":["Field","Value"],"rows":rows,"total_rows":[]}],
+            f'R3_Worksheet_{employee["employee_number"]}',format_name)
+
+    def download_payroll_form(self,form):
+        official={"R3":"https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf",
+                  "R3-1":"https://www.finance.gov.lb/en-us/Taxation/Na/DASS1/%D8%B13-1.pdf",
+                  "NSSF-DUE":"https://drive.google.com/uc?export=download&id=1ZwZR6kFj19KPbtALttm8U6Ji3ICJUjGB",
+                  "NSSF-SETTLEMENT":"https://drive.google.com/uc?export=download&id=14eHUtHDblW9mE_4Vs82PmRrmbMGGSEKg",
+                  "NSSF-ANNUAL":"https://drive.google.com/uc?export=download&id=1TNwLlioahMJLaiX3ma6PPYqrgbHm07f_"}
+        if form not in official: raise ValueError("Unknown payroll form")
+        target=filedialog.asksaveasfilename(title=f"Save official {form} form",defaultextension=".pdf",
+            initialfile=f"Lebanon_MOF_{form}.pdf",filetypes=[("PDF files","*.pdf")])
+        if not target: return
+        try:
+            with urlopen(official[form],timeout=20) as response: content=response.read()
+            if not content.startswith(b"%PDF"): raise ValueError("The Ministry site did not return a PDF")
+            Path(target).write_bytes(content)
+        except Exception as exc: return messagebox.showerror(f"Official {form}",f"Could not download the form: {exc}")
+        note=("\nCheck the preprinted rates against the period's NSSF settings before using this blank form."
+              if form.startswith("NSSF") else "")
+        messagebox.showinfo(f"Official {form}",f"Official blank form saved to {target}{note}")
 
     def load_payroll(self):
         if not hasattr(self,"employee_tree"): return
@@ -1819,12 +1951,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Button(finder,text="Clear",command=lambda:(self.journal_find.set(""),self.journal_find_details.set(""),self.load_journal()),bg=NAVY,fg="white",border=0,padx=10,pady=5).pack(side="left",padx=2)
         for text,mode in (("Print Preview","preview"),("PDF","pdf"),("Print","print")):
             tk.Button(finder,text=text,command=lambda m=mode:self.journal_document(m),bg=NAVY,fg="white",border=0,padx=10,pady=5).pack(side="right",padx=2)
-        self.journal_tree=self.table(self.journal_tab,[
-            ("entry","Entry No.",95),("date","Date",95),("description","Description",190),
-            ("source","Source",75),("reference","Reference",75),("currency","Currency",70),
-            ("account","Account",85),("account_name","Account Name",190),("party","Customer / Supplier",165),
-            ("debit","Debit",105),("credit","Credit",105),("balance","Balance",110)])
-        actions=tk.Frame(self.journal_tab,bg=LIGHT); actions.pack(pady=(0,10))
+        actions=tk.Frame(self.journal_tab,bg=LIGHT); actions.pack(anchor="w",padx=10,pady=(6,4))
         self.action_button(actions,"Refresh",self.load_journal).pack(side="left",padx=4)
         self.action_button(actions,"Export Excel",lambda:self.journal_report("xlsx")).pack(side="left",padx=4)
         self.action_button(actions,"Export PDF",lambda:self.journal_report("pdf")).pack(side="left",padx=4)
@@ -1832,6 +1959,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Button(actions,text="Delete Selected Voucher",command=self.delete_selected_journal_voucher,bg="#6B1010",fg="white",border=0,padx=14,pady=7).pack(side="left",padx=4)
         self.journal_totals=tk.Label(actions,text="Debit: 0.00   Credit: 0.00",bg=LIGHT,font=("Segoe UI",10,"bold"))
         self.journal_totals.pack(side="left",padx=15)
+        self.journal_tree=self.table(self.journal_tab,[
+            ("entry","Entry No.",95),("date","Date",95),("description","Description",190),
+            ("source","Source",75),("reference","Reference",75),("currency","Currency",70),
+            ("account","Account",85),("account_name","Account Name",190),("party","Customer / Supplier",165),
+            ("debit","Debit",105),("credit","Credit",105),("balance","Balance",110)])
         self.load_journal()
 
     def journal_date_range(self):
@@ -1876,7 +2008,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.journal_rows=rows; self.journal_tree.delete(*self.journal_tree.get_children())
         for row in rows:
             self.journal_tree.insert("","end",values=(row["entry_number"],row["entry_date"],row["description"],
-                row["source_type"],row["source_id"],row["currency"],row["account_code"],row["account_name"],
+                "DOE" if row.get("voucher_type")=="07" else row["source_type"],row["source_id"],row["currency"],row["account_code"],row["account_name"],
                 row["party_name"],f'{row["debit"]:,.2f}',f'{row["credit"]:,.2f}',f'{row["balance"]:,.2f}'))
         debit=sum(float(row["debit"] or 0) for row in rows); credit=sum(float(row["credit"] or 0) for row in rows)
         state="Balanced" if abs(debit-credit)<0.005 else "UNBALANCED"
@@ -2073,25 +2205,48 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(controls,text="To:",bg=LIGHT).pack(side="left"); self.account_search_box(controls,self.report_account_to,16).pack(side="left",padx=(4,10))
         tk.Button(controls,text="Apply",command=self.load_financial_reports,bg=GOLD,fg=NAVY,border=0,padx=15,pady=6).pack(side="left")
         nested=ttk.Notebook(self.reports_tab); nested.pack(fill="both",expand=True,padx=10,pady=(0,10)); self.financial_notebook=nested
-        gl=tk.Frame(nested,bg=LIGHT); bs=tk.Frame(nested,bg=LIGHT); vat=tk.Frame(nested,bg=LIGHT); cash=tk.Frame(nested,bg=LIGHT); aging=tk.Frame(nested,bg=LIGHT); comparative=tk.Frame(nested,bg=LIGHT)
-        nested.add(gl,text="General Ledger"); nested.add(bs,text="Balance Sheet"); nested.add(vat,text="Lebanese VAT Report"); nested.add(cash,text="Cash Flow"); nested.add(aging,text="Customer / Supplier Ageing"); nested.add(comparative,text="Comparative P&L"); self.ageing_page=aging; self.build_budget_page(nested); self.build_business_reports_page(nested)
-        self.ledger_tree=self.table(gl,[("date","Date",95),("entry","Entry",90),("account","Account",85),("name","Account Name",180),("description","Description",200),("currency","Currency",70),("debit","Debit",105),("credit","Credit",105),("balance","Balance",110)])
+        gl=tk.Frame(nested,bg=LIGHT); bs=tk.Frame(nested,bg=LIGHT); vat=tk.Frame(nested,bg=LIGHT); cash=tk.Frame(nested,bg=LIGHT); cash_outlook=tk.Frame(nested,bg=LIGHT); aging=self.ageing_tab; comparative=tk.Frame(nested,bg=LIGHT)
+        nested.add(gl,text="General Ledger"); nested.add(bs,text="Balance Sheet"); nested.add(vat,text="Lebanese VAT Report"); nested.add(cash,text="Cash Flow"); nested.add(cash_outlook,text="Cash Flow Outlook"); nested.add(comparative,text="Comparative P&L"); self.ageing_page=aging; self.build_budget_page(nested); self.build_business_reports_page(nested)
+        self.ledger_tree=self.table(gl,[("date","Date",95),("entry","Entry",90),("account","Account",85),("currency","Currency",70),("name","Account Name",180),("description","Description",200),("debit","Debit",105),("credit","Credit",105),("balance","Balance",110)])
         self.report_buttons(gl,"ledger")
-        self.balance_tree=self.table(bs,[("currency","Currency",80),("type","Type",90),("account","Account",90),("name","Account Name",280),("debit","Debit",120),("credit","Credit",120),("balance","Balance",130)])
+        self.balance_tree=self.table(bs,[("type","Type",90),("account","Account",90),("currency","Currency",80),("name","Account Name",280),("debit","Debit",120),("credit","Credit",120),("balance","Balance",130)])
         self.report_buttons(bs,"balance")
         self.vat_tree=self.table(vat,[("currency","Currency",85),("type","Type",100),("invoices","Count",75),("subtotal","Before VAT",130),("vat","VAT",110),("total","Total",130)])
         self.report_buttons(vat,"vat")
         self.vat_summary=tk.Label(vat,text="",bg=LIGHT,font=("Segoe UI",10,"bold")); self.vat_summary.pack(pady=(0,8))
         self.cash_tree=self.table(cash,[("currency","Currency",90),("category","Cash Flow Category",280),("inflow","Inflow",140),("outflow","Outflow",140),("net","Net Cash Movement",160)]); self.report_buttons(cash,"cash")
+        outlook_bar=tk.Frame(cash_outlook,bg=LIGHT); outlook_bar.pack(fill="x",padx=10,pady=8)
+        self.cash_outlook_year=tk.StringVar(value=str(self.current_fiscal_year))
+        self.cash_outlook_horizon=tk.StringVar(value="Quarter (3 months)")
+        tk.Label(outlook_bar,text="Report year",bg=LIGHT,fg=NAVY).pack(side="left")
+        tk.Entry(outlook_bar,textvariable=self.cash_outlook_year,width=6).pack(side="left",padx=(4,10))
+        tk.Label(outlook_bar,text="Project ahead",bg=LIGHT,fg=NAVY).pack(side="left")
+        ttk.Combobox(outlook_bar,textvariable=self.cash_outlook_horizon,values=["Quarter (3 months)","6 Months","Yearly (12 months)"],state="readonly",width=21).pack(side="left",padx=(4,10))
+        tk.Label(outlook_bar,text="Projected values use the last 3 complete months.",bg=LIGHT,fg=NAVY).pack(side="left")
+        self.action_button(outlook_bar,"Refresh Projection",self.load_cashflow_outlook).pack(side="right")
+        self.cash_projection_tree=self.table(cash_outlook,[("month","Period",180),("status","Status",95),("currency","Currency",85),
+            ("inflow","Inflow",130),("outflow","Outflow",130),("net","Net cash movement",150)])
+        self.report_buttons(cash_outlook,"cash_projection")
         ageing_controls=tk.Frame(aging,bg=LIGHT); ageing_controls.pack(fill="x",padx=8,pady=4)
         self.ageing_kind=tk.StringVar(value="Customers & Suppliers")
         tk.Label(ageing_controls,text="Show",bg=LIGHT).pack(side="left")
         kind_box=ttk.Combobox(ageing_controls,textvariable=self.ageing_kind,values=["Customers & Suppliers","Customers","Suppliers"],state="readonly",width=24)
         kind_box.pack(side="left",padx=6); kind_box.bind("<<ComboboxSelected>>",lambda _e:self.refresh_ageing_tree())
-        tk.Label(ageing_controls,text="Invoice due date and days overdue at the report To date. For future collections, use Business Reports → Today / +30 days.",bg=LIGHT,fg="#5f6b76").pack(side="left",padx=8)
+        tk.Label(ageing_controls,text="As of",bg=LIGHT).pack(side="left",padx=(8,2)); self.date_entry(ageing_controls,self.ageing_as_of,12).pack(side="left",padx=3)
+        range_row=tk.Frame(aging,bg=LIGHT); range_row.pack(fill="x",padx=8,pady=(0,4))
+        choices=[f'{p.get("account_number") or ""} - {p["name"]}' for p in self.client.parties()]
+        for label,var in (("Account / Name From",self.ageing_from),("To",self.ageing_to)):
+            tk.Label(range_row,text=label,bg=LIGHT).pack(side="left",padx=(6,2))
+            ttk.Combobox(range_row,textvariable=var,values=choices,width=27).pack(side="left",padx=(2,8))
+        self.action_button(range_row,"Apply",self.load_ageing_report).pack(side="left",padx=4)
+        tk.Label(range_row,text="Type a number or name, or choose from the list.",bg=LIGHT,fg="#5f6b76").pack(side="left",padx=8)
+        tk.Label(aging,text="Past dates use the current invoice outstanding balance; future dates show the expected lateness if no further payment is made.",
+            bg=LIGHT,fg="#5f6b76",anchor="w").pack(fill="x",padx=12)
         self.aging_tree=self.table(aging,[("kind","Type",85),("party","Customer / Supplier",220),("invoice","Invoice",110),("due","Due Date",100),("currency","Currency",75),("outstanding","Outstanding",120),("days","Days Overdue",110),("bucket","Aging Bucket",100)]); self.report_buttons(aging,"aging")
         self.comparative_tree=self.table(comparative,[("currency","Currency",75),("type","Type",85),("account","Account",95),("name","Account Name",260),("current","Current Period",130),("prior","Prior Year",130),("variance","Variance",130)]); self.report_buttons(comparative,"comparative")
         self.load_financial_reports()
+        self.load_ageing_report()
+        self.load_cashflow_outlook()
 
     def report_buttons(self,parent,report):
         frame=tk.Frame(parent,bg=LIGHT); frame.pack(pady=(0,8))
@@ -2117,7 +2272,6 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             balance=self.client.balance_sheet(dates[1],currency)
             vat=self.client.vat_report(dates[0],dates[1],currency)
             cash=self.client.cash_flow(dates[0],dates[1],currency)
-            aging=self.client.aging(dates[1],None,currency)
             comparative=self.client.comparative_reports(dates[0],dates[1],currency)
         except Exception as exc: return messagebox.showerror("Financial Reports",str(exc))
         account_from=self.report_account_from.get().split(" - ",1)[0].strip(); account_to=self.report_account_to.get().split(" - ",1)[0].strip()
@@ -2125,31 +2279,98 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             digits=int(''.join(c for c in str(code) if c.isdigit()) or 0)
             low=int(''.join(c for c in account_from if c.isdigit()) or 0); high=int(''.join(c for c in account_to if c.isdigit()) or 999999999999)
             return low<=digits<=high
-        self.ledger_rows=[row for row in ledger["items"] if in_account_range(row["account_code"])]; self.balance_rows=[row for row in balance if in_account_range(row["code"])]; self.vat_rows=vat["items"]; self.cash_rows=cash; self.aging_rows=aging; self.comparative_rows=comparative["items"]
-        self.ledger_tree.delete(*self.ledger_tree.get_children()); self.balance_tree.delete(*self.balance_tree.get_children()); self.vat_tree.delete(*self.vat_tree.get_children()); self.cash_tree.delete(*self.cash_tree.get_children()); self.aging_tree.delete(*self.aging_tree.get_children()); self.comparative_tree.delete(*self.comparative_tree.get_children())
-        for r in self.ledger_rows: self.ledger_tree.insert("","end",values=(r["entry_date"],r["entry_number"],r["account_code"],r["account_name"],r["description"],r["currency"],f'{r["debit"]:,.2f}',f'{r["credit"]:,.2f}',f'{r["balance"]:,.2f}'))
-        for r in balance: self.balance_tree.insert("","end",values=(r["currency"],r["type"],r["code"],r["name_en"],f'{r["debit"]:,.2f}',f'{r["credit"]:,.2f}',f'{r["balance"]:,.2f}'))
+        self.ledger_rows=[row for row in ledger["items"] if in_account_range(row["account_code"])]; self.balance_rows=[row for row in balance if in_account_range(row["code"])]; self.vat_rows=vat["items"]; self.cash_rows=cash; self.comparative_rows=comparative["items"]
+        self.ledger_tree.delete(*self.ledger_tree.get_children()); self.balance_tree.delete(*self.balance_tree.get_children()); self.vat_tree.delete(*self.vat_tree.get_children()); self.cash_tree.delete(*self.cash_tree.get_children()); self.comparative_tree.delete(*self.comparative_tree.get_children())
+        for r in self.ledger_rows: self.ledger_tree.insert("","end",values=(r["entry_date"],r["entry_number"],r["account_code"],r["currency"],r["account_name"],r["description"],f'{r["debit"]:,.2f}',f'{r["credit"]:,.2f}',f'{r["balance"]:,.2f}'))
+        for r in balance: self.balance_tree.insert("","end",values=(r["type"],r["code"],r["currency"],r["name_en"],f'{r["debit"]:,.2f}',f'{r["credit"]:,.2f}',f'{r["balance"]:,.2f}'))
         for r in self.vat_rows: self.vat_tree.insert("","end",values=(r["currency"],r["kind"],r["invoices"],f'{r["subtotal"] or 0:,.2f}',f'{r["vat"] or 0:,.2f}',f'{r["total"] or 0:,.2f}'))
         for r in self.cash_rows: self.cash_tree.insert("","end",values=(r["currency"],r["category"],f'{r["inflow"]:,.2f}',f'{r["outflow"]:,.2f}',f'{r["net"]:,.2f}'))
-        self.refresh_ageing_tree()
         for r in self.comparative_rows: self.comparative_tree.insert("","end",values=(r["currency"],r["type"],r["code"],r["name_en"],f'{r["current"]:,.2f}',f'{r["prior"]:,.2f}',f'{r["variance"]:,.2f}'))
         self.vat_summary.config(text="   ".join(f'{r["currency"]} VAT payable: {r["vat_payable"]:,.2f}' for r in vat["summary"]) or "No VAT activity")
 
+    def load_ageing_report(self):
+        try: as_of=parse_user_date(self.ageing_as_of.get()).strftime("%Y-%m-%d")
+        except ValueError: return messagebox.showwarning("Ageing Report","As of date must use DD-MM-YYYY")
+        currency=None if self.view_currency.get()=="All Currencies" else self.view_currency.get()
+        try: self.aging_rows=self.client.aging(as_of,None,currency)
+        except Exception as exc: return messagebox.showerror("Ageing Report",str(exc))
+        self.refresh_ageing_tree()
+
     def visible_ageing_rows(self):
         choice = self.ageing_kind.get()
-        return [r for r in getattr(self,"aging_rows",[]) if choice=="Customers & Suppliers" or (r["kind"]=="sale")==(choice=="Customers")]
+        rows=[r for r in getattr(self,"aging_rows",[]) if choice=="Customers & Suppliers" or (r["kind"]=="sale")== (choice=="Customers")]
+        lower=self.ageing_from.get().strip(); upper=self.ageing_to.get().strip()
+        if lower and not upper and " - " not in lower:
+            needle=lower.casefold()
+            return [row for row in rows if needle in str(row.get("account_number") or "").casefold() or needle in str(row.get("party_name") or "").casefold()]
+        def bound(value):
+            if not value: return None
+            code=value.split(" - ",1)[0].strip()
+            if code.isdigit(): return ("account",code)
+            match=next((r for r in rows if (r.get("party_name") or "").casefold()==value.casefold()),None)
+            if match: return ("account",match.get("account_number") or "") if match.get("account_number") else ("name",value.casefold())
+            return ("name",value.casefold())
+        start,end=bound(lower),bound(upper)
+        if start and end and start[0]!=end[0]: return []
+        for edge,is_lower in ((start,True),(end,False)):
+            if not edge: continue
+            key="account_number" if edge[0]=="account" else "party_name"
+            rows=[r for r in rows if (str(r.get(key) or "").casefold()>=edge[1] if is_lower else str(r.get(key) or "").casefold()<=edge[1])]
+        return rows
 
     def refresh_ageing_tree(self):
         self.aging_tree.delete(*self.aging_tree.get_children())
         for r in self.visible_ageing_rows():
             self.aging_tree.insert("","end",values=("Receivable" if r["kind"]=="sale" else "Payable",r["party_name"],r["invoice_number"],r.get("due_date") or r["invoice_date"],r["currency"],f'{r["outstanding"]:,.2f}',r["days_overdue"],r["bucket"]))
 
+    def load_cashflow_outlook(self):
+        from financial_projection import HORIZONS, completed_months, future_months, month_range, trailing_average
+        try:
+            year=int(self.cash_outlook_year.get()); last=completed_months(year)
+            future=future_months(year,last,HORIZONS[self.cash_outlook_horizon.get()])
+        except (ValueError,KeyError) as exc: return messagebox.showwarning("Cash Flow Outlook",str(exc))
+        currency=None if self.view_currency.get()=="All Currencies" else self.view_currency.get()
+        history={}; currencies=set()
+        try:
+            for month in range(1,last+1):
+                start,end=month_range(year,month)
+                rows=self.client.cash_flow(start,end,currency)
+                for row in rows:
+                    key=row["currency"]; currencies.add(key)
+                    values=history.setdefault((key,month),{"inflow":0.0,"outflow":0.0})
+                    values["inflow"]+=float(row["inflow"]); values["outflow"]+=float(row["outflow"])
+        except Exception as exc: return messagebox.showerror("Cash Flow Outlook",str(exc))
+        self.cash_projection_rows=[]
+        if not currencies: currencies={currency or "USD"}
+        for code in sorted(currencies):
+            actual_total={"inflow":0.0,"outflow":0.0}
+            for month in range(1,last+1):
+                values=history.get((code,month),{"inflow":0.0,"outflow":0.0})
+                for key in actual_total: actual_total[key]+=values[key]
+                self.cash_projection_rows.append({"month":f"{year}-{month:02d}","status":"Actual","currency":code,**values,
+                    "net":values["inflow"]-values["outflow"]})
+            self.cash_projection_rows.append({"month":f"{year} actual total (Jan–{last:02d})","status":"Actual total","currency":code,**actual_total,
+                "net":actual_total["inflow"]-actual_total["outflow"]})
+            monthly={month:history.get((code,month),{}) for month in range(1,last+1)}
+            average={key:trailing_average(monthly,last,key) for key in ("inflow","outflow")}
+            for projected_year,projected_month in future:
+                self.cash_projection_rows.append({"month":f"{projected_year}-{projected_month:02d}","status":"Projected","currency":code,**average,
+                    "net":average["inflow"]-average["outflow"]})
+            totals={key:average[key]*len(future) for key in average}
+            self.cash_projection_rows.append({"month":f"{future[0][0]}-{future[0][1]:02d} to {future[-1][0]}-{future[-1][1]:02d}",
+                "status":"Forecast total","currency":code,**totals,"net":totals["inflow"]-totals["outflow"]})
+        self.cash_projection_tree.delete(*self.cash_projection_tree.get_children())
+        for row in self.cash_projection_rows:
+            self.cash_projection_tree.insert("","end",values=(row["month"],row["status"],row["currency"],
+                f'{row["inflow"]:,.2f}',f'{row["outflow"]:,.2f}',f'{row["net"]:,.2f}'))
+
     def financial_report_export(self,report,format_name):
-        if report=="ledger": title="General Ledger"; headers=["Date","Entry","Account","Name","Description","Currency","Debit","Credit","Balance"]; rows=[[r["entry_date"],r["entry_number"],r["account_code"],r["account_name"],r["description"],r["currency"],r["debit"],r["credit"],r["balance"]] for r in getattr(self,"ledger_rows",[])]
-        elif report=="balance": title="Balance Sheet"; headers=["Currency","Type","Account","Name","Debit","Credit","Balance"]; rows=[[r["currency"],r["type"],r["code"],r["name_en"],r["debit"],r["credit"],r["balance"]] for r in getattr(self,"balance_rows",[])]
+        if report=="ledger": title="General Ledger"; headers=["Date","Entry","Account","Currency","Name","Description","Debit","Credit","Balance"]; rows=[[r["entry_date"],r["entry_number"],r["account_code"],r["currency"],r["account_name"],r["description"],r["debit"],r["credit"],r["balance"]] for r in getattr(self,"ledger_rows",[])]
+        elif report=="balance": title="Balance Sheet"; headers=["Type","Account","Currency","Name","Debit","Credit","Balance"]; rows=[[r["type"],r["code"],r["currency"],r["name_en"],r["debit"],r["credit"],r["balance"]] for r in getattr(self,"balance_rows",[])]
         elif report=="vat": title="Lebanese VAT Report"; headers=["Currency","Type","Count","Before VAT","VAT","Total"]; rows=[[r["currency"],r["kind"],r["invoices"],r["subtotal"],r["vat"],r["total"]] for r in getattr(self,"vat_rows",[])]
         elif report=="cash": title="Cash Flow"; headers=["Currency","Category","Inflow","Outflow","Net"]; rows=[[r["currency"],r["category"],r["inflow"],r["outflow"],r["net"]] for r in getattr(self,"cash_rows",[])]
-        elif report=="aging": title="Customer and Supplier Ageing"; headers=["Type","Party","Invoice","Due Date","Currency","Outstanding","Days Overdue","Bucket"]; rows=[["Receivable" if r["kind"]=="sale" else "Payable",r["party_name"],r["invoice_number"],r.get("due_date") or r["invoice_date"],r["currency"],r["outstanding"],r["days_overdue"],r["bucket"]] for r in self.visible_ageing_rows()]
+        elif report=="cash_projection": title="Cash Flow Actual and Projection"; headers=["Month","Status","Currency","Inflow","Outflow","Net"]; rows=[[r["month"],r["status"],r["currency"],r["inflow"],r["outflow"],r["net"]] for r in getattr(self,"cash_projection_rows",[])]
+        elif report=="aging": title=f"Customer and Supplier Ageing as of {self.ageing_as_of.get()}"; headers=["Type","Party","Invoice","Due Date","Currency","Outstanding","Days Overdue","Bucket"]; rows=[["Receivable" if r["kind"]=="sale" else "Payable",r["party_name"],r["invoice_number"],r.get("due_date") or r["invoice_date"],r["currency"],r["outstanding"],r["days_overdue"],r["bucket"]] for r in self.visible_ageing_rows()]
         else: title="Comparative Profit and Loss"; headers=["Currency","Type","Account","Name","Current Period","Prior Year","Variance"]; rows=[[r["currency"],r["type"],r["code"],r["name_en"],r["current"],r["prior"],r["variance"]] for r in getattr(self,"comparative_rows",[])]
         if not rows: return messagebox.showwarning(title,"No data to export")
         try:

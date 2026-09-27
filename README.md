@@ -1,5 +1,31 @@
 # Saber Accounting MVP
 
+## Version 2.9.4 (Equal height navigation rows)
+
+- Navigation tabs in every row share the same height, including rows with labels that wrap onto two lines.
+
+## Version 2.9.3 (Navigation and invoice controls alignment)
+
+- The navigation tabs have visible spacing, stretch across the application window and automatically wrap into more rows as the window gets narrower; horizontal scrolling remains available on exceptionally narrow windows.
+- On Uploaded Data, the Branch selector and both rows of invoice action buttons begin at the left edge below the table.
+
+## Version 2.9.2 (Payroll registration worksheet)
+
+- Employee files now retain nationality, parents' names, date of birth and place of birth. Existing company files add these empty fields automatically without changing saved payroll.
+- Employees > R3 Registration Worksheet can preview, export PDF or export Excel with the saved employee details and highlights missing information. This worksheet helps prepare the Ministry of Finance's R3 new-employee registration; it is not the official form or an electronic submission. Complete the official form and its supporting documents separately.
+- Employees has download buttons for the original Ministry of Finance R3 and R3-1 PDF forms. The original blank forms are downloaded from the Ministry website when requested.
+- NSSF contributions report lists the employees in the selected period, counts both registered employees and employees with payroll, and shows missing NSSF numbers. The report's Employee List / Edit button opens the editable employee list.
+- Payroll > Official Reports > SETTLEMENT builds an annual NSSF reconciliation from posted payroll. Use Filed NSSF Wages to enter the wages already declared for each month and actual payments; unknown values stay blank and the settlement remains incomplete. The difference uses the effective rates saved for each month. The entries have an audit log and do not post a journal voucher automatically.
+- The original blank CNSS contributions, annual settlement and annual employee declaration PDFs can be downloaded from the CNSS links. Those public templates show a preprinted 9% sickness rate; compare the template with the period's saved rates before submission. The application's reconciliation is a review worksheet, not an official CNSS filing.
+- The Employee File dialog scrolls on smaller screens, with Save always visible.
+- Main navigation grows to fit both rows of tabs; outer page scrollbars appear only when the content exceeds the available space.
+
+## Version 2.9.1
+
+- Main window opens within the available screen dimensions and its minimum size respects smaller displays.
+- Every main page now has vertical and horizontal scrollbars so forms, tables, and action buttons remain reachable on smaller screens or with larger Windows display scaling. The two-row navigation can scroll horizontally as well.
+- General Journal action buttons and totals now appear above the table, so they are immediately visible instead of being squeezed against the bottom of the window.
+
 ## Version 2.9.0
 
 - **Bank Reconciliation** (Payment & Receipt > Bank Reconciliation): import the bank statement (Excel or CSV: Date, Description, Reference, Debit / Credit or Amount) for a bank account (511 / 512 / 519 / 53), Auto Match (same amount, dates within 5 days), Match / Unmatch by hand, post statement-only items (bank charges 6739, interest...) as a voucher that is matched at once, and the reconciliation: book balance, deposits not yet at the bank, payments not yet cleared, statement items not booked, expected bank balance and the difference with the statement balance. Report in PDF / Excel / print.
