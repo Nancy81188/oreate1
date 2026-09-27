@@ -1,5 +1,10 @@
 # Saber Accounting MVP
 
+## Version 2.9.3 (Navigation and invoice controls alignment)
+
+- The two navigation rows stretch across the application window, with horizontal scrolling when the window is narrower than the tabs.
+- On Uploaded Data, the Branch selector and both rows of invoice action buttons begin at the left edge below the table.
+
 ## Version 2.9.2 (Payroll registration worksheet)
 
 - Employee files now retain nationality, parents' names, date of birth and place of birth. Existing company files add these empty fields automatically without changing saved payroll.
