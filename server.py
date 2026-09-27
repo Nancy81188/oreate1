@@ -17,6 +17,7 @@ from company_manager import CompanyManager
 from payroll_reports import build_payroll_report, json_ready as payroll_json
 import ledger_reports
 import inventory
+import fixed_assets
 import vat_return
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -86,6 +87,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path == "/api/me":
             info={k:user[k] for k in ("id","username","role","language","expires_at")}; info["permissions"]={m:self.master_db.user_can(user,m) for m in ("payroll","vat")}
             return self._json(200,info)
+        if path == "/api/fixed-assets":
+            return self._json(200,{"items":fixed_assets.list_assets(self.db)})
+        if path.startswith("/api/fixed-assets/") and path.endswith("/schedule"):
+            try: return self._json(200,{"items":fixed_assets.schedule(self.db,int(path.split("/")[-2]))})
+            except KeyError: return self._json(404,{"error":"Asset not found"})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/payroll/reports":
             try:
                 result=build_payroll_report(self.db,self._query(parsed,"report","R10"),self._query(parsed,"period_type","quarterly"),
@@ -283,6 +290,13 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path == "/api/dashboard":
             return self._json(200, {"items": self.db.dashboard()})
         if path == "/api/dashboard/professional": return self._json(200,self.db.professional_dashboard())
+        if path == "/api/dashboard/conversion":
+            source=self._query(parsed,"source","USD").upper(); target=self._query(parsed,"target","USD").upper()
+            day=self._query(parsed,"date","")
+            if source not in self.db.currency_codes() or target not in self.db.currency_codes(): return self._json(400,{"error":"Invalid currency"})
+            try: rate=self.db._converted_amount(__import__("decimal").Decimal("1"),source,target,day)
+            except Exception as exc: return self._json(400,{"error":str(exc)})
+            return self._json(200,{"rate":str(rate),"source":source,"target":target,"date":day})
         if path == "/api/users":
             if user["role"]!="admin": return self._json(403,{"error":"Administrator permission required"})
             return self._json(200,{"items":self.master_db.list_users()})
@@ -297,6 +311,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path == "/api/settings": return self._json(200,self.db.settings())
         if path == "/api/currencies": return self._json(200,{"items":self.db.currencies()})
         if path == "/api/exchange-rates": return self._json(200,{"items":self.db.list_exchange_rates()})
+        if path == "/api/doe/candidates":
+            try: return self._json(200,self.db.doe_candidates(self._query(parsed,"date","")))
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/trial-balance":
             query = parse_qs(parsed.query)
             from_date = query.get("from_date", [None])[0]
@@ -371,6 +388,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         if user["role"] == "viewer":
             return self._json(403,{"error":"Viewer access is read-only"})
         if self._module_denied(user, path): return
+        if path == "/api/fixed-assets":
+            try: return self._json(201,{"asset":fixed_assets.save_asset(self.db,body,user_id=user["id"])})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
+        if path.startswith("/api/fixed-assets/") and path.endswith("/post"):
+            try: return self._json(201,{"voucher":fixed_assets.post_period(self.db,int(path.split("/")[-2]),body.get("period_end"),user["id"],self.headers.get("X-Fiscal-Year"))})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path.startswith("/api/expenses/") and path.endswith("/attachments"):
             try:
                 raw=base64.b64decode(body.get("content","").encode("ascii"),validate=True)
@@ -674,6 +697,10 @@ class ApiHandler(BaseHTTPRequestHandler):
             return self._json(423,{"error":"This fiscal year is closed and read-only"})
         if user["role"] == "viewer":
             return self._json(403,{"error":"Viewer access is read-only"})
+        if path.startswith("/api/fixed-assets/"):
+            try: return self._json(200,{"asset":fixed_assets.save_asset(self.db,self._body(),int(path.rsplit("/",1)[-1]),user["id"])})
+            except KeyError: return self._json(404,{"error":"Asset not found"})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path.startswith("/api/payments/") or path.startswith("/api/expenses/"):
             try:
                 body=self._body(); record_id=int(path.rsplit("/",1)[-1])
@@ -720,7 +747,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         if user["role"]=="viewer": return self._json(403,{"error":"Viewer access is read-only"})
         try:
             if self._module_denied(user, path): return
-            if path.startswith("/api/vat-return/adjustments/"): result=vat_return.delete_adjustment(self.db,int(path.rsplit("/",1)[-1]),user["id"])
+            if path.startswith("/api/fixed-assets/"): result=fixed_assets.delete_asset(self.db,int(path.rsplit("/",1)[-1]),user["id"])
+            elif path.startswith("/api/vat-return/adjustments/"): result=vat_return.delete_adjustment(self.db,int(path.rsplit("/",1)[-1]),user["id"])
             elif path.startswith("/api/inventory/documents/"): result=inventory.delete_document(self.db,int(path.rsplit("/",1)[-1]),user["id"])
             elif path.startswith("/api/payments/"): result=self.db.delete_payment(int(path.rsplit("/",1)[-1]),user["id"])
             elif path.startswith("/api/expenses/"): result=self.db.delete_expense(int(path.rsplit("/",1)[-1]),user["id"])

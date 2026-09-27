@@ -26,8 +26,9 @@ def _dd(value):
 class InventoryMixin:
     def build_inventory(self):
         nested = ttk.Notebook(self.inventory_tab); nested.pack(fill="both", expand=True, padx=8, pady=8)
-        pages = {name: tk.Frame(nested, bg=LIGHT) for name in ("Items", "Categories & Units", "Stock In / Stock Out", "Stock Documents", "Physical Inventory", "Inventory Reports", "Warehouses & Settings")}
+        pages = {name: tk.Frame(nested, bg=LIGHT) for name in ("Items", "Categories & Units", "Stock In / Stock Out", "Stock Documents", "Physical Inventory", "Inventory Reports", "Ageing Report", "Warehouses & Settings")}
         for name, page in pages.items(): nested.add(page, text=name)
+        self.ageing_tab=pages["Ageing Report"]
         self.build_items_page(pages["Items"]); self.build_categories_page(pages["Categories & Units"]); self.build_stock_in_out_page(pages["Stock In / Stock Out"])
         self.build_physical_page(pages["Physical Inventory"]); self.build_stock_documents_page(pages["Stock Documents"])
         self.build_inventory_reports_page(pages["Inventory Reports"]); self.build_inventory_settings_page(pages["Warehouses & Settings"])
@@ -317,7 +318,7 @@ class InventoryMixin:
         tk.Label(bar, text="Costing", bg=LIGHT).pack(side="left")
         ttk.Combobox(bar, textvariable=self.ir_method, values=["Company setting", "Weighted average", "FIFO"], state="readonly", width=15).pack(side="left", padx=4)
         item_row = tk.Frame(page, bg=LIGHT); self.ir_item_row = item_row
-        tk.Label(item_row, text="Stock Card Item From", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
+        tk.Label(item_row, text="Item From", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
         self.ir_item_box = ttk.Combobox(item_row, textvariable=self.ir_item, width=29); self.ir_item_box.pack(side="left", padx=(4, 12))
         tk.Label(item_row, text="Item To", bg=LIGHT, font=("Segoe UI", 9, "bold")).pack(side="left")
         self.ir_item_to_box = ttk.Combobox(item_row, textvariable=self.ir_item_to, width=29); self.ir_item_to_box.pack(side="left", padx=(4, 8))
@@ -353,10 +354,7 @@ class InventoryMixin:
         if len(matches)==1: variable.set(matches[0])
 
     def inventory_report_selected(self, _event=None):
-        if self.ir_report.get() == "Stock Card":
-            self.ir_item_row.pack(fill="x", padx=8, pady=(2, 0), before=self.ir_controls_row)
-        else:
-            self.ir_item_row.pack_forget()
+        self.ir_item_row.pack(fill="x", padx=8, pady=(2, 0), before=self.ir_controls_row)
         if hasattr(self, "ir_analysis_bar"):
             if self.ir_report.get() == "Inventory Analysis (3D)": self.ir_analysis_bar.pack(fill="x", padx=8, pady=(2, 0), before=self.ir_info)
             else: self.ir_analysis_bar.pack_forget()
@@ -367,13 +365,15 @@ class InventoryMixin:
             options.update(rows=self.ir_3d_rows.get().lower(), columns=self.ir_3d_columns.get().lower(), measure=self.ir_3d_measure.get().lower())
         if self.ir_warehouse.get() not in ("", "All"):
             code = self.ir_warehouse.get().split(" - ", 1)[0]; options["warehouse_id"] = next(w["id"] for w in self.warehouse_rows if w["code"] == code)
-        item = self.item_by_code(self.ir_item.get())
-        if item and self.ir_report.get() == "Stock Card":
+        if self.ir_item.get().strip():
+            item = self.item_by_code(self.ir_item.get())
+            if not item: raise ValueError("Choose a valid Item From")
             options["item_id"] = item["id"]
-            if self.ir_item_to.get().strip():
-                to_item = self.item_by_code(self.ir_item_to.get())
-                if not to_item: raise ValueError("Choose a valid Stock Card Item To")
-                options["item_to_id"] = to_item["id"]
+        if self.ir_item_to.get().strip():
+            to_item = self.item_by_code(self.ir_item_to.get())
+            if not to_item: raise ValueError("Choose a valid Item To")
+            if not options.get("item_id"): raise ValueError("Choose Item From before Item To")
+            options["item_to_id"] = to_item["id"]
         if self.ir_category.get() not in ("", "All"): options["category"] = self.ir_category.get()
         if self.ir_subcategory.get() not in ("", "All"): options["subcategory"] = self.ir_subcategory.get()
         if self.ir_unit.get() not in ("", "All"): options["unit"] = self.ir_unit.get()
