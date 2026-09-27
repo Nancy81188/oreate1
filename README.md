@@ -1,5 +1,9 @@
 # Saber Accounting MVP
 
+## Version 2.9.4 (Equal height navigation rows)
+
+- Navigation tabs in every row share the same height, including rows with labels that wrap onto two lines.
+
 ## Version 2.9.3 (Navigation and invoice controls alignment)
 
 - The navigation tabs have visible spacing, stretch across the application window and automatically wrap into more rows as the window gets narrower; horizontal scrolling remains available on exceptionally narrow windows.
