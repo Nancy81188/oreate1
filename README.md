@@ -6,6 +6,8 @@
 - Employees > R3 Registration Worksheet can preview, export PDF or export Excel with the saved employee details and highlights missing information. This worksheet helps prepare the Ministry of Finance's R3 new-employee registration; it is not the official form or an electronic submission. Complete the official form and its supporting documents separately.
 - Employees has download buttons for the original Ministry of Finance R3 and R3-1 PDF forms. The original blank forms are downloaded from the Ministry website when requested.
 - NSSF contributions report lists the employees in the selected period, counts both registered employees and employees with payroll, and shows missing NSSF numbers. The report's Employee List / Edit button opens the editable employee list.
+- Payroll > Official Reports > SETTLEMENT builds an annual NSSF reconciliation from posted payroll. Use Filed NSSF Wages to enter the wages already declared for each month and actual payments; unknown values stay blank and the settlement remains incomplete. The difference uses the effective rates saved for each month. The entries have an audit log and do not post a journal voucher automatically.
+- The original blank CNSS contributions, annual settlement and annual employee declaration PDFs can be downloaded from the CNSS links. Those public templates show a preprinted 9% sickness rate; compare the template with the period's saved rates before submission. The application's reconciliation is a review worksheet, not an official CNSS filing.
 - The Employee File dialog scrolls on smaller screens, with Save always visible.
 - Main navigation grows to fit both rows of tabs; outer page scrollbars appear only when the content exceeds the available space.
 
