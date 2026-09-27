@@ -1,5 +1,10 @@
 # Saber Accounting MVP
 
+## Version 2.9.1
+
+- Main window opens within the available screen dimensions and its minimum size respects smaller displays.
+- Every main page now has vertical and horizontal scrollbars so forms, tables, and action buttons remain reachable on smaller screens or with larger Windows display scaling. The two-row navigation can scroll horizontally as well.
+
 ## Version 2.9.0
 
 - **Bank Reconciliation** (Payment & Receipt > Bank Reconciliation): import the bank statement (Excel or CSV: Date, Description, Reference, Debit / Credit or Amount) for a bank account (511 / 512 / 519 / 53), Auto Match (same amount, dates within 5 days), Match / Unmatch by hand, post statement-only items (bank charges 6739, interest...) as a voucher that is matched at once, and the reconciliation: book balance, deposits not yet at the bank, payments not yet cleared, statement items not booked, expected bank balance and the difference with the statement balance. Report in PDF / Excel / print.
