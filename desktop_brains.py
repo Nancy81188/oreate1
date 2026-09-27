@@ -6,13 +6,14 @@ import os
 import tempfile
 import tkinter as tk
 from datetime import datetime
-from tkinter import messagebox, ttk
+from decimal import Decimal, InvalidOperation
+from tkinter import messagebox, simpledialog, ttk
 
 from report_export import export_sections_pdf
 
 NAVY, GOLD, LIGHT = "#071b2e", "#c9a96a", "#f3f6f8"
 RED, MUTED = "#8B1E1E", "#5f6b76"
-VOUCHER_TYPES = ["01 - General Voucher", "02 - Receipt Voucher", "03 - Payment Voucher", "04 - Opening Voucher", "05 - Closing Voucher", "06 - Adjustment"]
+VOUCHER_TYPES = ["01 - General Voucher", "02 - Receipt Voucher", "03 - Payment Voucher", "04 - Opening Voucher", "05 - Closing Voucher", "06 - Adjustment", "07 - DOE (Difference of Exchange)"]
 
 
 def _num(value):
@@ -125,6 +126,7 @@ class BrainsScreensMixin:
             tk.Button(bar, text=text, command=lambda s=step: self.navigate_voucher(s), bg=GOLD, fg=NAVY, border=0, width=3, font=("Segoe UI", 9, "bold")).pack(side="left", padx=2, pady=4)
         tk.Button(bar, text="New", command=self.new_manual_voucher, bg="white", fg=NAVY, border=0, padx=12).pack(side="left", padx=(12, 2), pady=4)
         tk.Button(bar, text="Save", command=self.save_manual_invoice, bg=GOLD, fg=NAVY, border=0, padx=14, font=("Segoe UI", 9, "bold")).pack(side="left", padx=2, pady=4)
+        tk.Button(bar, text="Calculate DOE", command=self.prepare_doe, bg="white", fg=NAVY, border=0, padx=8).pack(side="left", padx=2, pady=4)
         tk.Button(bar, text="Delete", command=self.delete_current_voucher, bg=RED, fg="white", border=0, padx=12).pack(side="left", padx=2, pady=4)
         self.action_button(bar,"Add Line",self.add_manual_item).pack(side="left",padx=(14,2),pady=4)
         self.action_button(bar,"Insert Line",self.insert_manual_item).pack(side="left",padx=2,pady=4)
@@ -392,6 +394,47 @@ class BrainsScreensMixin:
                        "department": line.get("department") or "", "project": line.get("project") or ""}
             self.voucher_sheet.insert(self.recalculate_voucher_line(row))
         self.update_manual_totals(); self.manual_line_info.config(text=f"Voucher {voucher['entry_number']} opened")
+
+    def prepare_doe(self):
+        """Prepare a reviewable LBP revaluation voucher for one class 4/5 balance."""
+        try: date=datetime.strptime(self.manual_date.get().strip(),"%d-%m-%Y").strftime("%d-%m-%Y")
+        except ValueError: return messagebox.showwarning("DOE","Choose the DOE posting date first (DD-MM-YYYY)")
+        account=simpledialog.askstring("DOE","Class 4 or 5 account number:",parent=self)
+        if account is None: return
+        account=account.split(" - ",1)[0].strip()
+        if not account.startswith(("4","5")) or not self.account_by_code(account):
+            return messagebox.showerror("DOE","Choose an existing class 4 or 5 account")
+        side=simpledialog.askstring("DOE","Balance side: D for debit, C for credit:",parent=self)
+        if side is None: return
+        side=side.strip().upper()
+        if side not in ("D","C"): return messagebox.showerror("DOE","Balance side must be D or C")
+        answers=[]
+        for prompt in ("Open foreign currency balance (positive amount):","Carrying rate in LBP per currency unit:","DOE date rate in LBP per currency unit:"):
+            raw=simpledialog.askstring("DOE",prompt,parent=self)
+            if raw is None: return
+            try: value=Decimal(raw.replace(",", "").strip())
+            except InvalidOperation: return messagebox.showerror("DOE","Enter valid numbers for balance and rates")
+            if not value.is_finite() or value<=0: return messagebox.showerror("DOE","Balance and rates must be above zero")
+            answers.append(value)
+        balance,old_rate,new_rate=answers
+        change=(balance*(new_rate-old_rate)).quantize(Decimal("0.01"))
+        if not change: return messagebox.showinfo("DOE","No exchange difference at these rates")
+        gain=(change>0 and side=="D") or (change<0 and side=="C")
+        account_side="D" if change>0 else "C"
+        if side=="C": account_side="C" if change>0 else "D"
+        offset="775100000" if gain else "675100000"
+        offset_side="C" if gain else "D"
+        if self.editing_voucher_id or self.voucher_lines():
+            if not messagebox.askyesno("DOE","Replace the current unsaved voucher lines with this DOE entry?"): return
+        self.editing_voucher_id=None; self.manual_type.set(VOUCHER_TYPES[-1]); self.manual_currency.set("LBP")
+        self.manual_details.delete("1.0","end")
+        self.manual_details.insert("1.0",f"DOE {date}: {account}; foreign balance {balance}; carrying rate {old_rate}; DOE rate {new_rate}")
+        self.voucher_sheet.clear()
+        for code,direction in ((account,account_side),(offset,offset_side)):
+            row=self.new_voucher_line(code); row.update(side=direction,amount=str(abs(change)),line_currency="LBP",rate_lbp=1)
+            self.voucher_sheet.insert(self.recalculate_voucher_line(row))
+        self.set_next_manual_voucher_number(); self.update_manual_totals()
+        self.manual_line_info.config(text=f"DOE prepared for {date}: {abs(change):,.2f} LBP. Review and press Save.")
 
     def save_manual_invoice(self):
         lines = self.voucher_lines(); debit, credit = self.update_manual_totals()

@@ -57,6 +57,8 @@ class ApiClient:
     def create_fiscal_year(self,company_id,year): return self.request("POST","/api/companies/year",{"company_id":company_id,"year":year})["company"]
     def select_company_year(self,company_id,year): self.company_id=company_id; self.fiscal_year=int(year)
     def professional_dashboard(self): return self.request("GET","/api/dashboard/professional")
+    def dashboard_conversion(self,source,target,date):
+        return self.request("GET","/api/dashboard/conversion?"+urlencode({"source":source,"target":target,"date":date}))
     def invoices(self): return self.request("GET", "/api/invoices")["items"]
     def accounts(self): return self.request("GET", "/api/accounts")["items"]
     def next_account_number(self,prefix): return self.request("GET",f"/api/accounts/next-number?{urlencode({'prefix':prefix})}")["account_number"]
@@ -93,6 +95,11 @@ class ApiClient:
     def delete_opening_voucher(self,entry_id): return self.request("DELETE",f"/api/opening-vouchers/{entry_id}")
     def journal_voucher(self,entry_id): return self.request("GET",f"/api/journal-vouchers/{entry_id}")
     def save_journal_voucher(self,voucher,lines,entry_id=None): return self.request("PUT" if entry_id else "POST",f"/api/journal-vouchers/{entry_id}" if entry_id else "/api/journal-vouchers",{"voucher":voucher,"lines":lines})
+    def fixed_assets(self): return self.request("GET","/api/fixed-assets")["items"]
+    def asset_schedule(self,asset_id): return self.request("GET",f"/api/fixed-assets/{asset_id}/schedule")["items"]
+    def save_asset(self,item,asset_id=None): return self.request("PUT" if asset_id else "POST",f"/api/fixed-assets/{asset_id}" if asset_id else "/api/fixed-assets",item)["asset"]
+    def post_asset_period(self,asset_id,period_end): return self.request("POST",f"/api/fixed-assets/{asset_id}/post",{"period_end":period_end})["voucher"]
+    def delete_asset(self,asset_id): return self.request("DELETE",f"/api/fixed-assets/{asset_id}")
     def invoice_detail(self, invoice_id): return self.request("GET",f"/api/invoices/{invoice_id}/detail")
     def cancel_invoice(self, invoice_id, reason): return self.request("POST",f"/api/invoices/{invoice_id}/cancel",{"reason":reason})["invoice"]
     def duplicate_invoice(self, invoice_id): return self.request("POST",f"/api/invoices/{invoice_id}/duplicate",{})["invoice"]

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import tkinter as tk
+import calendar
+from collections import defaultdict
 from datetime import datetime
 from tkinter import messagebox, ttk
 
@@ -145,6 +147,9 @@ class DimensionsMixin:
         self.dimension_selectors(bar, self.budget_department, self.budget_project)
         tk.Button(bar, text="Load", command=self.load_budget, bg=GOLD, fg=NAVY, border=0, padx=14, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
         tk.Button(bar, text="Save Budget", command=self.save_budget, bg=NAVY, fg="white", border=0, padx=14, pady=6).pack(side="left", padx=3)
+        self.budget_projection_mode=tk.StringVar(value="Monthly")
+        ttk.Combobox(bar,textvariable=self.budget_projection_mode,values=["Monthly","Yearly"],state="readonly",width=9).pack(side="left",padx=3)
+        self.action_button(bar,"Project from Actual",self.project_budget).pack(side="left",padx=3)
         tools = tk.Frame(page, bg=LIGHT); tools.pack(fill="x", padx=10)
         self.action_button(tools, "Add Account", self.add_budget_line).pack(side="left", padx=(0, 3))
         tk.Button(tools, text="Delete Line", command=self.delete_budget_line, bg=RED, fg="white", border=0, padx=12, pady=7).pack(side="left", padx=3)
@@ -215,6 +220,40 @@ class DimensionsMixin:
         for line in lines: self.budget_sheet.insert(self.budget_row(line["account_code"], line["account_name"], line["annual"], line["months"]))
         if not lines: self.budget_sheet.insert(self.budget_row())
         self.update_budget_total()
+
+    def project_budget(self):
+        try: target_year,currency,_department,_project=self.budget_filters()
+        except Exception as exc: return messagebox.showerror("Budget Projection",str(exc))
+        source_year=int(self.current_fiscal_year)
+        if target_year<source_year or target_year>source_year+1:
+            return messagebox.showwarning("Budget Projection",f"Choose {source_year} or {source_year+1} as the budget year")
+        now=datetime.now(); last_month=min(12,now.month if source_year==now.year else 12)
+        if source_year==now.year: last_month=max(0,now.month-1)  # complete months only
+        if last_month<1: return messagebox.showwarning("Budget Projection","No complete actual month is available yet")
+        actual=defaultdict(dict); names={}
+        try:
+            for month in range(1,last_month+1):
+                last=calendar.monthrange(source_year,month)[1]
+                rows=self.client.profit_loss(f"{source_year}-{month:02d}-01",f"{source_year}-{month:02d}-{last:02d}",currency)
+                for row in rows:
+                    if row["type"] not in ("income","expense"): continue
+                    actual[row["code"]][month]=max(0,float(row["amount"])); names[row["code"]]=row["name_en"]
+        except Exception as exc: return messagebox.showerror("Budget Projection",str(exc))
+        if not actual: return messagebox.showwarning("Budget Projection","No posted income or expense data to project")
+        if self.budget_sheet.ordered() and not messagebox.askyesno("Budget Projection","Replace the current draft budget rows with the projection? Nothing is saved until you press Save Budget."):
+            return
+        self.budget_sheet.clear(); mode=self.budget_projection_mode.get()
+        for code,values in sorted(actual.items()):
+            average=sum(values.get(month,0) for month in range(1,last_month+1))/last_month
+            months=[]
+            for month in range(1,13):
+                if target_year==source_year and month<=last_month: amount=values.get(month,0)
+                elif mode=="Monthly" and month in values: amount=values[month]
+                else: amount=average
+                months.append(round(amount,2))
+            self.budget_sheet.insert(self.budget_row(code,names[code],round(sum(months),2),months))
+        self.update_budget_total()
+        messagebox.showinfo("Budget Projection",f"Draft based on {source_year} actual months 1–{last_month}. {mode} projection; review each account before saving.")
 
     def save_budget(self):
         try: year, currency, department, project = self.budget_filters()

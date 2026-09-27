@@ -423,9 +423,101 @@ class Stage3Mixin:
         expenses_outer, expenses = self.scrollable_page(nested)
         nested.add(purchases_outer, text="Purchase Invoice")
         nested.add(purchase_costs,text="Cost on Purchase")
+        assets_page=tk.Frame(nested,bg=LIGHT); nested.add(assets_page,text="Assets & Amortisation")
         nested.add(expenses_outer, text="Expenses")
         self.build_purchases_page(purchases_outer,purchase_totals,purchase_costs); self.build_expenses_page(expenses)
+        self.build_assets_page(assets_page)
         self.load_purchases(); self.load_expenses()
+
+    def build_assets_page(self,page):
+        self.asset_edit_id=None
+        defaults={"asset_code":"","name":"","acquired_on":self.fiscal_today(),"start_on":self.fiscal_today(),
+                  "currency":"USD","cost":"","residual":"0","useful_months":"60","frequency":"monthly",
+                  "asset_account":"","depreciation_account":"","accumulated_account":"","invoice_id":""}
+        self.asset_fields={key:tk.StringVar(value=value) for key,value in defaults.items()}
+        fields=tk.LabelFrame(page,text="Asset data entry",bg=LIGHT,padx=10,pady=8); fields.pack(fill="x",padx=8,pady=7)
+        layout=[[("Asset code","asset_code"),("Description","name"),("Currency","currency")],
+                [("Purchase date","acquired_on"),("Amortisation start","start_on"),("Cost","cost"),("Residual value","residual")],
+                [("Useful life (months)","useful_months"),("Post","frequency"),("Purchase invoice ID","invoice_id")],
+                [("Asset account","asset_account"),("Amortisation expense","depreciation_account"),("Accumulated amortisation","accumulated_account")]]
+        for row,items in enumerate(layout):
+            for index,(label,key) in enumerate(items):
+                column=index*2
+                tk.Label(fields,text=label,bg=LIGHT).grid(row=row,column=column,sticky="w",padx=4,pady=5)
+                if key in ("asset_account","depreciation_account","accumulated_account"):
+                    widget=self.account_search_box(fields,self.asset_fields[key],17)
+                elif key in ("acquired_on","start_on"): widget=self.date_entry(fields,self.asset_fields[key],12)
+                elif key in ("currency","frequency"):
+                    widget=ttk.Combobox(fields,textvariable=self.asset_fields[key],state="readonly",width=14,
+                        values=["USD","LBP","EUR","AED"] if key=="currency" else ["monthly","yearly"])
+                else: widget=tk.Entry(fields,textvariable=self.asset_fields[key],width=20)
+                widget.grid(row=row,column=column+1,sticky="ew",padx=(2,12),pady=5)
+                fields.grid_columnconfigure(column+1,weight=1)
+        actions=tk.Frame(page,bg=LIGHT); actions.pack(fill="x",padx=8,pady=4)
+        for label,command in (("New",self.new_asset),("Save",self.save_asset_entry),("Delete",self.delete_asset_entry),
+                              ("Post selected period",self.post_asset_period),("Refresh",self.load_assets)):
+            self.action_button(actions,label,command).pack(side="left",padx=3)
+        tk.Label(actions,text="Posted periods stay in the journal; review the schedule before posting.",bg=LIGHT,fg=MUTED).pack(side="left",padx=12)
+        lists=tk.Frame(page,bg=LIGHT); lists.pack(fill="both",expand=True,padx=8,pady=4)
+        self.asset_list=ttk.Treeview(lists,columns=("code","name","cost","currency","frequency"),show="headings",height=5)
+        for key,title,width in (("code","Asset",100),("name","Description",260),("cost","Cost",105),("currency","Currency",75),("frequency","Post",90)):
+            self.asset_list.heading(key,text=title); self.asset_list.column(key,width=width,stretch=key=="name")
+        self.asset_list.pack(fill="x"); self.asset_list.bind("<<TreeviewSelect>>",lambda _e:self.select_asset())
+        self.asset_schedule_tree=ttk.Treeview(lists,columns=("date","amount","accumulated","net","status"),show="headings")
+        for key,title,width in (("date","Period end",120),("amount","Amortisation",130),("accumulated","Accumulated",130),("net","Net book value",130),("status","Status",85)):
+            self.asset_schedule_tree.heading(key,text=title); self.asset_schedule_tree.column(key,width=width)
+        self.asset_schedule_tree.pack(fill="both",expand=True,pady=(8,0))
+        self.load_assets()
+
+    def new_asset(self):
+        self.asset_edit_id=None
+        for key,var in self.asset_fields.items():
+            var.set({"acquired_on":self.fiscal_today(),"start_on":self.fiscal_today(),"currency":"USD","residual":"0",
+                     "useful_months":"60","frequency":"monthly"}.get(key,""))
+        self.asset_schedule_tree.delete(*self.asset_schedule_tree.get_children())
+
+    def load_assets(self):
+        try: self.asset_rows=self.client.fixed_assets()
+        except Exception as exc: return messagebox.showerror("Assets",str(exc))
+        self.asset_list.delete(*self.asset_list.get_children())
+        for asset in self.asset_rows:
+            self.asset_list.insert("","end",iid=str(asset["id"]),values=(asset["asset_code"],asset["name"],asset["cost"],asset["currency"],asset["frequency"]))
+
+    def select_asset(self):
+        selected=self.asset_list.selection()
+        if not selected: return
+        self.asset_edit_id=int(selected[0]); asset=next(row for row in self.asset_rows if row["id"]==self.asset_edit_id)
+        for key,var in self.asset_fields.items():
+            value=asset.get(key) or ""
+            var.set(_dd(value) if key in ("acquired_on","start_on") and value else str(value))
+        self.asset_schedule_tree.delete(*self.asset_schedule_tree.get_children())
+        try: rows=self.client.asset_schedule(self.asset_edit_id)
+        except Exception as exc: return messagebox.showerror("Assets",str(exc))
+        for row in rows: self.asset_schedule_tree.insert("","end",iid=row["period_end"],values=(_dd(row["period_end"]),row["amount"],row["accumulated"],row["net_book_value"],"Posted" if row["posted"] else "Draft"))
+
+    def save_asset_entry(self):
+        payload={key:var.get().strip() for key,var in self.asset_fields.items()}
+        if not payload["invoice_id"]: payload["invoice_id"]=None
+        try: asset=self.client.save_asset(payload,self.asset_edit_id)
+        except Exception as exc: return messagebox.showerror("Assets",str(exc))
+        self.load_assets(); self.asset_list.selection_set(str(asset["id"])); self.select_asset()
+        messagebox.showinfo("Assets",f"Asset {asset['asset_code']} saved")
+
+    def delete_asset_entry(self):
+        if not self.asset_edit_id: return messagebox.showwarning("Assets","Select an asset first")
+        if not messagebox.askyesno("Assets","Delete this unposted asset from the register?"): return
+        try: self.client.delete_asset(self.asset_edit_id)
+        except Exception as exc: return messagebox.showerror("Assets",str(exc))
+        self.new_asset(); self.load_assets()
+
+    def post_asset_period(self):
+        selected=self.asset_schedule_tree.selection()
+        if not self.asset_edit_id or not selected: return messagebox.showwarning("Assets","Select an asset and an amortisation period")
+        period=selected[0]
+        if not messagebox.askyesno("Assets",f"Post amortisation for {period} to the journal?"): return
+        try: self.client.post_asset_period(self.asset_edit_id,period)
+        except Exception as exc: return messagebox.showerror("Assets",str(exc))
+        self.select_asset(); self.load_journal(); self.load_trial()
 
     # ---- purchases
     def build_purchases_page(self, page, totals_parent=None, cost_parent=None):

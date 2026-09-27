@@ -414,6 +414,8 @@ class Database:
             if "voucher_type" not in entry_columns: db.execute("ALTER TABLE journal_entries ADD COLUMN voucher_type TEXT NOT NULL DEFAULT '01'")
             import inventory
             inventory.migrate(db)
+            import fixed_assets
+            fixed_assets.migrate(db)
             import chart_extra
             chart_extra.ensure_accounts(db)
             item_cols={row["name"] for row in db.execute("PRAGMA table_info(invoice_items)")}
@@ -1068,6 +1070,15 @@ class Database:
             if not code or min(debit,credit)<0 or (debit>0 and credit>0) or (debit==0 and credit==0): raise ValueError(f"Line {index}: choose an account and enter either Debit or Credit")
             normalized.append((code,str(line.get("description") or "").strip(),debit,credit,extra,line)); total_debit+=debit; total_credit+=credit
         if abs(total_debit-total_credit)>=Decimal("0.005"): raise ValueError(f"Journal Voucher is unbalanced. Debit {total_debit}; Credit {total_credit}; Remaining {abs(total_debit-total_credit)}")
+        if voucher_type=="07":
+            from chart_extra import EXCHANGE_GAIN_ACCOUNT, EXCHANGE_LOSS_ACCOUNT
+            affected=[(code,debit,credit) for code,_desc,debit,credit,_extra,_raw in normalized if code.startswith(("4","5"))]
+            offsets=[(code,debit,credit) for code,_desc,debit,credit,_extra,_raw in normalized if code in (EXCHANGE_GAIN_ACCOUNT,EXCHANGE_LOSS_ACCOUNT)]
+            if len(normalized)!=2 or len(affected)!=1 or len(offsets)!=1:
+                raise ValueError("DOE needs one class 4 or 5 account and one exchange gain (7751) or loss (6751) account")
+            code,debit,credit=offsets[0]
+            if (code==EXCHANGE_GAIN_ACCOUNT and not credit) or (code==EXCHANGE_LOSS_ACCOUNT and not debit):
+                raise ValueError("DOE gains credit 7751 and losses debit 6751")
         with self.connect() as db:
             branch_id=self._branch_id(db,item)
             if entry_id:
@@ -2061,8 +2072,9 @@ class Database:
         parameters.append(int(limit))
         with self.connect() as db:
             rows = [dict(row) for row in db.execute(f"""SELECT e.id entry_id,e.entry_number,e.entry_date,
-                e.description,e.source_type,e.source_id,e.currency,e.branch_id,COALESCE(b.name,'Head Office') branch_name,a.code account_code,a.name_en account_name,
+                e.description,e.source_type,e.source_id,e.voucher_type,e.currency,e.branch_id,COALESCE(b.name,'Head Office') branch_name,a.code account_code,a.name_en account_name,
                 CASE WHEN e.source_type='payroll' THEN 'Payroll' WHEN e.source_type='expense' THEN 'Expenses'
+                     WHEN e.source_type='journal_voucher' AND e.voucher_type='07' THEN 'DOE'
                      WHEN e.source_type='journal_voucher' THEN 'Journal Vouchers' WHEN e.source_type IN ('opening','year_close') THEN 'Opening / Closing'
                      WHEN e.source_type='invoice' AND i.kind='sale' THEN 'Sales'
                      WHEN e.source_type='invoice' AND COALESCE(i.entry_type,i.kind)='expenses' THEN 'Expenses'
@@ -2194,14 +2206,17 @@ class Database:
     def aging_report(self,as_of_date=None,kind=None,currency=None):
         as_of=datetime.now().date()
         if as_of_date:
+            parsed=False
             for pattern in ("%Y-%m-%d","%d-%m-%Y"):
-                try: as_of=datetime.strptime(as_of_date,pattern).date(); break
+                try: as_of=datetime.strptime(as_of_date,pattern).date(); parsed=True; break
                 except ValueError: pass
-        conditions=["i.status='posted'","CAST(i.total AS REAL)>CAST(i.amount_paid AS REAL)"] ; parameters=[]
+            if not parsed: raise ValueError("As of Date must be DD-MM-YYYY")
+        invoice_day="CASE WHEN i.invoice_date GLOB '??-??-????' THEN substr(i.invoice_date,7,4)||'-'||substr(i.invoice_date,4,2)||'-'||substr(i.invoice_date,1,2) ELSE i.invoice_date END"
+        conditions=["i.status='posted'","CAST(i.total AS REAL)>CAST(i.amount_paid AS REAL)",f"{invoice_day}<=?"] ; parameters=[as_of.isoformat()]
         if kind in ("sale","purchase"): conditions.append("i.kind=?"); parameters.append(kind)
         if currency: conditions.append("i.currency=?"); parameters.append(currency)
         with self.connect() as db:
-            rows=[dict(row) for row in db.execute(f"""SELECT i.id,i.invoice_number,i.invoice_date,i.due_date,i.kind,i.currency,p.name party_name,
+            rows=[dict(row) for row in db.execute(f"""SELECT i.id,i.invoice_number,i.invoice_date,i.due_date,i.kind,i.currency,p.name party_name,p.account_number,
                 CAST(i.total AS REAL)-CAST(i.amount_paid AS REAL) outstanding FROM invoices i LEFT JOIN parties p ON p.id=i.party_id
                 WHERE {' AND '.join(conditions)} ORDER BY p.name,i.due_date,i.invoice_date""",parameters)]
         for row in rows:
