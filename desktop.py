@@ -345,7 +345,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                 for row in range(8): tab_nav.grid_rowconfigure(row,weight=0,uniform="")
                 for column in range(columns): tab_nav.grid_columnconfigure(column,weight=1,uniform="main_tabs")
                 for index,button in enumerate(nav_buttons):
-                    button.grid(row=index//columns,column=index%columns,sticky="nsew",padx=1,pady=0)
+                    button.grid(row=index//columns,column=index%columns,sticky="nsew",padx=4,pady=3)
             nav_canvas.itemconfigure(nav_window,width=max(nav_canvas.winfo_width(),tab_nav.winfo_reqwidth()))
             nav_canvas.configure(height=max(56,tab_nav.winfo_reqheight()+2),scrollregion=nav_canvas.bbox("all"))
             if tab_nav.winfo_reqwidth()>nav_canvas.winfo_width()+1:
