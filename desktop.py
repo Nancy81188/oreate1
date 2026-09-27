@@ -84,7 +84,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.3")
+        self.title("Saber Accounting 2.9.4")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -344,6 +344,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                 for column in range(8): tab_nav.grid_columnconfigure(column,weight=0,uniform="")
                 for row in range(8): tab_nav.grid_rowconfigure(row,weight=0,uniform="")
                 for column in range(columns): tab_nav.grid_columnconfigure(column,weight=1,uniform="main_tabs")
+                for row in range((len(nav_buttons)+columns-1)//columns):
+                    tab_nav.grid_rowconfigure(row,weight=1,uniform="main_tab_rows")
                 for index,button in enumerate(nav_buttons):
                     button.grid(row=index//columns,column=index%columns,sticky="nsew",padx=4,pady=3)
             nav_canvas.itemconfigure(nav_window,width=max(nav_canvas.winfo_width(),tab_nav.winfo_reqwidth()))
