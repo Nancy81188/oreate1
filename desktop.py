@@ -83,9 +83,10 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.8.2")
-        self.geometry("1180x720")
-        self.minsize(940, 600)
+        self.title("Saber Accounting 2.9.1")
+        screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
+        self.minsize(min(760, screen_width), min(480, screen_height))
         if sys.platform == "win32":
             try: self.state("zoomed")
             except tk.TclError: pass
@@ -320,7 +321,15 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.alerts_button.pack(side="right",padx=5)
         tk.Label(top,text=f'{getattr(self,"current_company",{}).get("name","")} · {getattr(self,"current_fiscal_year","")}',bg=NAVY,fg="white",font=("Segoe UI",9,"bold")).pack(side="right",padx=8)
         self.status_bar()
-        tab_nav=tk.Frame(self,bg=LIGHT); tab_nav.pack(fill="x",padx=18,pady=(4,0))
+        nav_outer=tk.Frame(self,bg=LIGHT); nav_outer.pack(fill="x",padx=8,pady=(4,0))
+        nav_canvas=tk.Canvas(nav_outer,bg=LIGHT,highlightthickness=0,height=56)
+        nav_canvas.pack(side="top",fill="x",expand=True)
+        nav_scroll=ttk.Scrollbar(nav_outer,orient="horizontal",command=nav_canvas.xview)
+        nav_scroll.pack(side="bottom",fill="x")
+        nav_canvas.configure(xscrollcommand=nav_scroll.set)
+        tab_nav=tk.Frame(nav_canvas,bg=LIGHT)
+        nav_canvas.create_window((0,0),window=tab_nav,anchor="nw")
+        tab_nav.bind("<Configure>",lambda _event:nav_canvas.configure(scrollregion=nav_canvas.bbox("all")))
         ttk.Style(self).layout("Tabless.TNotebook.Tab",[])
         notebook=ttk.Notebook(self,style="Tabless.TNotebook"); self.main_notebook=notebook
         filter_bar=tk.Frame(self,bg=LIGHT); filter_bar.pack(fill="x",padx=28)
@@ -333,7 +342,23 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             ("statement_tab",tr(lang,"statement_account")),("accounts_tab",tr(lang,"chart_accounts")),("settings_tab",tr(lang,"security_backup_rates"))]
         self.main_tab_pages=[]
         for attribute,name in pages:
-            frame=tk.Frame(notebook,bg=LIGHT); setattr(self,attribute,frame); notebook.add(frame,text=name); self.main_tab_pages.append(frame)
+            container=tk.Frame(notebook,bg=LIGHT)
+            canvas=tk.Canvas(container,bg=LIGHT,highlightthickness=0)
+            vertical=ttk.Scrollbar(container,orient="vertical",command=canvas.yview)
+            horizontal=ttk.Scrollbar(container,orient="horizontal",command=canvas.xview)
+            canvas.configure(yscrollcommand=vertical.set,xscrollcommand=horizontal.set)
+            vertical.pack(side="right",fill="y")
+            horizontal.pack(side="bottom",fill="x")
+            canvas.pack(side="left",fill="both",expand=True)
+            frame=tk.Frame(canvas,bg=LIGHT)
+            item=canvas.create_window((0,0),window=frame,anchor="nw")
+            def resize_page(_event=None, *, page=frame, view=canvas, window=item):
+                view.itemconfigure(window,width=max(view.winfo_width(),page.winfo_reqwidth()),
+                                   height=max(view.winfo_height(),page.winfo_reqheight()))
+                view.configure(scrollregion=view.bbox("all"))
+            frame.bind("<Configure>",resize_page)
+            canvas.bind("<Configure>",resize_page)
+            setattr(self,attribute,frame); notebook.add(container,text=name); self.main_tab_pages.append(container)
         self.tab_names=[notebook.tab(tab,"text") for tab in notebook.tabs()]
         self.tab_choice=tk.StringVar(value=self.tab_names[0])
         self.tab_buttons=[]; per_row=(len(self.main_tab_pages)+1)//2
