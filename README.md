@@ -2,7 +2,7 @@
 
 ## Version 2.9.3 (Navigation and invoice controls alignment)
 
-- The two navigation rows stretch across the application window, with horizontal scrolling when the window is narrower than the tabs.
+- The navigation tabs stretch across the application window and automatically wrap into more rows as the window gets narrower; horizontal scrolling remains available on exceptionally narrow windows.
 - On Uploaded Data, the Branch selector and both rows of invoice action buttons begin at the left edge below the table.
 
 ## Version 2.9.2 (Payroll registration worksheet)
