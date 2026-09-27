@@ -183,6 +183,8 @@ class ApiClient:
     def payroll_report(self,report,period_type,year,index=1,group="both",include_drafts=False):
         query=urlencode({"report":report,"period_type":period_type,"year":year,"index":index,"group":group,"include_drafts":"true" if include_drafts else "false"})
         return self.request("GET",f"/api/payroll/reports?{query}")
+    def nssf_filed_wages(self,year): return self.request("GET",f"/api/payroll/nssf-filed?{urlencode({'year':year})}")["items"]
+    def save_nssf_filed_wages(self,item): return self.request("POST","/api/payroll/nssf-filed",item)["item"]
     def vat_return(self,year,quarter,currency=None,include_review=False,credit_brought_forward=None,refund_requested=None):
         query=urlencode({k:v for k,v in {"year":year,"quarter":quarter,"currency":currency,"include_review":"true" if include_review else "false",
             "credit_brought_forward":credit_brought_forward,"refund_requested":refund_requested}.items() if v not in (None,"")})
@@ -262,4 +264,3 @@ class ApiClient:
     def bank_lines(self,account,currency,date_from,date_to,balance=None):
         return self.request("GET","/api/bank/lines?"+urlencode({k:v for k,v in {"account":account,"currency":currency,"from":date_from,"to":date_to,"balance":balance}.items() if v not in (None,"")}))
     def bank_action(self,action,item): return self.request("POST",f"/api/bank/{action}",item)
-
