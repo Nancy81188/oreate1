@@ -1810,7 +1810,10 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def download_payroll_form(self,form):
         official={"R3":"https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf",
-                  "R3-1":"https://www.finance.gov.lb/en-us/Taxation/Na/DASS1/%D8%B13-1.pdf"}
+                  "R3-1":"https://www.finance.gov.lb/en-us/Taxation/Na/DASS1/%D8%B13-1.pdf",
+                  "NSSF-DUE":"https://drive.google.com/uc?export=download&id=1ZwZR6kFj19KPbtALttm8U6Ji3ICJUjGB",
+                  "NSSF-SETTLEMENT":"https://drive.google.com/uc?export=download&id=14eHUtHDblW9mE_4Vs82PmRrmbMGGSEKg",
+                  "NSSF-ANNUAL":"https://drive.google.com/uc?export=download&id=1TNwLlioahMJLaiX3ma6PPYqrgbHm07f_"}
         if form not in official: raise ValueError("Unknown payroll form")
         target=filedialog.asksaveasfilename(title=f"Save official {form} form",defaultextension=".pdf",
             initialfile=f"Lebanon_MOF_{form}.pdf",filetypes=[("PDF files","*.pdf")])
@@ -1820,7 +1823,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             if not content.startswith(b"%PDF"): raise ValueError("The Ministry site did not return a PDF")
             Path(target).write_bytes(content)
         except Exception as exc: return messagebox.showerror(f"Official {form}",f"Could not download the form: {exc}")
-        messagebox.showinfo(f"Official {form}",f"Official blank form saved to {target}")
+        note=("\nCheck the preprinted rates against the period's NSSF settings before using this blank form."
+              if form.startswith("NSSF") else "")
+        messagebox.showinfo(f"Official {form}",f"Official blank form saved to {target}{note}")
 
     def load_payroll(self):
         if not hasattr(self,"employee_tree"): return
