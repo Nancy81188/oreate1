@@ -264,3 +264,30 @@ REPORTS = {"receivables": lambda db, o: ageing(db, {**o, "side": "receivables"})
 def build(db, report, options):
     if report not in REPORTS: raise ValueError("Unknown report")
     return REPORTS[report](db, dict(options or {}))
+
+
+def dashboard_charts(db, options):
+    """Data for the dashboard charts: sales vs purchases by month, receivables by age, top 5 clients, cash and bank."""
+    year = int(options.get("year") or datetime.now().year); convert = _Converter(db, options.get("basis")); basis = convert.basis
+    start, end = f"{year}-01-01", f"{year}-12-31"; months = [[ZERO, ZERO] for _ in range(12)]
+    for index, kind in enumerate(("sale", "purchase")):
+        for invoice in _documents(db, kind, start, end, {}):
+            months[int(invoice["iso_date"][5:7]) - 1][index] += convert(_d(invoice["subtotal"]) * invoice["sign"], invoice["currency"], invoice["iso_date"])
+    with db.connect() as connection: expenses = [dict(r) for r in connection.execute("SELECT expense_date,currency,with_vat_subtotal,without_vat_subtotal FROM expenses")]
+    for e in expenses:
+        try: day = iso_date(e["expense_date"])
+        except ValueError: continue
+        if start <= day <= end: months[int(day[5:7]) - 1][1] += convert(_d(e["with_vat_subtotal"]) + _d(e["without_vat_subtotal"]), e["currency"], day)
+    receivables = ageing(db, {"side": "receivables", "date_to": options.get("as_of") or datetime.now().strftime("%d-%m-%Y"), "basis": basis, "detail": False})
+    buckets = [[row[0], float(row[1])] for row in receivables["sections"][0]["rows"][:6]]
+    top = top_parties(db, {"side": "clients", "date_from": f"01-01-{year}", "date_to": f"31-12-{year}", "basis": basis, "top": 5})["sections"][0]["rows"]
+    top = [[row[1], float(row[5])] for row in top if row[0] != ""]
+    from ledger_reports import _load_lines, _digits
+    cash = {}
+    column = basis if basis in ("USD", "LBP") else "USD"
+    for line in _load_lines(db, {"posting_status": "posted"}):
+        code = _digits(line["code"])
+        if code.startswith(("51", "53")) and line["iso_date"] <= end: cash[line["code"]] = cash.get(line["code"], ZERO) + line["signed"][column]
+    return {"basis": basis, "year": year, "months": [[calendar.month_abbr[i + 1], float(m[0]), float(m[1])] for i, m in enumerate(months)],
+            "receivables": buckets, "top_clients": top, "cash": sorted([[code, float(v)] for code, v in cash.items() if abs(v) >= Decimal("0.01")], key=lambda x: -abs(x[1]))[:6]}
+

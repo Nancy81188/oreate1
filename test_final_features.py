@@ -915,6 +915,33 @@ class NewCurrencyTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not set up"): vat_return.add_adjustment(db, {"year": 2026, "quarter": 1, "adjustment_type": "output", "currency": "XYZ", "amount": "5", "reason": "test"}, user)
         folder.cleanup()
 
+class BankReconciliationTest(unittest.TestCase):
+    def test_import_match_post_and_difference(self):
+        import bank_rec, business_reports
+        from openpyxl import Workbook
+        folder = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); db, user = new_db(folder.name)
+        client = db.save_party({"kind": "customer", "name": "Client A", "account_category": "client"}, user)
+        supplier = db.save_party({"kind": "supplier", "name": "Sup", "account_category": "supplier"}, user)
+        db.add_payment({"kind": "customer_receipt", "party_id": client["id"], "payment_date": "05-03-2026", "currency": "USD", "amount": "1000", "cash_account": "512"}, user)
+        db.add_payment({"kind": "supplier_payment", "party_id": supplier["id"], "payment_date": "10-03-2026", "currency": "USD", "amount": "400", "cash_account": "512"}, user)
+        db.add_payment({"kind": "customer_receipt", "party_id": client["id"], "payment_date": "30-03-2026", "currency": "USD", "amount": "250", "cash_account": "512"}, user)
+        book = Workbook(); sheet = book.active; sheet.append(["Date", "Description", "Reference", "Debit", "Credit"])
+        for row in (["06-03-2026", "Transfer Client A", "TRF1", None, 1000], ["12-03-2026", "Cheque 101", "101", 400, None], ["31-03-2026", "Bank charges", "", 15, None]): sheet.append(row)
+        path = Path(folder.name) / "statement.xlsx"; book.save(path)
+        rows = bank_rec.read_statement_file(path); self.assertEqual([float(r["amount"]) for r in rows], [1000, -400, -15])
+        self.assertEqual(bank_rec.add_statement_lines(db, "512", "USD", rows, user), 3)
+        self.assertEqual(bank_rec.auto_match(db, "512", "USD", "2026-03-01", "2026-03-31"), 2)
+        report = bank_rec.reconciliation(db, "512", "USD", "2026-03-01", "2026-03-31", "585")
+        self.assertEqual((report["book_balance"], report["expected"], report["difference"]), (850, 585, 0))  # 850 - 250 not yet at the bank - 15 charges
+        charges = next(l for l in bank_rec.statement_lines(db, "512", "2026-03-01", "2026-03-31") if not l["journal_line_id"])
+        self.assertTrue(bank_rec.post_statement_line(db, charges["id"], "6739", user).startswith("JV-"))
+        after = bank_rec.reconciliation(db, "512", "USD", "2026-03-01", "2026-03-31", "585")
+        self.assertEqual((after["book_balance"], after["matched"], after["difference"]), (835, 3, 0))
+        with self.assertRaisesRegex(ValueError, "bank or cash"): bank_rec.add_statement_lines(db, "4111", "USD", rows, user)
+        charts = business_reports.dashboard_charts(db, {"year": 2026})
+        self.assertEqual(charts["cash"][0], ["512", 835.0]); self.assertEqual(len(charts["months"]), 12)
+        folder.cleanup()
+
 class StandaloneEndToEndTest(unittest.TestCase):
     """Runs the embedded data service exactly as the installed app does and drives it through the API."""
 

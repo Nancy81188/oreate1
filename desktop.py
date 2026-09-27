@@ -503,6 +503,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.dashboard_cards=tk.Frame(self.dashboard_tab,bg=LIGHT); self.dashboard_cards.pack(fill="x",padx=12)
         self.dashboard_chart=tk.Canvas(self.dashboard_tab,height=105,bg="white",highlightthickness=0)
         self.dashboard_chart.pack(fill="x",padx=12,pady=(8,4))
+        self.build_dashboard_charts(self.dashboard_tab)
         self.load_dashboard()
 
     def load_dashboard(self):
@@ -527,6 +528,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             for col in range(4): card.grid_columnconfigure(col,weight=1)
         for col in range(2): self.dashboard_cards.grid_columnconfigure(col,weight=1)
         self.draw_dashboard_chart([r for r in data.get("monthly",[]) if selected=="All Currencies" or r["currency"]==selected])
+        self.load_dashboard_charts()
 
     def draw_dashboard_chart(self,rows):
         canvas=self.dashboard_chart; canvas.delete("all"); canvas.update_idletasks(); width=max(canvas.winfo_width(),700); height=100

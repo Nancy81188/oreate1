@@ -186,6 +186,7 @@ class Stage3Mixin:
         self.payment_forms = {}
         for kind, title in (("customer_receipt", "Add Customer Receipt"), ("supplier_payment", "Add Supplier Payment")):
             page = tk.Frame(nested, bg=LIGHT); nested.add(page, text=title); self.payment_forms[kind] = self.build_payment_form(page, kind)
+        bank_page = tk.Frame(nested, bg=LIGHT); nested.add(bank_page, text="Bank Reconciliation"); self.build_bank_rec_page(bank_page)
         self.load_transactions()
 
     def build_payment_form(self, page, kind):

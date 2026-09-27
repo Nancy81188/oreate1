@@ -414,6 +414,8 @@ class Database:
             if "voucher_type" not in entry_columns: db.execute("ALTER TABLE journal_entries ADD COLUMN voucher_type TEXT NOT NULL DEFAULT '01'")
             import inventory
             inventory.migrate(db)
+            import bank_rec
+            bank_rec.migrate(db)
             import chart_extra
             chart_extra.ensure_accounts(db)
             item_cols={row["name"] for row in db.execute("PRAGMA table_info(invoice_items)")}

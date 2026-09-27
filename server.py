@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from database import Database
+from database import Database, iso_date
 from company_manager import CompanyManager
 from payroll_reports import build_payroll_report, json_ready as payroll_json
 import ledger_reports
@@ -143,6 +143,18 @@ class ApiHandler(BaseHTTPRequestHandler):
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path.startswith("/api/payments/") and path.endswith("/allocations"):
             try: return self._json(200,{"items":self.db.payment_allocations(int(path.split("/")[-2]))})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
+        if path == "/api/reports/dashboard-charts":
+            try:
+                import business_reports
+                return self._json(200,business_reports.dashboard_charts(self.db,{"year":self._query(parsed,"year"),"basis":self._query(parsed,"basis","USD")}))
+            except Exception as exc: return self._json(400,{"error":str(exc)})
+        if path == "/api/bank/lines":
+            try:
+                import bank_rec
+                account=self._query(parsed,"account",""); currency=self._query(parsed,"currency","USD"); start=iso_date(self._query(parsed,"from")); end=iso_date(self._query(parsed,"to"))
+                return self._json(200,ledger_reports.json_ready({"statement":bank_rec.statement_lines(self.db,account,start,end),"books":bank_rec.book_lines(self.db,account,currency,start,end),
+                    "report":bank_rec.reconciliation(self.db,account,currency,start,end,self._query(parsed,"balance"))}))
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/reports/business":
             try:
@@ -387,6 +399,18 @@ class ApiHandler(BaseHTTPRequestHandler):
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path.startswith("/api/payments/") and path.endswith("/allocations"):
             try: return self._json(200,{"items":self.db.save_allocations(int(path.split("/")[-2]),body.get("allocations",[]),user["id"])})
+            except KeyError as exc: return self._json(404,{"error":str(exc).strip("'")})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
+        if path.startswith("/api/bank/"):
+            try:
+                import bank_rec
+                action=path.rsplit("/",1)[-1]
+                if action=="import": return self._json(201,{"added":bank_rec.add_statement_lines(self.db,body.get("account"),body.get("currency"),body.get("rows",[]),user["id"])})
+                if action=="auto-match": return self._json(200,{"matched":bank_rec.auto_match(self.db,body.get("account"),body.get("currency"),iso_date(body.get("from")),iso_date(body.get("to")),int(body.get("days") or 5))})
+                if action=="match": return self._json(200,{"ok":bank_rec.match(self.db,body.get("statement_id"),body.get("journal_line_id"))})
+                if action=="unmatch": return self._json(200,{"ok":bank_rec.unmatch(self.db,body.get("statement_id"))})
+                if action=="delete": return self._json(200,{"ok":bank_rec.delete_statement_line(self.db,body.get("statement_id"))})
+                if action=="post": return self._json(201,{"voucher":bank_rec.post_statement_line(self.db,body.get("statement_id"),body.get("account_code"),user["id"])})
             except KeyError as exc: return self._json(404,{"error":str(exc).strip("'")})
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path in ("/api/departments","/api/projects","/api/budgets"):
