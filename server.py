@@ -100,6 +100,9 @@ class ApiHandler(BaseHTTPRequestHandler):
                     self._query(parsed,"include_drafts","false").lower()=="true")
             except Exception as exc: return self._json(400,{"error":str(exc)})
             return self._json(200,payroll_json(result))
+        if path == "/api/payroll/nssf-filed":
+            try: return self._json(200,{"items":self.db.nssf_filed_wages(self._query(parsed,"year",""))})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/reports/accounts":
             try:
                 options=json.loads(self._query(parsed,"options","{}") or "{}")
@@ -534,6 +537,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             except KeyError: return self._json(404,{"error":"Payroll record not found"})
             except Exception as exc: return self._json(400,{"error":str(exc)})
             return self._json(200,{"payroll":result})
+        if path == "/api/payroll/nssf-filed":
+            try: return self._json(201,{"item":self.db.save_nssf_filed_wages(body,user["id"])})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/payroll/nssf-payment":
             try: return self._json(201,self.db.record_nssf_payment(body,user["id"]))
             except Exception as exc: return self._json(400,{"error":str(exc)})
