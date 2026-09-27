@@ -417,11 +417,13 @@ class Stage3Mixin:
     # ================================================================ Purchases & Expenses
     def build_purchases_expenses(self):
         nested = ttk.Notebook(self.purchases_tab); nested.pack(fill="both", expand=True, padx=8, pady=8)
+        self.purchase_notebook=nested
         purchases_outer=tk.Frame(nested,bg=LIGHT)
         purchase_totals=tk.Frame(purchases_outer,bg=LIGHT); purchase_totals.pack(side="bottom",fill="x")
         purchase_costs=tk.Frame(nested,bg=LIGHT)
         expenses_outer, expenses = self.scrollable_page(nested)
         nested.add(purchases_outer, text="Purchase Invoice")
+        self.purchase_invoice_page=purchases_outer
         nested.add(purchase_costs,text="Cost on Purchase")
         assets_page=tk.Frame(nested,bg=LIGHT); nested.add(assets_page,text="Assets & Amortisation")
         nested.add(expenses_outer, text="Expenses")
@@ -435,13 +437,17 @@ class Stage3Mixin:
                   "currency":"USD","cost":"","residual":"0","useful_months":"60","frequency":"monthly",
                   "asset_account":"","depreciation_account":"","accumulated_account":"","invoice_id":""}
         self.asset_fields={key:tk.StringVar(value=value) for key,value in defaults.items()}
-        fields=tk.LabelFrame(page,text="Asset data entry",bg=LIGHT,padx=10,pady=8); fields.pack(fill="x",padx=8,pady=7)
-        layout=[[("Asset code","asset_code"),("Description","name"),("Currency","currency")],
-                [("Purchase date","acquired_on"),("Amortisation start","start_on"),("Cost","cost"),("Residual value","residual")],
-                [("Useful life (months)","useful_months"),("Post","frequency"),("Purchase invoice ID","invoice_id")],
-                [("Asset account","asset_account"),("Amortisation expense","depreciation_account"),("Accumulated amortisation","accumulated_account")]]
-        for row,items in enumerate(layout):
-            for index,(label,key) in enumerate(items):
+        self.asset_rate=tk.StringVar(value="20")
+        sections=[("1. Purchase details",[[ ("Asset code","asset_code"),("Description","name"),("Currency","currency")],
+            [("Purchase date","acquired_on"),("Purchase value","cost"),("Purchase invoice ID","invoice_id")],
+            [("Asset account","asset_account")]]),
+            ("2. Amortisation settings",[[ ("Amortisation start","start_on"),("Residual value","residual"),("Annual rate %","rate")],
+            [("Useful life (months)","useful_months"),("Post","frequency")],
+            [("Amortisation expense","depreciation_account"),("Accumulated amortisation","accumulated_account")]])]
+        for title,layout in sections:
+            fields=tk.LabelFrame(page,text=title,bg=LIGHT,padx=10,pady=5); fields.pack(fill="x",padx=8,pady=(4,0))
+            for row,items in enumerate(layout):
+              for index,(label,key) in enumerate(items):
                 column=index*2
                 tk.Label(fields,text=label,bg=LIGHT).grid(row=row,column=column,sticky="w",padx=4,pady=5)
                 if key in ("asset_account","depreciation_account","accumulated_account"):
@@ -450,17 +456,21 @@ class Stage3Mixin:
                 elif key in ("currency","frequency"):
                     widget=ttk.Combobox(fields,textvariable=self.asset_fields[key],state="readonly",width=14,
                         values=["USD","LBP","EUR","AED"] if key=="currency" else ["monthly","yearly"])
+                elif key=="rate": widget=tk.Entry(fields,textvariable=self.asset_rate,width=12)
                 else: widget=tk.Entry(fields,textvariable=self.asset_fields[key],width=20)
                 widget.grid(row=row,column=column+1,sticky="ew",padx=(2,12),pady=5)
                 fields.grid_columnconfigure(column+1,weight=1)
+        self.asset_rate.trace_add("write",self.asset_rate_changed)
         actions=tk.Frame(page,bg=LIGHT); actions.pack(fill="x",padx=8,pady=4)
+        self.action_button(actions,"Record Asset Purchase",self.open_asset_purchase).pack(side="left",padx=3)
         for label,command in (("New",self.new_asset),("Save",self.save_asset_entry),("Delete",self.delete_asset_entry),
                               ("Post selected period",self.post_asset_period),("Refresh",self.load_assets)):
             self.action_button(actions,label,command).pack(side="left",padx=3)
         tk.Label(actions,text="Posted periods stay in the journal; review the schedule before posting.",bg=LIGHT,fg=MUTED).pack(side="left",padx=12)
         lists=tk.Frame(page,bg=LIGHT); lists.pack(fill="both",expand=True,padx=8,pady=4)
-        self.asset_list=ttk.Treeview(lists,columns=("code","name","cost","currency","frequency"),show="headings",height=5)
-        for key,title,width in (("code","Asset",100),("name","Description",260),("cost","Cost",105),("currency","Currency",75),("frequency","Post",90)):
+        self.asset_list=ttk.Treeview(lists,columns=("code","name","purchase","cost","currency","previous","yearly","cumulative","net"),show="headings",height=5)
+        for key,title,width in (("code","Asset",90),("name","Description",150),("purchase","Purchase date",105),("cost","Purchase value",100),("currency","Currency",70),
+                                ("previous","Old amort.",100),("yearly","Yearly amort.",105),("cumulative","Cumulative amort.",120),("net","Net value",100)):
             self.asset_list.heading(key,text=title); self.asset_list.column(key,width=width,stretch=key=="name")
         self.asset_list.pack(fill="x"); self.asset_list.bind("<<TreeviewSelect>>",lambda _e:self.select_asset())
         self.asset_schedule_tree=ttk.Treeview(lists,columns=("date","amount","accumulated","net","status"),show="headings")
@@ -471,6 +481,7 @@ class Stage3Mixin:
 
     def new_asset(self):
         self.asset_edit_id=None
+        self.asset_rate.set("20")
         for key,var in self.asset_fields.items():
             var.set({"acquired_on":self.fiscal_today(),"start_on":self.fiscal_today(),"currency":"USD","residual":"0",
                      "useful_months":"60","frequency":"monthly"}.get(key,""))
@@ -480,8 +491,15 @@ class Stage3Mixin:
         try: self.asset_rows=self.client.fixed_assets()
         except Exception as exc: return messagebox.showerror("Assets",str(exc))
         self.asset_list.delete(*self.asset_list.get_children())
+        year=str(self.current_fiscal_year)
         for asset in self.asset_rows:
-            self.asset_list.insert("","end",iid=str(asset["id"]),values=(asset["asset_code"],asset["name"],asset["cost"],asset["currency"],asset["frequency"]))
+            try: periods=self.client.asset_schedule(asset["id"])
+            except Exception as exc: return messagebox.showerror("Assets",str(exc))
+            previous=sum(float(p["amount"]) for p in periods if p["period_end"][:4]<year)
+            yearly=sum(float(p["amount"]) for p in periods if p["period_end"][:4]==year)
+            cost=float(asset["cost"]); accumulated=min(cost,previous+yearly)
+            self.asset_list.insert("","end",iid=str(asset["id"]),values=(asset["asset_code"],asset["name"],_dd(asset["acquired_on"]),
+                f"{cost:,.2f}",asset["currency"],f"{previous:,.2f}",f"{yearly:,.2f}",f"{accumulated:,.2f}",f"{max(0,cost-accumulated):,.2f}"))
 
     def select_asset(self):
         selected=self.asset_list.selection()
@@ -490,6 +508,7 @@ class Stage3Mixin:
         for key,var in self.asset_fields.items():
             value=asset.get(key) or ""
             var.set(_dd(value) if key in ("acquired_on","start_on") and value else str(value))
+        self.asset_rate.set(f'{1200/int(asset["useful_months"]):g}')
         self.asset_schedule_tree.delete(*self.asset_schedule_tree.get_children())
         try: rows=self.client.asset_schedule(self.asset_edit_id)
         except Exception as exc: return messagebox.showerror("Assets",str(exc))
@@ -502,6 +521,16 @@ class Stage3Mixin:
         except Exception as exc: return messagebox.showerror("Assets",str(exc))
         self.load_assets(); self.asset_list.selection_set(str(asset["id"])); self.select_asset()
         messagebox.showinfo("Assets",f"Asset {asset['asset_code']} saved")
+
+    def asset_rate_changed(self,*_args):
+        try:
+            rate=float(self.asset_rate.get())
+            if 0<rate<=100: self.asset_fields["useful_months"].set(str(round(1200/rate)))
+        except ValueError: pass
+
+    def open_asset_purchase(self):
+        self.purchase_form["vars"]["type"].set("Assets")
+        self.purchase_notebook.select(self.purchase_invoice_page)
 
     def delete_asset_entry(self):
         if not self.asset_edit_id: return messagebox.showwarning("Assets","Select an asset first")

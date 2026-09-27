@@ -333,11 +333,14 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             ("import_tab",tr(lang,"import")),("parties_tab",tr(lang,"customers_suppliers")),("transactions_tab",tr(lang,"payments_expenses")),("purchases_tab","Purchases & Expenses"),("inventory_tab","Inventory")]
         if self.can_use("payroll"): pages.append(("payroll_tab","Payroll"))
         if self.can_use("vat"): pages.append(("vat_tab","Quarterly VAT"))
-        pages+=[("journal_tab",tr(lang,"general_journal")),("trial_tab",tr(lang,"trial_balance")),("pnl_tab",tr(lang,"profit_loss")),("reports_tab",tr(lang,"financial_reports")),
-            ("statement_tab",tr(lang,"statement_account")),("ageing_tab","Ageing Report"),("accounts_tab",tr(lang,"chart_accounts")),("settings_tab",tr(lang,"security_backup_rates"))]
+        pages+=[("journal_tab",tr(lang,"general_journal")),("account_reports_tab","Accounts & Statements"),("pnl_tab",tr(lang,"profit_loss")),("reports_tab",tr(lang,"financial_reports")),
+            ("settings_tab",tr(lang,"security_backup_rates"))]
         self.main_tab_pages=[]
         for attribute,name in pages:
             frame=tk.Frame(notebook,bg=LIGHT); setattr(self,attribute,frame); notebook.add(frame,text=name); self.main_tab_pages.append(frame)
+        account_notebook=ttk.Notebook(self.account_reports_tab); account_notebook.pack(fill="both",expand=True,padx=8,pady=8)
+        for attribute,name in (("trial_tab",tr(lang,"trial_balance")),("statement_tab",tr(lang,"statement_account")),("accounts_tab",tr(lang,"chart_accounts"))):
+            frame=tk.Frame(account_notebook,bg=LIGHT); setattr(self,attribute,frame); account_notebook.add(frame,text=name)
         self.tab_names=[notebook.tab(tab,"text") for tab in notebook.tabs()]
         self.tab_choice=tk.StringVar(value=self.tab_names[0])
         self.tab_buttons=[]; per_row=(len(self.main_tab_pages)+1)//2
@@ -1590,7 +1593,10 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         for row in rows: self.parties_tree.insert("","end",values=(row["id"],row.get("account_number") or "",row["name"],row.get("account_category") or row["kind"],row.get("tax_number") or "",row.get("mof_number") or "",row.get("address") or "",row.get("contact_number") or "",row["currency"],row.get("due_days") or 0))
 
     def open_party_ageing(self):
-        self.select_main_tab(self.ageing_tab)
+        self.select_main_tab(self.inventory_tab)
+        for widget in self.inventory_tab.winfo_children():
+            if isinstance(widget,ttk.Notebook):
+                widget.select(self.ageing_tab); break
 
     def open_client_items_report(self):
         self.select_main_tab(self.reports_tab)

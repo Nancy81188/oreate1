@@ -51,8 +51,13 @@ class CurrencyAgeingTest(unittest.TestCase):
         last = save_item(self.db, {"sku": "C-003", "name": "Last"}, self.user)
         result = build_report(self.db, "stock_card", {"item_id": first["id"], "item_to_id": last["id"],
                                                       "date_from": "01-01-2026", "date_to": "26-09-2026"})
-        self.assertEqual(len(result["sections"]), 3)
+        self.assertEqual(len(result["sections"]), 4)
         self.assertIn("B-002", result["sections"][1]["heading"])
+        self.assertEqual(result["sections"][-1]["heading"], "Total closing stock by unit")
+        valuation = build_report(self.db, "valuation", {"item_id": first["id"], "item_to_id": last["id"],
+                                                     "include_zero": True, "date_to": "26-09-2026"})
+        self.assertTrue(any(row[0] == "B-002" for row in valuation["sections"][0]["rows"]))
+        self.assertEqual(valuation["sections"][-1]["heading"], "Total stock quantity by unit")
         with self.assertRaisesRegex(ValueError, "before Item To"):
             build_report(self.db, "stock_card", {"item_id": last["id"], "item_to_id": first["id"]})
 
