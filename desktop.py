@@ -84,7 +84,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.26")
+        self.title("Saber Accounting 2.9.27")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -1332,7 +1332,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             tk.Button(toolbar,text=text,command=command,bg=NAVY,fg="white",border=0,padx=10,pady=4).pack(side="left",padx=2)
         for text,command in (("Import Excel",self.import_sales_excel),("Import PDF",self.import_sales_pdf)):
             tk.Button(toolbar,text=text,command=command,bg=GOLD,fg=NAVY,border=0,padx=10,pady=4).pack(side="left",padx=(8 if text=="Import Excel" else 2,2))
-        self.action_button(toolbar,"AI Read PDF",self.ai_read_sales_pdf).pack(side="left",padx=2)
+        self.action_button(toolbar,"Free PDF Read",self.ai_read_sales_pdf).pack(side="left",padx=2)
         # Totals bar is pinned to the very bottom of the tab FIRST, so it can never be pushed off-screen by the table
         bottom=tk.Frame(self.sales_tab,bg=LIGHT); bottom.pack(side="bottom",fill="x",padx=10,pady=(0,4))
         body=tk.Frame(self.sales_tab,bg=LIGHT); body.pack(side="top",fill="both",expand=True,padx=10,pady=(2,4))
