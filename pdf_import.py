@@ -65,8 +65,9 @@ def _parse_invoice_text(path, text):
     result["subtotal"] = _amount_after(text, ("subtotal", "sub-total", "sub total", "before vat", "total ht", "net amount", "excl"))
     if result["total"] and result["vat"] and not result["subtotal"]: result["subtotal"] = round(result["total"] - result["vat"], 2)
     if result["subtotal"] and result["vat"] is not None and not result["total"]: result["total"] = round(result["subtotal"] + result["vat"], 2)
-    result["deductible"] = _amount_after(text, ("deductible amount", "deductible value", "déductible", "قابل للحسم"))
     result["non_deductible"] = _amount_after(text, ("non deductible amount", "non-deductible amount", "non deductible value", "غير قابل للحسم"))
+    deductible_lines = "\n".join(line for line in text.splitlines() if not re.search(r"non[- ]deductible|غير قابل للحسم", line, re.I))
+    result["deductible"] = _amount_after(deductible_lines, ("deductible amount", "deductible value", "déductible", "قابل للحسم"))
     result["items"] = []
     for line in text.splitlines():
         # Table extraction is deliberately conservative: quantity, unit price and line total
