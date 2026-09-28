@@ -70,19 +70,19 @@ class Stage3Mixin:
         self.file_label.pack(fill="x", padx=12)
         from desktop_brains import EditableSheet
         columns = [("line", "#", 40, "center"), ("invoice_number", "Invoice No.", 110, "w"), ("invoice_date", "Date", 90, "center"), ("party_name", "Customer / Supplier", 200, "w"),
-                   ("currency", "Currency", 65, "center"), ("subtotal", "Before VAT", 105, "e"), ("vat", "VAT", 90, "e"), ("total", "Total", 105, "e"),
+                   ("currency", "Currency", 65, "center"), ("items", "Items", 150, "w"), ("deductible", "Deductible", 95, "e"), ("non_deductible", "Non-deductible", 110, "e"), ("subtotal", "Before VAT", 105, "e"), ("vat", "VAT", 90, "e"), ("total", "TTC", 105, "e"),
                    ("source", "Source", 150, "w"), ("notes", "Check", 230, "w")]
         bottom = tk.Frame(page, bg=LIGHT); bottom.pack(side="bottom", fill="x", padx=10, pady=8)
         tk.Checkbutton(bottom, text="Replace ALL previous invoices (a safety backup is made first)", variable=self.import_replace, bg=LIGHT, fg=RED).pack(side="left")
         tk.Button(bottom, text="Import", command=self.send_import, bg=GOLD, fg=NAVY, font=("Segoe UI", 10, "bold"), border=0, padx=26, pady=8).pack(side="right")
         tk.Button(bottom, text="Remove Row", command=lambda: self.import_sheet.delete_selected(), bg=RED, fg="white", border=0, padx=12, pady=8).pack(side="right", padx=6)
         self.import_status = tk.Label(bottom, text="", bg=LIGHT, fg=NAVY, font=("Segoe UI", 9, "bold")); self.import_status.pack(side="right", padx=10)
-        self.import_sheet = EditableSheet(self, page, columns, ["invoice_number", "invoice_date", "party_name", "currency", "subtotal", "vat", "total"], self.import_cell_changed, height=12)
+        self.import_sheet = EditableSheet(self, page, columns, ["invoice_number", "invoice_date", "party_name", "currency", "items", "deductible", "non_deductible", "subtotal", "vat", "total"], self.import_cell_changed, height=12)
         self.import_tree = self.import_sheet.tree
 
     def import_cell_changed(self, iid, key, text):
         row = self.import_sheet.rows[iid]
-        if key in ("subtotal", "vat", "total"):
+        if key in ("subtotal", "vat", "total", "deductible", "non_deductible"):
             value = _num(text, None)
             if value is None and text.strip(): messagebox.showwarning("Import", "Enter a number"); return False
             row[key] = value
@@ -92,7 +92,7 @@ class Stage3Mixin:
             row[key] = text.upper()
         elif key == "invoice_date": row[key] = _dd(text)
         else: row[key] = text
-        row["_display"] = {k: (f"{row[k]:,.2f}" if isinstance(row.get(k), (int, float)) else "") for k in ("subtotal", "vat", "total")}
+        row["_display"] = {k: (f"{row[k]:,.2f}" if isinstance(row.get(k), (int, float)) else "") for k in ("subtotal", "vat", "total", "deductible", "non_deductible")}
 
     def choose_import(self):
         path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xlsm")])
@@ -100,7 +100,8 @@ class Stage3Mixin:
         kind, entry_type = TYPES[self.import_type.get()]
         try:
             if entry_type == "expenses":
-                rows = [{"invoice_number": r["reference"], "invoice_date": r["expense_date"], "party_name": r["description"], "currency": r["currency"],
+                rows = [{"invoice_number": r["reference"], "invoice_date": r["expense_date"], "party_name": r.get("supplier") or r["description"], "items": r.get("items") or r["description"], "currency": r["currency"],
+                         "deductible": r["with_vat_subtotal"], "non_deductible": r["without_vat_subtotal"],
                          "subtotal": r["with_vat_subtotal"] + r["without_vat_subtotal"], "vat": r["vat"], "total": r["with_vat_subtotal"] + r["without_vat_subtotal"] + r["vat"],
                          "source": f"Excel row {r['source_row']}", "_expense": r} for r in read_expenses(path)]
             else:
@@ -120,7 +121,8 @@ class Stage3Mixin:
             for data in documents:
                 rows.append({"invoice_number": data.get("invoice_number") or "", "invoice_date": data.get("invoice_date") or datetime.now().strftime("%d-%m-%Y"),
                          "party_name": data.get("party_name") or "", "currency": data.get("currency") or self.currency.get(),
-                         "subtotal": data.get("subtotal"), "vat": data.get("vat"), "total": data.get("total"), "source": f'{data["file"]} - {data["page_range"]}', "notes": data.get("notes", ""), "_path": path})
+                         "items": "; ".join(i["description"] for i in data.get("items", [])), "deductible": data.get("deductible"), "non_deductible": data.get("non_deductible"),
+                          "subtotal": data.get("subtotal"), "vat": data.get("vat"), "total": data.get("total"), "source": f'{data["file"]} - {data["page_range"]}', "notes": data.get("notes", ""), "_path": path})
         self.import_mode = "pdf"; self.import_rows = rows
         self.file_label.config(text=f"{len(paths)} PDF file(s). Double-click any cell to correct it before importing.", fg=NAVY); self.populate_import_preview()
 
@@ -132,13 +134,13 @@ class Stage3Mixin:
         self.import_status.config(text=f"{len(rows)} row(s) ready as {self.import_type.get()} ({selected})")
 
     def import_cell_changed_display(self, row):
-        row["_display"] = {k: (f"{float(row[k]):,.2f}" if row.get(k) not in (None, "") else "") for k in ("subtotal", "vat", "total")}
+        row["_display"] = {k: (f"{float(row[k]):,.2f}" if row.get(k) not in (None, "") else "") for k in ("subtotal", "vat", "total", "deductible", "non_deductible")}
 
     def send_import(self):
         rows = self.import_sheet.ordered()
         if not rows: return messagebox.showwarning("Import", "Choose an Excel or PDF file first")
         kind, entry_type = TYPES[self.import_type.get()]
-        missing = [r["line"] for r in rows if not r.get("party_name") or r.get("total") in (None, "")]
+        missing = [r["line"] for r in rows if not r.get("party_name") or not r.get("invoice_date") or r.get("total") in (None, "")]
         if missing: return messagebox.showwarning("Import", f"Row(s) {', '.join(missing[:10])}: enter the customer/supplier and the total")
         if self.import_replace.get() and not messagebox.askyesno("Replace previous data", "ALL previous invoices will be removed and replaced. A safety backup is made first. Continue?"): return
         done = 0; errors = []
@@ -147,9 +149,11 @@ class Stage3Mixin:
                 for r in rows:
                     item = dict(r.get("_expense") or {}); vat = r.get("vat") or 0
                     base = r.get("subtotal") if r.get("subtotal") is not None else r["total"] - vat
-                    without = float(item.get("without_vat_subtotal") or 0)
-                    item.update(expense_date=r["invoice_date"], description=r["party_name"], currency=r["currency"], reference=r.get("invoice_number") or "",
-                                with_vat_subtotal=round(base - without, 2), without_vat_subtotal=without, vat=vat)
+                    without = r.get("non_deductible")
+                    if without is None: without = item.get("without_vat_subtotal")
+                    if without is None: raise ValueError("Review the non-deductible value before importing expenses")
+                    item.update(expense_date=r["invoice_date"], description=r.get("items") or item.get("description") or r["party_name"], currency=r["currency"], reference=r.get("invoice_number") or "",
+                                with_vat_subtotal=round(base - float(without), 2), without_vat_subtotal=float(without), vat=vat)
                     try:
                         expense_id = self.client.add_expense(item)["expense_id"]; done += 1
                         if r.get("_path"): self.client.upload_expense_attachment(expense_id, Path(r["_path"]).name, "application/pdf", Path(r["_path"]).read_bytes())
