@@ -50,8 +50,9 @@ def _parse_invoice_text(path, text):
         result["notes"] = "This PDF is a scanned image (no text inside). The file will be attached; enter the amounts manually."; return result
     match = re.search(r"(?:invoice|inv|facture|فاتورة|bill)\s*(?:no\.?|number|num|#|n°|رقم)?\s*[:#.]?\s*([A-Z0-9][A-Z0-9\-/]{1,24})", text, re.I)
     if match and any(ch.isdigit() for ch in match.group(1)): result["invoice_number"] = match.group(1).strip("-/")
+    dated_lines = "\n".join(line for line in text.splitlines() if re.search(r"invoice date|date|تاريخ|émis|émission", line, re.I))
     for pattern, order in DATE_PATTERNS:
-        for groups in re.findall(pattern, text):
+        for groups in re.findall(pattern, dated_lines or text):
             try:
                 day, month, year = (groups if order == "dmy" else (groups[2], groups[1], groups[0]))
                 result["invoice_date"] = datetime(int(year), int(month), int(day)).strftime("%d-%m-%Y"); break
@@ -61,7 +62,7 @@ def _parse_invoice_text(path, text):
     for code, marks in (("LBP", ("LBP", "L.L", "ل.ل", "LL ")), ("EUR", ("EUR", "€")), ("AED", ("AED", "DHS")), ("USD", ("USD", "US$", "$"))):
         if any(mark in upper for mark in marks): result["currency"] = code; break
     result["total"] = _amount_after(text, ("grand total", "total amount", "amount due", "net to pay", "total ttc", "total"))
-    result["vat"] = _amount_after(text, ("vat amount", "vat 11%", "vat", "tva", "tax", "ض.ق.م"))
+    result["vat"] = _amount_after(text, ("vat amount", "vat 11%", "vat", "tva", "ض.ق.م"))
     result["subtotal"] = _amount_after(text, ("subtotal", "sub-total", "sub total", "before vat", "total ht", "net amount", "excl"))
     if result["total"] and result["vat"] and not result["subtotal"]: result["subtotal"] = round(result["total"] - result["vat"], 2)
     if result["subtotal"] and result["vat"] is not None and not result["total"]: result["total"] = round(result["subtotal"] + result["vat"], 2)
