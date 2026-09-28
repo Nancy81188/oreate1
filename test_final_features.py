@@ -536,15 +536,15 @@ class LebanesePayrollRulesTest(unittest.TestCase):
         self.assertAlmostEqual(sum(r["debit"] for r in nssf), 62.18, places=2)
 
     def test_family_tax_deduction_halved_when_spouse_works(self):
-        # Same married employee with 3 children: when the spouse also works the family deduction is split in half.
+        # The spouse deduction applies only to a dependent spouse; two working parents split only the child deduction.
         stay_home = self.db.save_employee({"employee_number": "3000", "full_name": "Home Spouse", "currency": "LBP",
             "base_salary": "120000000", "marital_status": "married", "children": 3, "spouse_works": False}, self.user)
         both_work = self.db.save_employee({"employee_number": "3100", "full_name": "Working Spouse", "currency": "LBP",
             "base_salary": "120000000", "marital_status": "married", "children": 3, "spouse_works": True}, self.user)
         home = self.calc(stay_home, "31-05-2026"); working = self.calc(both_work, "31-05-2026")
         self.assertGreater(working["income_tax_lbp"], home["income_tax_lbp"])  # smaller deduction -> more tax
-        self.assertTrue(any("Family tax deduction halved" in note for note in working["compliance_notes"]))
-        self.assertFalse(any("Family tax deduction halved" in note for note in home["compliance_notes"]))
+        self.assertTrue(any("Child tax deduction split equally" in note for note in working["compliance_notes"]))
+        self.assertFalse(any("Child tax deduction split equally" in note for note in home["compliance_notes"]))
 
     def test_end_of_service_exempt_for_foreign_or_over_64(self):
         lebanese = self.db.save_employee({"employee_number": "4000", "full_name": "Local Young", "currency": "LBP",
