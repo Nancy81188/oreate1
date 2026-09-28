@@ -306,6 +306,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.action_button(window,"Save Company",update).grid(row=3,column=0,padx=6,pady=14); self.action_button(window,"Create Separate Year",create_year).grid(row=3,column=1,padx=6,pady=14)
 
     def main_screen(self):
+        if not hasattr(self, "show_dimensions"): self.show_dimensions=tk.BooleanVar(value=True)
+        self._dimension_groups=[]; self._dimension_sheets=[]
         # Forget the widgets of the previous screen (switching company / year rebuilds every page).
         for name in ("purchase_form","expense_form","payment_forms","trial_state","statement_state","voucher_sheet","budget_sheet","departments_tree","pr_tree","vat_summary_tree","_dimensions","_account_cache","items_tree","sd_find_box","warehouses_tree","ir_warehouse_box","ir_item_box","ir_category_box","stock_sheet","_cash_accounts","_expense_accounts",
                      "sio_sheet","pc_sheet","pc_find_box","sio_wh_box","pc_wh_box","cat_tree","item_boxes","ir_subcategory_box","ir_unit_box","ir_supplier_box","_all_accounts"):
@@ -2437,6 +2439,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def build_settings(self):
         nested=ttk.Notebook(self.settings_tab); nested.pack(fill="both",expand=True,padx=10,pady=10)
+        visibility=tk.Frame(self.settings_tab,bg=LIGHT); visibility.pack(fill="x",padx=20,pady=(0,8))
+        tk.Checkbutton(visibility,text="Show Department / Project fields in all sheets",variable=self.show_dimensions,
+                       command=self.toggle_dimensions,bg=LIGHT,fg=NAVY,font=("Segoe UI",9,"bold")).pack(side="left")
         users=tk.Frame(nested,bg=LIGHT); backups=tk.Frame(nested,bg=LIGHT); rates=tk.Frame(nested,bg=LIGHT); branches=tk.Frame(nested,bg=LIGHT); general=tk.Frame(nested,bg=LIGHT)
         is_admin=(self.current_user or {}).get("role")=="admin"
         if is_admin: nested.add(users,text="Users & Permissions")
