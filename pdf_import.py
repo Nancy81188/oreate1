@@ -72,7 +72,7 @@ def _parse_invoice_text(path, text):
     for line in text.splitlines():
         # Table extraction is deliberately conservative: quantity, unit price and line total
         # must all be visible, otherwise the line stays for manual review.
-        item = re.match(r"^\\s*(.{3,80}?)\\s{2,}(\\d+(?:\\.\\d+)?)\\s{2,}"+AMOUNT+r"\\s{2,}"+AMOUNT+r"\\s*$", line)
+        item = re.match(r"^\s*(.{3,80}?)\s{2,}(\d+(?:\.\d+)?)\s{2,}"+AMOUNT+r"\s{2,}"+AMOUNT+r"\s*$", line)
         if item and any(ch.isalpha() for ch in item.group(1)):
             result["items"].append({"description": item.group(1).strip(), "quantity": _number(item.group(2)), "unit_price": _number(item.group(3)), "total": _number(item.group(4))})
     for line in text.splitlines():
