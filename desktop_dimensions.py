@@ -43,16 +43,33 @@ class DimensionsMixin:
         return "" if text in ("", NONE, "All") else text.split(" - ", 1)[0].strip()
 
     def dimension_selectors(self, parent, department_var, project_var, include_all=False):
-        tk.Label(parent, text="Department", bg=LIGHT).pack(side="left")
-        department = ttk.Combobox(parent, textvariable=department_var, values=self.department_choices(include_all), state="readonly", width=20); department.pack(side="left", padx=(4, 10))
-        tk.Label(parent, text="Project", bg=LIGHT).pack(side="left")
-        project = ttk.Combobox(parent, textvariable=project_var, values=self.project_choices(include_all), state="readonly", width=21); project.pack(side="left", padx=(4, 10))
+        group = tk.Frame(parent, bg=LIGHT)
+        group.pack(side="left")
+        self._dimension_groups.append((group, department_var, project_var, include_all))
+        tk.Label(group, text="Department", bg=LIGHT).pack(side="left")
+        department = ttk.Combobox(group, textvariable=department_var, values=self.department_choices(include_all), state="readonly", width=20); department.pack(side="left", padx=(4, 10))
+        tk.Label(group, text="Project", bg=LIGHT).pack(side="left")
+        project = ttk.Combobox(group, textvariable=project_var, values=self.project_choices(include_all), state="readonly", width=21); project.pack(side="left", padx=(4, 10))
         def refresh(_event=None):
             self.dimension_lists(refresh=True); department["values"] = self.department_choices(include_all); project["values"] = self.project_choices(include_all)
         department.bind("<Button-1>", refresh, add="+"); project.bind("<Button-1>", refresh, add="+")
         if not department_var.get(): department_var.set("All" if include_all else NONE)
         if not project_var.get(): project_var.set("All" if include_all else NONE)
+        if not self.show_dimensions.get():
+            if include_all: department_var.set("All"); project_var.set("All")
+            group.pack_forget()
         return department, project
+
+    def toggle_dimensions(self):
+        visible = self.show_dimensions.get()
+        for group, department, project, include_all in self._dimension_groups:
+            if not group.winfo_exists(): continue
+            if visible: group.pack(side="left")
+            else:
+                if include_all: department.set("All"); project.set("All")
+                group.pack_forget()
+        for sheet in self._dimension_sheets:
+            if sheet.tree.winfo_exists(): sheet.set_dimension_visibility(visible)
 
     # ------------------------------------------------------------ settings pages
     def build_dimensions_pages(self, nested):
