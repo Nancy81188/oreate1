@@ -416,6 +416,7 @@ class Database:
             if "retro_to" not in payroll_columns: db.execute("ALTER TABLE payroll_records ADD COLUMN retro_to TEXT")
             payroll_setting_columns={row["name"] for row in db.execute("PRAGMA table_info(payroll_settings)")}
             for column,default in (("transport_daily_exempt","450000"),("default_transport_days","26"),("schooling_annual_exempt","6000000"),("schooling_max_children","3"),
+                                   ("schooling_public_child","0"),("schooling_public_cap","0"),("schooling_private_child","0"),("schooling_private_cap","0"),
                                    ("tax_rounding","0"),("minimum_wage","0"),("max_children_deduction","5"),("family_allowance_spouse","0"),("family_allowance_child","0"),
                                    ("family_allowance_cap","0"),("family_allowance_max_children","5")):
                 if column not in payroll_setting_columns: db.execute(f"ALTER TABLE payroll_settings ADD COLUMN {column} TEXT NOT NULL DEFAULT '{default}'")
@@ -2711,7 +2712,8 @@ class Database:
             for key in ("employee_account_map","manager_account_map"):
                 mapping={**self.default_payroll_account_map(),**(item.get(key) or {})}
                 db.execute(f"UPDATE payroll_settings SET {key}=? WHERE date_from=?",(json.dumps(mapping),date_from))
-            for key in ("transport_daily_exempt","default_transport_days","schooling_annual_exempt","schooling_max_children","tax_rounding","minimum_wage","max_children_deduction","family_allowance_spouse","family_allowance_child","family_allowance_cap","family_allowance_max_children"):
+            for key in ("transport_daily_exempt","default_transport_days","schooling_annual_exempt","schooling_max_children",
+                        "schooling_public_child","schooling_public_cap","schooling_private_child","schooling_private_cap","tax_rounding","minimum_wage","max_children_deduction","family_allowance_spouse","family_allowance_child","family_allowance_cap","family_allowance_max_children"):
                 if item.get(key) not in (None,""):
                     try: value=str(Decimal(str(item[key]).replace(",","")))
                     except Exception as exc: raise ValueError(f"{key.replace('_',' ').title()} must be a number") from exc
