@@ -1,5 +1,12 @@
 # Saber Accounting MVP
 
+## Version 2.9.26 (Payroll periods and import review)
+
+- Payroll prorates salary and annual tax amounts by worked calendar days for an employee hired or leaving during the selected month.
+- Dated schooling grant limits for public and private schools can be reviewed and edited in Payroll Settings, separately from the taxable income exemption.
+- PDF and Excel invoice imports preview date, supplier/customer, items where detectable, deductible and non-deductible base, VAT and TTC. Missing VAT on a PDF must be entered or confirmed as 0 before importing; the importer no longer invents 11%.
+- Text extraction from PDF remains best effort. Scanned image PDFs and ambiguous layouts require manual review before saving.
+
 ## Version 2.9.25 (Faster tabs and dashboard)
 
 - Opening a tab builds only that tab immediately; other screens continue loading between UI events instead of forcing every remaining page to build at once.
