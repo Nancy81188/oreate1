@@ -1,5 +1,12 @@
 # Saber Accounting MVP
 
+## Version 2.9.5 (Journal entry and shared-server login protection)
+
+- In Journal Voucher, the first letter selects a currency in the voucher header and the line currency cell. The line detail copies into the next line; editing the next line leaves the first unchanged.
+- New Account in Journal Voucher creates an account immediately and places it on an available line without saving the voucher. Accounts created on the Accounts page are immediately recognized by an already-open Journal Voucher.
+- Failed logins are audited without passwords or tokens. Five failures per username or 30 per client IP within 15 minutes trigger a 15-minute lockout; the server returns HTTP 429 while blocked.
+- The shared server accepts a trusted TLS certificate and key. Plaintext is limited to localhost unless `--allow-insecure-lan` is deliberately specified for a trusted VPN/LAN.
+
 ## Version 2.9.4 (Equal height navigation rows)
 
 - Navigation tabs in every row share the same height, including rows with labels that wrap onto two lines.
@@ -82,7 +89,7 @@ Saber Accounting is a Windows desktop accounting application with a central shar
 
 ## Important status
 
-This is an MVP for controlled testing. Before production use, add HTTPS, automatic encrypted backups, user-management screens, sequential journal controls, complete inventory valuation, period locking, exchange-rate revaluation, invoice editing/reversal workflows, and Lebanese tax-report validation by the firm's accountant.
+This is an MVP for controlled testing. TLS is available for shared access but requires a trusted certificate and secure server configuration. Fiscal-year closing blocks later edits, while finer monthly period locks remain to be added. Before production use, complete encrypted backup and restore, exchange-rate revaluation, and independent validation of Lebanese tax/NSSF reporting by the firm's accountant.
 
 ## Quick start on one computer
 
@@ -105,12 +112,12 @@ Sign in with username `admin`, your chosen server password, and server address `
 
 1. Choose one always-on office computer or Windows server to host the shared database.
 2. Give that computer a fixed local IP address.
-3. Allow TCP port `8765` only on the trusted office network.
-4. Run `run_server.py` only on the server computer.
+3. Allow TCP port `8765` only on the trusted office network. Provision a certificate whose name matches the host name used by clients and whose CA is trusted on their computers.
+4. Run `python run_server.py --host SERVER-IP --tls-cert server-cert.pem --tls-key server-key.pem` only on the server computer. Keep the private key restricted to the server account.
 5. Run the desktop client on each of the three computers.
-6. Enter `http://SERVER-IP:8765` on the sign-in screen.
+6. Enter `https://SERVER-NAME:8765` on the sign-in screen, using the name on the certificate.
 
-For access outside the office, do not expose port 8765 directly to the internet. Use a professionally configured HTTPS reverse proxy or VPN.
+For access outside the office, do not expose port 8765 directly to the internet. Use a professionally configured HTTPS reverse proxy or VPN. When TLS terminates at a reverse proxy, bind the Python server to `127.0.0.1` and proxy only to that loopback address. Existing trusted VPN/LAN installations that intentionally need plaintext must pass `--allow-insecure-lan`; HTTP traffic on such networks exposes passwords and tokens to anyone able to observe it.
 
 ## Excel import rules
 
