@@ -2119,32 +2119,41 @@ class Database:
         return self.sync_historical_exchange_rates()
 
     def professional_dashboard(self):
-        invoice_rows=self.dashboard(); expenses=self.list_expenses()
+        """Aggregate dashboard figures in SQLite instead of loading every expense and invoice."""
         metrics={}
-        for row in invoice_rows:
-            code=row["currency"]; metrics.setdefault(code,{"currency":code,"sales":0.0,"purchases":0.0,"expenses":0.0,"profit":0.0,"receivables":0.0,"payables":0.0,"overdue":0})
-            amount=float(row["subtotal"] or 0)
-            if row["kind"]=="sale": metrics[code]["sales"]+=amount
-            else: metrics[code]["purchases"]+=amount
-        for row in expenses:
-            code=row["currency"]; metrics.setdefault(code,{"currency":code,"sales":0.0,"purchases":0.0,"expenses":0.0,"profit":0.0,"receivables":0.0,"payables":0.0,"overdue":0})
-            metrics[code]["expenses"]+=float(row["subtotal"] or 0)
-        today=datetime.now().date()
+        def metric(code):
+            return metrics.setdefault(code,{"currency":code,"sales":0.0,"purchases":0.0,
+                "expenses":0.0,"profit":0.0,"receivables":0.0,"payables":0.0,"overdue":0})
         with self.connect() as db:
-            invoices=[dict(row) for row in db.execute("SELECT kind,currency,total,amount_paid,due_date,status FROM invoices WHERE status NOT IN ('cancelled','deleted')")]
+            invoice_rows=db.execute("""SELECT kind,currency,
+                SUM(CAST(subtotal AS REAL)) subtotal,
+                SUM(CAST(total AS REAL)-CAST(COALESCE(amount_paid,'0') AS REAL)) outstanding
+                FROM invoices WHERE status NOT IN ('cancelled','deleted')
+                GROUP BY kind,currency""").fetchall()
+            expense_rows=db.execute("""SELECT currency,SUM(CAST(subtotal AS REAL)) subtotal
+                FROM expenses GROUP BY currency""").fetchall()
+            # Preserve the existing DD-MM-YYYY due date interpretation.
+            overdue_rows=db.execute("""SELECT currency,COUNT(*) overdue FROM invoices
+                WHERE status NOT IN ('cancelled','deleted')
+                  AND CAST(total AS REAL)>CAST(COALESCE(amount_paid,'0') AS REAL)
+                  AND due_date GLOB '??-??-????'
+                  AND substr(due_date,7,4)||'-'||substr(due_date,4,2)||'-'||substr(due_date,1,2)<?
+                GROUP BY currency""",(datetime.now().strftime("%Y-%m-%d"),)).fetchall()
             monthly=[dict(row) for row in db.execute("""SELECT substr(CASE WHEN invoice_date GLOB '??-??-????' THEN substr(invoice_date,7,4)||'-'||substr(invoice_date,4,2)||'-'||substr(invoice_date,1,2) ELSE invoice_date END,1,7) month,
                 currency,kind,SUM(CAST(subtotal AS REAL)) amount FROM invoices WHERE status NOT IN ('cancelled','deleted') GROUP BY month,currency,kind ORDER BY month""")]
-        for row in invoices:
-            code=row["currency"]; metrics.setdefault(code,{"currency":code,"sales":0.0,"purchases":0.0,"expenses":0.0,"profit":0.0,"receivables":0.0,"payables":0.0,"overdue":0})
-            outstanding=float(row["total"] or 0)-float(row["amount_paid"] or 0)
-            if row["kind"]=="sale": metrics[code]["receivables"]+=outstanding
-            else: metrics[code]["payables"]+=outstanding
-            if outstanding>0 and row.get("due_date"):
-                try:
-                    due=datetime.strptime(row["due_date"],"%d-%m-%Y").date()
-                    if due<today: metrics[code]["overdue"]+=1
-                except ValueError: pass
-        for value in metrics.values(): value["profit"]=value["sales"]-value["purchases"]-value["expenses"]
+        for row in invoice_rows:
+            values=metric(row["currency"]); amount=float(row["subtotal"] or 0)
+            outstanding=float(row["outstanding"] or 0)
+            if row["kind"]=="sale":
+                values["sales"]+=amount; values["receivables"]+=outstanding
+            else:
+                values["purchases"]+=amount; values["payables"]+=outstanding
+        for row in expense_rows:
+            metric(row["currency"])["expenses"]+=float(row["subtotal"] or 0)
+        for row in overdue_rows:
+            metric(row["currency"])["overdue"]=int(row["overdue"])
+        for values in metrics.values():
+            values["profit"]=values["sales"]-values["purchases"]-values["expenses"]
         return {"metrics":list(metrics.values()),"monthly":monthly}
 
     def _converted_amount(self, amount, source, target, rate_date):
