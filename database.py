@@ -2770,7 +2770,21 @@ class Database:
             try: money[name]=D(str(raw).replace(",",""))
             except Exception as exc: raise ValueError(f"{name.replace('_',' ').title()} must be a number") from exc
             if money[name]<0: raise ValueError(f"{name.replace('_',' ').title()} cannot be negative")
+        # The selected date identifies a payroll month. Prorate a monthly base salary
+        # when the employee joined or left during that month; an edited salary is the actual amount.
+        month_start=rules_date[:8]+"01"
+        month_days=(datetime.strptime(rules_date,"%Y-%m-%d")-datetime.strptime(month_start,"%Y-%m-%d")).days+1
+        active_start=max(month_start,iso_date(employee["hire_date"]) if employee["hire_date"] else month_start)
+        active_end=min(rules_date,iso_date(employee["leave_date"]) if employee["leave_date"] else rules_date)
+        worked_days=max(0,(datetime.strptime(active_end,"%Y-%m-%d")-datetime.strptime(active_start,"%Y-%m-%d")).days+1)
+        if not worked_days: raise ValueError("Employee did not work in the selected payroll month")
+        work_fraction=D(worked_days)/D(month_days)
+        base_salary=D(str(employee["base_salary"] or 0))
+        if worked_days<month_days and money["salary"]==base_salary:
+            money["salary"]=(base_salary*work_fraction).quantize(D("0.01"))
         currency=employee["currency"]; brackets=settings.get("tax_brackets",[]); notes=[]
+        if worked_days<month_days:
+            notes.append(f"Partial payroll: {worked_days}/{month_days} calendar days; base salary and tax bands/deductions prorated")
         to_lbp=lambda value,day=period: self._converted_amount(value,currency,"LBP",day)
         from_lbp=lambda value,day=period: self._converted_amount(value,"LBP",currency,day)
         try: days=int(D(str(item.get("transport_days") if item.get("transport_days") not in (None,"") else setting("default_transport_days","26"))))
@@ -2796,9 +2810,10 @@ class Database:
         if children>int(setting("max_children_deduction","5")): notes.append(f"Family deduction limited to {int(setting('max_children_deduction','5'))} children")
         regular_lbp=to_lbp(money["salary"]+money["overtime"]+money["commission"])+taxable_transport_lbp+taxable_schooling_lbp
         tax=lambda annual: self._progressive_tax(max(D("0"),annual-allowance),brackets)
-        regular_tax=tax(regular_lbp*12)/12
+        annual_regular=regular_lbp*12/work_fraction
+        regular_tax=tax(annual_regular)*work_fraction/12
         one_off_lbp=to_lbp(money["bonus"]+money["thirteenth_month"])
-        one_off_tax=tax(regular_lbp*12+one_off_lbp)-tax(regular_lbp*12)
+        one_off_tax=(tax(annual_regular+one_off_lbp/work_fraction)-tax(annual_regular))*work_fraction
         retro_tax=D("0"); retro_months=[]
         if money["retro_salary"]:
             start=iso_date(item.get("retro_from") or period,"Retro From"); end=iso_date(item.get("retro_to") or period,"Retro To")
@@ -2826,7 +2841,7 @@ class Database:
         income_tax_lbp=rounded(regular_tax+one_off_tax+retro_tax)
         retro_tax_lbp=min(income_tax_lbp,max(D("0"),retro_tax).quantize(D("0.01")))
         income_tax=from_lbp(income_tax_lbp).quantize(D("0.01")); retro_tax_value=from_lbp(retro_tax_lbp).quantize(D("0.01"))
-        taxable_lbp=max(D("0"),regular_lbp*12-allowance)/12+one_off_lbp
+        taxable_lbp=max(D("0"),annual_regular-allowance)*work_fraction/12+one_off_lbp
         # NSSF: salary, overtime, commission, bonus and 13th this month; retroactive salary in its own months.
         base_lbp=to_lbp(money["salary"]+money["overtime"]+money["commission"]+money["bonus"]+money["thirteenth_month"])
         def contribution(ceiling_name,rate_name,base,month_settings):
@@ -2882,7 +2897,7 @@ class Database:
             "employee_nssf_lbp":float(nssf["employee"][0]),"employer_medical":float(nssf["medical"][1]),"employer_end_service":float(nssf["end_service"][1]),
             "employer_family":float(nssf["family"][1]),"net_salary":float(net),"currency":currency,"retro_tax":float(retro_tax_value),"retro_tax_lbp":float(retro_tax_lbp),
             "regular_tax":float(from_lbp(rounded(regular_tax)).quantize(D("0.01"))),"one_off_tax":float(from_lbp(max(D("0"),one_off_tax)).quantize(D("0.01"))),
-            "transport_days":days,"exempt_transport":float(from_lbp(exempt_transport_lbp).quantize(D("0.01"))),"exempt_schooling":float(from_lbp(exempt_schooling_lbp).quantize(D("0.01"))),
+            "worked_days":worked_days,"calendar_days":month_days,"transport_days":days,"exempt_transport":float(from_lbp(exempt_transport_lbp).quantize(D("0.01"))),"exempt_schooling":float(from_lbp(exempt_schooling_lbp).quantize(D("0.01"))),
             "family_allowance":float(family_allowance),"compliance_notes":notes,"period_date":period,
             "settings_period":{"date_from":settings.get("date_from"),"date_to":settings.get("date_to")},"rules_date":rules_date,
             "ceilings":{"medical":float(D(str(settings.get("medical_ceiling") or 0))),"family":float(D(str(settings.get("family_ceiling") or 0)))}}
