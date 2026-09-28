@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS users (
  role TEXT NOT NULL CHECK(role IN ('admin','accountant','viewer')), language TEXT NOT NULL DEFAULT 'en', active INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS login_attempts (
+ key TEXT PRIMARY KEY, failed_count INTEGER NOT NULL, first_failed_at TEXT NOT NULL, locked_until TEXT
+);
 CREATE TABLE IF NOT EXISTS parties (
  id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('customer','supplier','both')),
  name TEXT NOT NULL, tax_number TEXT, mof_number TEXT, address TEXT, contact_number TEXT,
@@ -528,11 +531,34 @@ class Database:
         today=today or datetime.now().strftime("%Y-%m-%d")
         return str(expires) < today
 
-    def login(self, username, password):
+    def login(self, username, password, remote_addr=None):
+        """Authenticate with a persistent 15-minute lockout and audit every denial."""
+        username=str(username or "").strip(); now=datetime.now(timezone.utc)
+        keys=["user:"+username.casefold()]
+        if remote_addr: keys.append("ip:"+str(remote_addr))
         with self.connect() as db:
+            attempts={row["key"]:row for row in db.execute(
+                f"SELECT * FROM login_attempts WHERE key IN ({','.join('?' for _ in keys)})",keys)}
+            locked=any(row["locked_until"] and (parse_ts(row["locked_until"]) or now)>now for row in attempts.values())
             user = db.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
+            if locked:
+                db.execute("INSERT INTO audit_log(user_id,action,entity,details,created_at) VALUES(?,?,?,?,?)",
+                           (user["id"] if user else None,"login_blocked","auth",json.dumps({"username":username,"remote_addr":remote_addr}),utcnow()))
+                return {"rate_limited": True}
             if not user or not verify_password(password, user["password_hash"]):
+                for key in keys:
+                    previous=attempts.get(key)
+                    first=parse_ts(previous["first_failed_at"]) if previous else None
+                    count=(previous["failed_count"]+1) if first and now-first<timedelta(minutes=15) else 1
+                    limit=5 if key.startswith("user:") else 30
+                    until=(now+timedelta(minutes=15)).isoformat() if count>=limit else None
+                    db.execute("INSERT INTO login_attempts(key,failed_count,first_failed_at,locked_until) VALUES(?,?,?,?) "
+                               "ON CONFLICT(key) DO UPDATE SET failed_count=excluded.failed_count,first_failed_at=excluded.first_failed_at,locked_until=excluded.locked_until",
+                               (key,count,previous["first_failed_at"] if first and now-first<timedelta(minutes=15) else utcnow(),until))
+                db.execute("INSERT INTO audit_log(user_id,action,entity,details,created_at) VALUES(?,?,?,?,?)",
+                           (user["id"] if user else None,"login_failed","auth",json.dumps({"username":username,"remote_addr":remote_addr}),utcnow()))
                 return None
+            db.execute("DELETE FROM login_attempts WHERE key=?",(keys[0],))
             if self.user_is_expired(user):
                 raise PermissionError(f"This account expired on {display_date(user['expires_at'])}. Ask the administrator to renew it.")
             token = secrets.token_urlsafe(32)
