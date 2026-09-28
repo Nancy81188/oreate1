@@ -1,5 +1,14 @@
 # Saber Accounting MVP
 
+## Version 2.9.15 (Speed / performance tuning)
+
+- Database performance indexes added on the columns used for filtering and joins (invoices by party/kind/date/branch, invoice items, journal entries by source/date and journal lines by entry/account/party, stock movements, payments and allocations, expenses, payroll records, audit log, budgets and more). Previously only one index existed, so these lookups did full-table scans that got slow as data grew; now they use indexes. This applies automatically to every company database on next start.
+- SQLite is now opened in WAL journal mode with `synchronous=NORMAL`, an in-memory temp store and a larger page cache. Reads stay fast while writing and disk churn is reduced. Foreign-key enforcement is unchanged.
+- `ANALYZE` runs at the end of setup so the query planner actually uses the new indexes.
+- The shared table search box is now debounced (~180 ms): typing a filter rebuilds the list once after you stop typing instead of on every keystroke, so large tables no longer feel laggy while searching. The filtering result is identical.
+- Validation: 151 automated tests passed (147 previous + 4 new that guard the WAL journal mode, the required indexes, that an index is actually chosen for an invoice lookup, and that foreign keys stay enforced). No existing feature or test was removed.
+- Changed files: `database.py`, `desktop.py`, `test_performance_tuning.py`, `installer.iss` and this README.
+
 ## Version 2.9.14 (Right-click search on every table)
 
 - Every listing table now opens a right-click menu (Windows/Linux right button, macOS trackpad two-finger) with "Search…" and "Clear search". "Search…" jumps to and selects the table's search box so you can type immediately; "Clear search" empties it and shows all rows again. This is an additional way to reach the search bar that was already on top of every table (Ctrl+F still works) — no existing behaviour was changed.

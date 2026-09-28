@@ -289,6 +289,14 @@ class Database:
             connection = sqlite3.connect(self.path)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys=ON")
+            # Performance PRAGMAs: WAL keeps reads fast while writing, NORMAL
+            # sync is safe under WAL, and a larger page cache / memory temp
+            # store cut disk churn. These only speed things up; the data and
+            # every existing behaviour are unchanged.
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
+            connection.execute("PRAGMA temp_store=MEMORY")
+            connection.execute("PRAGMA cache_size=-16000")  # ~16 MB page cache
             self._transaction.connection = connection
             try:
                 yield connection
@@ -503,6 +511,46 @@ class Database:
                     (account_number,f"Supplier - {supplier['name']}","liability"))
                 db.execute("UPDATE invoices SET supplier_account=? WHERE party_id=? AND kind='purchase' AND supplier_account='4011'",
                     (account_number,supplier["id"]))
+            # Performance indexes on the columns used for filtering and joins.
+            # Placed at the very end of initialize so every table (including
+            # those created by later migrations) already exists. Without these
+            # SQLite falls back to full-table scans, which get slow as
+            # invoices / journal lines / payments grow. IF NOT EXISTS makes
+            # this idempotent and it applies to every company database.
+            for index_sql in (
+                "CREATE INDEX IF NOT EXISTS idx_invoices_party ON invoices(party_id)",
+                "CREATE INDEX IF NOT EXISTS idx_invoices_kind ON invoices(kind)",
+                "CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)",
+                "CREATE INDEX IF NOT EXISTS idx_invoices_branch ON invoices(branch_id)",
+                "CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id)",
+                "CREATE INDEX IF NOT EXISTS idx_invoice_attachments_invoice ON invoice_attachments(invoice_id)",
+                "CREATE INDEX IF NOT EXISTS idx_party_documents_party ON party_documents(party_id)",
+                "CREATE INDEX IF NOT EXISTS idx_case_attachments_case ON case_attachments(case_id)",
+                "CREATE INDEX IF NOT EXISTS idx_document_cases_party ON document_cases(party_id)",
+                "CREATE INDEX IF NOT EXISTS idx_document_cases_invoice ON document_cases(invoice_id)",
+                "CREATE INDEX IF NOT EXISTS idx_journal_entries_source ON journal_entries(source_type,source_id)",
+                "CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(entry_date)",
+                "CREATE INDEX IF NOT EXISTS idx_journal_entries_branch ON journal_entries(branch_id)",
+                "CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id)",
+                "CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(account_id)",
+                "CREATE INDEX IF NOT EXISTS idx_journal_lines_party ON journal_lines(party_id)",
+                "CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements(item_id)",
+                "CREATE INDEX IF NOT EXISTS idx_stock_movements_source ON stock_movements(source_type,source_id)",
+                "CREATE INDEX IF NOT EXISTS idx_payments_party ON payments(party_id)",
+                "CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(payment_date)",
+                "CREATE INDEX IF NOT EXISTS idx_payment_allocations_payment ON payment_allocations(payment_id)",
+                "CREATE INDEX IF NOT EXISTS idx_payment_allocations_invoice ON payment_allocations(invoice_id)",
+                "CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date)",
+                "CREATE INDEX IF NOT EXISTS idx_payroll_records_employee ON payroll_records(employee_id)",
+                "CREATE INDEX IF NOT EXISTS idx_payroll_records_period ON payroll_records(period_date)",
+                "CREATE INDEX IF NOT EXISTS idx_employees_active ON employees(active)",
+                "CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity,entity_id)",
+                "CREATE INDEX IF NOT EXISTS idx_budgets_year ON budgets(year)",
+            ):
+                db.execute(index_sql)
+            # Refresh the query planner statistics so it actually uses the
+            # indexes above.
+            db.execute("ANALYZE")
         self._auto_lebanese_payroll_rules()
 
     def _auto_lebanese_payroll_rules(self):

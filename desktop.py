@@ -84,7 +84,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.14")
+        self.title("Saber Accounting 2.9.15")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -535,6 +535,16 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             for parent_id,index,args,saved_kwargs in tree._search_rows:
                 if row_matches_search(saved_kwargs.get("values",()),search_var.get()):
                     real_insert(parent_id,index,*args,**saved_kwargs)
+        # Debounce: re-filtering rebuilds the whole Treeview, so on a big table
+        # doing it on every keystroke feels laggy. Wait a beat after typing
+        # stops, then filter once. The result is identical, just smoother.
+        tree._search_after=None
+        def schedule_search(*_args):
+            pending=getattr(tree,"_search_after",None)
+            if pending is not None:
+                try: tree.after_cancel(pending)
+                except Exception: pass
+            tree._search_after=tree.after(180,apply_search)
         tree.insert=tracked_insert
         tree.delete=tracked_delete
         tree.search_var=search_var
@@ -549,7 +559,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             for position,item in enumerate(ordered): tree.move(item,"",position)
             tree._sort_reverse[key]=not reverse
         for key,label,_width in columns: tree.heading(key,text=label,command=lambda column=key:sort_column(column))
-        search_var.trace_add("write",apply_search)
+        search_var.trace_add("write",schedule_search)
         search_entry.bind("<Escape>",lambda _event:search_var.set(""))
         context_menu=tk.Menu(tree,tearoff=0)
         def focus_search():
