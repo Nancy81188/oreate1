@@ -142,6 +142,14 @@ class Stage3Mixin:
         kind, entry_type = TYPES[self.import_type.get()]
         missing = [r["line"] for r in rows if not r.get("party_name") or not r.get("invoice_date") or r.get("total") in (None, "") or r.get("vat") in (None, "")]
         if missing: return messagebox.showwarning("Import", f"Row(s) {', '.join(missing[:10])}: enter the date, customer/supplier, VAT (0 if none), and TTC")
+        inconsistent = []
+        for r in rows:
+            subtotal, vat, total = (r.get(key) for key in ("subtotal", "vat", "total"))
+            if subtotal is None or abs(float(subtotal) + float(vat) - float(total)) > 0.02:
+                inconsistent.append(str(r["line"]))
+            elif r.get("deductible") is not None and r.get("non_deductible") is not None and abs(float(r["deductible"]) + float(r["non_deductible"]) - float(subtotal)) > 0.02:
+                inconsistent.append(str(r["line"]))
+        if inconsistent: return messagebox.showwarning("Import", "Review subtotal + VAT = TTC and deductible + non-deductible = subtotal in row(s): " + ", ".join(inconsistent[:10]))
         if self.import_replace.get() and not messagebox.askyesno("Replace previous data", "ALL previous invoices will be removed and replaced. A safety backup is made first. Continue?"): return
         done = 0; errors = []
         try:
