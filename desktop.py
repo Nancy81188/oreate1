@@ -84,7 +84,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.4")
+        self.title("Saber Accounting 2.9.10")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -306,6 +306,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.action_button(window,"Save Company",update).grid(row=3,column=0,padx=6,pady=14); self.action_button(window,"Create Separate Year",create_year).grid(row=3,column=1,padx=6,pady=14)
 
     def main_screen(self):
+        if not hasattr(self, "show_department"): self.show_department=tk.BooleanVar(value=True)
+        if not hasattr(self, "show_project"): self.show_project=tk.BooleanVar(value=True)
+        self._dimension_groups=[]; self._dimension_sheets=[]
         # Forget the widgets of the previous screen (switching company / year rebuilds every page).
         for name in ("purchase_form","expense_form","payment_forms","trial_state","statement_state","voucher_sheet","budget_sheet","departments_tree","pr_tree","vat_summary_tree","_dimensions","_account_cache","items_tree","sd_find_box","warehouses_tree","ir_warehouse_box","ir_item_box","ir_category_box","stock_sheet","_cash_accounts","_expense_accounts",
                      "sio_sheet","pc_sheet","pc_find_box","sio_wh_box","pc_wh_box","cat_tree","item_boxes","ir_subcategory_box","ir_unit_box","ir_supplier_box","_all_accounts"):
@@ -1706,9 +1709,15 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.action_button(employee_actions,"R3 Excel",lambda:self.employee_r3_worksheet("xlsx")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Official R3 Form",lambda:self.download_payroll_form("R3")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Official R3-1 Form",lambda:self.download_payroll_form("R3-1")).pack(side="left",padx=4)
+        nssf_forms=tk.Frame(employees,bg=LIGHT); nssf_forms.pack(fill="x",padx=10,pady=(0,5))
+        tk.Label(nssf_forms,text="NSSF employee forms:",bg=LIGHT,fg=NAVY,font=("Segoe UI",9,"bold")).pack(side="left",padx=4)
+        self.action_button(nssf_forms,"New Employee Registration",lambda:self.download_payroll_form("NSSF-HIRE-NEW")).pack(side="left",padx=4)
+        self.action_button(nssf_forms,"Hire Existing NSSF Member",lambda:self.download_payroll_form("NSSF-HIRE-EXISTING")).pack(side="left",padx=4)
+        self.action_button(nssf_forms,"Employee Leaving",lambda:self.download_payroll_form("NSSF-LEAVE")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Refresh",self.load_payroll).pack(side="left",padx=4)
         self.employee_tree=self.table(employees,[("number","Employee ID",105),("name","Employee Name",220),("job","Job Title",150),
-            ("branch","Branch",120),("currency","Currency",70),("salary","Base Salary",120),("nssf","NSSF Number",120),("active","Active",65)])
+            ("start","Starting Date",110),("leaving","Leaving Date",110),("branch","Branch",120),("currency","Currency",70),
+            ("salary","Base Salary",120),("nssf","NSSF Number",120),("active","Active",65)])
         self.employee_tree.bind("<Double-1>",lambda _event:self.edit_selected_employee())
 
         form=tk.LabelFrame(run,text="Monthly Payroll",bg=LIGHT); form.pack(fill="x",padx=10,pady=8)
@@ -1824,18 +1833,22 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                   "R3-1":"https://www.finance.gov.lb/en-us/Taxation/Na/DASS1/%D8%B13-1.pdf",
                   "NSSF-DUE":"https://drive.google.com/uc?export=download&id=1ZwZR6kFj19KPbtALttm8U6Ji3ICJUjGB",
                   "NSSF-SETTLEMENT":"https://drive.google.com/uc?export=download&id=14eHUtHDblW9mE_4Vs82PmRrmbMGGSEKg",
-                  "NSSF-ANNUAL":"https://drive.google.com/uc?export=download&id=1TNwLlioahMJLaiX3ma6PPYqrgbHm07f_"}
+                  "NSSF-ANNUAL":"https://drive.google.com/uc?export=download&id=1TNwLlioahMJLaiX3ma6PPYqrgbHm07f_",
+                  "NSSF-HIRE-NEW":"https://drive.google.com/uc?export=download&id=1FHWgIuJm38oLcypxT6lMXlTlY9eCXDpe",
+                  "NSSF-HIRE-EXISTING":"https://drive.google.com/uc?export=download&id=1jK1Nv4RgzslncCsV-5gc7e2rHYZQThyq",
+                  "NSSF-LEAVE":"https://drive.google.com/uc?export=download&id=1_stgCRJwJjdqr2kFLy07ZCwiXDkMdZIy"}
         if form not in official: raise ValueError("Unknown payroll form")
+        agency="CNSS" if form.startswith("NSSF") else "MOF"
         target=filedialog.asksaveasfilename(title=f"Save official {form} form",defaultextension=".pdf",
-            initialfile=f"Lebanon_MOF_{form}.pdf",filetypes=[("PDF files","*.pdf")])
+            initialfile=f"Lebanon_{agency}_{form}.pdf",filetypes=[("PDF files","*.pdf")])
         if not target: return
         try:
             with urlopen(official[form],timeout=20) as response: content=response.read()
-            if not content.startswith(b"%PDF"): raise ValueError("The Ministry site did not return a PDF")
+            if not content.startswith(b"%PDF"): raise ValueError(f"The {agency} form link did not return a PDF")
             Path(target).write_bytes(content)
         except Exception as exc: return messagebox.showerror(f"Official {form}",f"Could not download the form: {exc}")
         note=("\nCheck the preprinted rates against the period's NSSF settings before using this blank form."
-              if form.startswith("NSSF") else "")
+              if form in ("NSSF-DUE","NSSF-SETTLEMENT","NSSF-ANNUAL") else "")
         messagebox.showinfo(f"Official {form}",f"Official blank form saved to {target}{note}")
 
     def load_payroll(self):
@@ -1843,7 +1856,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         try: self.employee_rows=self.client.employees(); payroll=self.client.payroll()
         except Exception as exc: return messagebox.showerror("Payroll",str(exc))
         self.employee_tree.delete(*self.employee_tree.get_children())
-        for row in self.employee_rows: self.employee_tree.insert("","end",iid=str(row["id"]),values=(row["employee_number"],row["full_name"],row["job_title"],row.get("branch_name") or "",row["currency"],row["base_salary"],row["nssf_number"],"Yes" if row["active"] else "No"))
+        for row in self.employee_rows: self.employee_tree.insert("","end",iid=str(row["id"]),values=(row["employee_number"],row["full_name"],row["job_title"],safe_display_date(row.get("hire_date")),safe_display_date(row.get("leave_date")),row.get("branch_name") or "",row["currency"],row["base_salary"],row["nssf_number"],"Yes" if row["active"] else "No"))
         self.payroll_employee_map={f'{row["employee_number"]} - {row["full_name"]}':row for row in self.employee_rows if row["active"]}
         self.payroll_employee_combo["values"]=list(self.payroll_employee_map)
         if not self.payroll_employee.get() and self.payroll_employee_map: self.payroll_employee.set(next(iter(self.payroll_employee_map))); self.payroll_employee_chosen()
@@ -2441,6 +2454,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
     def save_new_account(self):
         try: account=self.client.save_account({"code":self.new_account_code.get(),"name_en":self.new_account_name.get(),"parent_code":self.new_account_parent.get(),"type":self.new_account_type.get()})
         except Exception as exc: return messagebox.showerror("Chart of Accounts",str(exc))
+        self._account_cache=None
         self.new_account_code.set(""); self.new_account_name.set(""); self.new_account_parent.set(""); self.load_accounts()
         messagebox.showinfo("Chart of Accounts",f'Account {account["code"]} created successfully')
 

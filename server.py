@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import secrets
+import ssl
 import base64
 import json
 import sqlite3
@@ -383,8 +384,10 @@ class ApiHandler(BaseHTTPRequestHandler):
         except Exception:
             return self._json(400, {"error": "Invalid JSON"})
         if path == "/api/login":
-            try: session = self.master_db.login(body.get("username", ""), body.get("password", ""))
-            except PermissionError as exc: return self._json(403, {"error": str(exc)})
+            try: session = self.master_db.login(body.get("username", ""), body.get("password", ""), self.client_address[0])
+            except PermissionError as exc: return self._json(403,{"error":str(exc)})
+            if session and session.get("rate_limited"):
+                return self._json(429,{"error":"Too many sign-in attempts. Try again later."})
             return self._json(200, session) if session else self._json(401, {"error": "Invalid username or password"})
         user = self._user()
         if not user:
@@ -789,13 +792,21 @@ class ApiHandler(BaseHTTPRequestHandler):
         except Exception as exc: return self._json(400,{"error":str(exc)})
         return self._json(200,result)
 
-def run_server(host="127.0.0.1", port=8765, database="saber_accounting.db", admin_password=None):
+def run_server(host="127.0.0.1", port=8765, database="saber_accounting.db", admin_password=None, tls_cert=None, tls_key=None, allow_insecure_lan=False):
+    if bool(tls_cert)!=bool(tls_key): raise ValueError("Provide both TLS certificate and private key")
+    if host not in ("127.0.0.1","localhost","::1") and not tls_cert and not allow_insecure_lan:
+        raise ValueError("Shared network access requires --tls-cert and --tls-key (or explicit --allow-insecure-lan for a trusted VPN)")
     admin_password = admin_password or os.environ.get("SABER_ADMIN_PASSWORD") or secrets.token_urlsafe(12)
     db = Database(database)
     db.initialize(admin_password)
     ApiHandler.db = db; ApiHandler.master_db=db; ApiHandler.company_manager=CompanyManager(database)
     server = ThreadingHTTPServer((host, port), ApiHandler)
-    print(f"Saber Accounting server running at http://{host}:{port}")
+    if tls_cert:
+        context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version=ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(tls_cert,tls_key)
+        server.socket=context.wrap_socket(server.socket,server_side=True)
+    print(f"Saber Accounting server running at {'https' if tls_cert else 'http'}://{host}:{port}")
     print("For a new database, sign in as admin with this one-time initial password:")
     print(admin_password)
     server.serve_forever()
@@ -807,9 +818,12 @@ def main():
     parser.add_argument("--database", default=str(Path.home() / "SaberAccounting" / "saber_accounting_v0_7.db"))
     parser.add_argument("--admin-password", default=None,
                         help="Initial admin password (or set SABER_ADMIN_PASSWORD)")
+    parser.add_argument("--tls-cert",help="Path to a trusted TLS certificate chain (PEM)")
+    parser.add_argument("--tls-key",help="Path to the matching TLS private key (PEM)")
+    parser.add_argument("--allow-insecure-lan",action="store_true",help="Explicitly permit plaintext on a trusted VPN/LAN")
     args = parser.parse_args()
     Path(args.database).parent.mkdir(parents=True, exist_ok=True)
-    run_server(args.host, args.port, args.database, args.admin_password)
+    run_server(args.host,args.port,args.database,args.admin_password,args.tls_cert,args.tls_key,args.allow_insecure_lan)
 
 if __name__ == "__main__":
     main()
