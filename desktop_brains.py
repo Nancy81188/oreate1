@@ -110,9 +110,6 @@ class EditableSheet:
         if not bbox: return
         row = self.rows[iid]; value = row.get(key, "")
         editor = tk.Entry(self.tree, justify={"w": "left", "e": "right"}.get(self.columns[index][3], "center"))
-        if "date" in key.lower() or "date" in str(self.columns[index][1]).lower():
-            from desktop import attach_date_entry
-            attach_date_entry(editor, normalize=False)
         editor.insert(0, "" if value is None else str(value)); editor.place(x=bbox[0], y=bbox[1], width=max(bbox[2], 70), height=bbox[3])
         editor.focus_set(); editor.select_range(0, "end"); done = {"flag": False}
         def commit(move):

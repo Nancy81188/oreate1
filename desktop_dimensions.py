@@ -185,11 +185,13 @@ class DimensionsMixin:
             self.action_button(forecast_bar,label,lambda fmt=mode:self.export_budget_forecast(fmt)).pack(side="left",padx=2)
         tk.Label(forecast_bar,text="Company-wide actuals; trailing 3 complete months estimate the future.",bg=LIGHT,fg=MUTED).pack(side="left",padx=10)
         long_bar=tk.Frame(page,bg=LIGHT); long_bar.pack(fill="x",padx=10,pady=(0,5))
-        self.budget_long_target=tk.StringVar(value=""); self.budget_long_growth=tk.StringVar(value="0")
+        self.budget_long_target=tk.StringVar(value=""); self.budget_long_growth=tk.StringVar(value="0"); self.budget_long_growth_by_year=tk.StringVar(value="")
         tk.Label(long_bar,text="5-Year Projection to date (DD-MM-YYYY)",bg=LIGHT).pack(side="left")
         tk.Entry(long_bar,textvariable=self.budget_long_target,width=12).pack(side="left",padx=(4,10))
         tk.Label(long_bar,text="Growth % per year",bg=LIGHT).pack(side="left")
         tk.Entry(long_bar,textvariable=self.budget_long_growth,width=7).pack(side="left",padx=(4,10))
+        tk.Label(long_bar,text="Per-year % (e.g. 2027=10, 2028=5)",bg=LIGHT).pack(side="left")
+        tk.Entry(long_bar,textvariable=self.budget_long_growth_by_year,width=22).pack(side="left",padx=(4,10))
         self.action_button(long_bar,"5-Year Projection",self.budget_long_term_projection).pack(side="left",padx=3)
         tk.Label(long_bar,text="Uses the Actual report year above as the base year; a saved budget for a future year wins over the growth %.",bg=LIGHT,fg=MUTED).pack(side="left",padx=10)
         tools = tk.Frame(page, bg=LIGHT); tools.pack(fill="x", padx=10)
@@ -336,6 +338,8 @@ class DimensionsMixin:
         try: target_date=datetime.strptime(self.budget_long_target.get().strip(),"%d-%m-%Y").strftime("%Y-%m-%d")
         except ValueError: return messagebox.showwarning("5-Year Projection","Enter the target date as DD-MM-YYYY, for example 31-12-2030")
         growth_rate=(_num(self.budget_long_growth.get()) or 0)/100
+        try: growth_by_year=self._parse_growth_by_year(self.budget_long_growth_by_year.get())
+        except ValueError as exc: return messagebox.showwarning("5-Year Projection",str(exc))
         currency=self.budget_currency.get()
         try: actual_rows=self.client.profit_loss(f"01-01-{base_year}",f"31-12-{base_year}",currency)
         except Exception as exc: return messagebox.showerror("5-Year Projection",str(exc))
@@ -351,7 +355,7 @@ class DimensionsMixin:
                 lines={line["account_code"]:_num(line["annual"]) or 0 for line in saved if line.get("account_code") in base_values}
                 if lines: budget_by_year[year]=lines
         except Exception: pass  # a saved-budget lookup failure just falls back to the growth rate
-        try: projection=long_term_projection(base_values,base_year,target_date,growth_rate,budget_by_year)
+        try: projection=long_term_projection(base_values,base_year,target_date,growth_rate,budget_by_year,growth_by_year=growth_by_year)
         except ValueError as exc: return messagebox.showwarning("5-Year Projection",str(exc))
         net_rows=[]; detail=[]
         for entry in projection:
@@ -362,7 +366,7 @@ class DimensionsMixin:
                 detail.append([entry["year"],entry["date_to"],code,names.get(code,code),types.get(code,"").title(),entry["source"].title(),round(amount,2)])
         self.budget_forecast_result={"title":f"Budget {base_year} to {target_date[8:10]}-{target_date[5:7]}-{target_date[0:4]} (5-Year Projection)",
             "meta":[f"Currency: {currency}",f"Base year actuals: {base_year}",f"Target date: {self.budget_long_target.get().strip()}",
-                    f"Growth rate: {growth_rate*100:.2f}% per year where no saved budget exists for that year"],
+                    f"Growth rate: {growth_rate*100:.2f}% per year where no saved budget exists for that year"]+(["Per-year growth overrides: "+", ".join(f"{y}={r*100:.2f}%" for y,r in sorted(growth_by_year.items()))] if growth_by_year else []),
             "sections":[{"heading":"Net income / expense by year","headers":["Year","Up to","Source","Income","Expense","Net"],"rows":net_rows,"total_rows":[]},
                         {"heading":"By account","headers":["Year","Up to","Account","Account Name","Type","Source","Amount"],"rows":detail,"total_rows":[]}]}
         self.show_sections(self.budget_viewer,self.budget_forecast_result["sections"])

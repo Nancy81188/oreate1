@@ -103,6 +103,7 @@ class PayrollOfficialReportsTest(unittest.TestCase):
         r6 = build_payroll_report(self.db, "R6", "yearly", 2025, 1, "both")
         employee_sheet = next(s for s in r6["sections"] if "Rami Employee" in s["heading"])
         self.assertEqual(len(employee_sheet["rows"]), 7)  # six months + total
+        self.assertIn("NSSF Family Allowance", employee_sheet["headers"])  # NSSF family allowance shown on the individual statement
         self.assertEqual(employee_sheet["rows"][3][employee_sheet["headers"].index("Retro Period")], "01-01-2025 to 31-03-2025")
         with self.assertRaisesRegex(ValueError, "Quarter"): period_range("quarterly", 2025, 5)
 
@@ -533,6 +534,48 @@ class LebanesePayrollRulesTest(unittest.TestCase):
         self.assertAlmostEqual(sum(r["debit"] - r["credit"] for r in self.db.journal()), 0, places=2)
         nssf = [r for r in self.db.journal() if r["account_code"] == "4431"]
         self.assertAlmostEqual(sum(r["debit"] for r in nssf), 62.18, places=2)
+
+    def test_family_tax_deduction_halved_when_spouse_works(self):
+        # Same married employee with 3 children: when the spouse also works the family deduction is split in half.
+        stay_home = self.db.save_employee({"employee_number": "3000", "full_name": "Home Spouse", "currency": "LBP",
+            "base_salary": "120000000", "marital_status": "married", "children": 3, "spouse_works": False}, self.user)
+        both_work = self.db.save_employee({"employee_number": "3100", "full_name": "Working Spouse", "currency": "LBP",
+            "base_salary": "120000000", "marital_status": "married", "children": 3, "spouse_works": True}, self.user)
+        home = self.calc(stay_home, "31-05-2026"); working = self.calc(both_work, "31-05-2026")
+        self.assertGreater(working["income_tax_lbp"], home["income_tax_lbp"])  # smaller deduction -> more tax
+        self.assertTrue(any("Family tax deduction halved" in note for note in working["compliance_notes"]))
+        self.assertFalse(any("Family tax deduction halved" in note for note in home["compliance_notes"]))
+
+    def test_end_of_service_exempt_for_foreign_or_over_64(self):
+        lebanese = self.db.save_employee({"employee_number": "4000", "full_name": "Local Young", "currency": "LBP",
+            "base_salary": "60000000", "nationality": "Lebanese", "birth_date": "01-01-1990"}, self.user)
+        foreign = self.db.save_employee({"employee_number": "4100", "full_name": "Foreign Worker", "currency": "LBP",
+            "base_salary": "60000000", "nationality": "Syrian", "birth_date": "01-01-1990"}, self.user)
+        senior = self.db.save_employee({"employee_number": "4200", "full_name": "Senior Local", "currency": "LBP",
+            "base_salary": "60000000", "nationality": "Lebanese", "birth_date": "01-01-1955"}, self.user)
+        local = self.calc(lebanese, "31-05-2026")
+        self.assertGreater(local["employer_end_service"], 0)  # Lebanese under 64 still owes the 8.5%
+        foreign_calc = self.calc(foreign, "31-05-2026")
+        self.assertEqual(foreign_calc["employer_end_service"], 0)
+        self.assertTrue(any("end-of-service" in note and "foreign" in note for note in foreign_calc["compliance_notes"]))
+        senior_calc = self.calc(senior, "31-05-2026")
+        self.assertEqual(senior_calc["employer_end_service"], 0)
+        self.assertTrue(any("end-of-service" in note and "over 64" in note for note in senior_calc["compliance_notes"]))
+
+    def test_nssf_family_allowance_reported_on_statement(self):
+        # A married employee with a non-working spouse and children receives the NSSF family allowance on the payslip.
+        breadwinner = self.db.save_employee({"employee_number": "5000", "full_name": "Provider", "currency": "LBP",
+            "base_salary": "60000000", "marital_status": "married", "children": 2, "spouse_works": False,
+            "nssf_number": "NSSF-9", "mof_number": "MOF-9"}, self.user)
+        result = self.calc(breadwinner, "31-05-2026")
+        self.assertGreater(result["family_allowance"], 0)
+        saved = self.db.save_payroll({"employee_id": breadwinner["id"], "period_date": "31-05-2026"}, self.user)
+        self.db.post_payroll(saved["id"], self.user)
+        r6 = build_payroll_report(self.db, "R6", "monthly", 2026, 5, "both")
+        sheet = next(s for s in r6["sections"] if "Provider" in s["heading"])
+        self.assertIn("NSSF Family Allowance", sheet["headers"])
+        allowance_column = sheet["headers"].index("NSSF Family Allowance")
+        self.assertGreater(sheet["rows"][0][allowance_column], 0)
 
 class LebaneseVatLawTest(unittest.TestCase):
     """Partial deduction (Art. 31), zero-rated and exempt supplies, reverse charge (Art. 40), Q4 adjustment and refund (Art. 30)."""

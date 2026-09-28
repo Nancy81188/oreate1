@@ -21,7 +21,7 @@ GROUPS = {"employee": "Employees", "manager": "Managers"}
 COMPONENTS = (("salary", "Salary"), ("transport", "Transport"), ("overtime", "Overtime"), ("commission", "Commission"),
               ("retro_salary", "Retro Salary"), ("schooling", "Schooling"), ("bonus", "Bonus"), ("thirteenth_month", "13th Salary"))
 MONEY_FIELDS = tuple(key for key, _ in COMPONENTS) + ("gross_salary", "taxable_salary", "nssf_base", "employee_nssf",
-    "employer_medical", "employer_family", "employer_end_service", "net_salary", "retro_tax")
+    "employer_medical", "employer_family", "employer_end_service", "net_salary", "retro_tax", "family_allowance")
 ZERO = Decimal("0")
 
 
@@ -166,9 +166,9 @@ def _r5_sections(label, items):
 
 def _r6_sections(label, records, employee_label):
     sections = []
-    headers = ["Month"] + [name for _, name in COMPONENTS] + ["Retro Period", "Gross", "Taxable", "Income Tax", "Retro Tax", employee_label, "Net Salary", "Status"]
+    headers = ["Month"] + [name for _, name in COMPONENTS] + ["Retro Period", "Gross", "Taxable", "Income Tax", "Retro Tax", employee_label, "NSSF Family Allowance", "Net Salary", "Status"]
     fields = [key for key, _ in COMPONENTS]
-    tail = ("gross_salary", "taxable_salary", "income_tax", "retro_tax", "employee_nssf", "net_salary")
+    tail = ("gross_salary", "taxable_salary", "income_tax", "retro_tax", "employee_nssf", "family_allowance", "net_salary")
     by_employee = {}
     for row in records: by_employee.setdefault(row["employee_id"], []).append(row)
     for rows in by_employee.values():

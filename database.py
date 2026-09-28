@@ -2594,8 +2594,14 @@ class Database:
         if taxable_transport_lbp>0: notes.append(f"Transport above the exempt {int(setting('transport_daily_exempt')):,} LBP x {days} days is taxed")
         if taxable_schooling_lbp>0: notes.append("Schooling above the exempt annual limit is taxed")
         allowance=setting("single_allowance")
-        if employee["marital_status"] in ("married","spouse") and not int(employee["spouse_works"] or 0): allowance+=setting("spouse_allowance")
-        allowance+=setting("child_allowance")*min(children,int(setting("max_children_deduction","5")))
+        married=employee["marital_status"] in ("married","spouse"); spouse_works=married and bool(int(employee["spouse_works"] or 0))
+        family_deduction=D("0")
+        if married: family_deduction+=setting("spouse_allowance")
+        family_deduction+=setting("child_allowance")*min(children,int(setting("max_children_deduction","5")))
+        if spouse_works and family_deduction>0:
+            family_deduction=family_deduction/2
+            notes.append("Family tax deduction halved: married and the spouse also works, so the family deduction is split between the two spouses (confirm the split with your accountant)")
+        allowance+=family_deduction
         if children>int(setting("max_children_deduction","5")): notes.append(f"Family deduction limited to {int(setting('max_children_deduction','5'))} children")
         regular_lbp=to_lbp(money["salary"]+money["overtime"]+money["commission"])+taxable_transport_lbp+taxable_schooling_lbp
         tax=lambda annual: self._progressive_tax(max(D("0"),annual-allowance),brackets)
@@ -2637,6 +2643,21 @@ class Database:
                 month_settings=self.payroll_settings_for(month); regular_month=to_lbp(money["salary"]+money["overtime"]+money["commission"],month); extra=to_lbp(share,month)
                 for name,ceiling,rate in (("employee","employee_ceiling","employee_nssf_rate"),("medical","medical_ceiling","medical_rate"),("family","family_ceiling","family_rate"),("end_service","end_service_ceiling","end_service_rate")):
                     totals[name]+=contribution(ceiling,rate,regular_month+extra,month_settings)-contribution(ceiling,rate,regular_month,month_settings)
+        # Employer end-of-service (8.5%) is not due for foreign employees (not covered by the scheme) or for
+        # employees over 64 (past the end-of-service retirement age) - confirm eligibility with your accountant.
+        age=None
+        if employee["birth_date"]:
+            try:
+                birth=iso_date(str(employee["birth_date"]),"Date of birth")
+                age=int(period[:4])-int(birth[:4])-(1 if period[5:]<birth[5:] else 0)
+            except Exception: age=None
+        nationality=str(employee["nationality"] or "").strip().lower()
+        lebanese_terms=("lebanese","lebanon","lb","\u0644\u0628\u0646\u0627\u0646\u064a","\u0644\u0628\u0646\u0627\u0646\u064a\u0629","\u0644\u0628\u0646\u0627\u0646")
+        is_foreign=bool(nationality) and not any(term in nationality for term in lebanese_terms)
+        if totals["end_service"]>0 and (is_foreign or (age is not None and age>64)):
+            totals["end_service"]=D("0")
+            reason="foreign national" if is_foreign else "over 64"
+            notes.append(f"Employer end-of-service (8.5%) exempted: employee is {reason} (confirm eligibility with your accountant)")
         nssf={name:(value.quantize(D("0.01")),from_lbp(value).quantize(D("0.01"))) for name,value in totals.items()}
         # NSSF family allowances paid with the salary on behalf of the NSSF (not taxable, offset against NSSF dues).
         allowance_lbp=D("0")

@@ -41,6 +41,25 @@ class FinancialProjectionTest(unittest.TestCase):
         self.assertEqual(by_year[2027]["source"],"growth")
         self.assertEqual(by_year[2029]["source"],"growth")
 
+    def test_long_term_projection_uses_per_year_growth_overrides(self):
+        # 2027 grows +10%, 2028 +5% (per-year override), 2029 falls back to the default 20%
+        rows=long_term_projection({"sales":100000},2026,"2029-12-31",growth_rate=0.20,
+                                  growth_by_year={2027:0.10,2028:0.05})
+        by_year={r["year"]:r for r in rows}
+        self.assertAlmostEqual(by_year[2027]["values"]["sales"],110000)          # 100000 * 1.10
+        self.assertAlmostEqual(by_year[2028]["values"]["sales"],115500)          # * 1.05
+        self.assertAlmostEqual(by_year[2029]["values"]["sales"],138600)          # * 1.20 default
+        self.assertEqual(by_year[2027]["growth_rate"],0.10)
+        self.assertEqual(by_year[2029]["growth_rate"],0.20)
+
+    def test_per_year_growth_saved_budget_still_wins(self):
+        rows=long_term_projection({"sales":100000},2026,"2029-12-31",growth_rate=0.10,
+                                  budget_by_year={2028:{"sales":500000}},growth_by_year={2027:0.30})
+        by_year={r["year"]:r for r in rows}
+        self.assertAlmostEqual(by_year[2027]["values"]["sales"],130000)          # per-year override applied
+        self.assertEqual(by_year[2028]["source"],"budget")                        # saved budget still wins
+        self.assertEqual(by_year[2028]["values"]["sales"],500000.0)
+
     def test_long_term_projection_rejects_bad_horizon(self):
         with self.assertRaisesRegex(ValueError,"at least one year"):
             long_term_projection({"sales":1},2026,"2026-12-31",growth_rate=0.1)

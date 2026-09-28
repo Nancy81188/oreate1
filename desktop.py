@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import tkinter as tk
 import sys
 import traceback
@@ -55,48 +54,6 @@ def auto_dash_date(text):
     if len(digits) <= 4: return f"{digits[:2]}-{digits[2:]}"
     return f"{digits[:2]}-{digits[2:4]}-{digits[4:]}"
 
-_DATE_LABEL = re.compile(r"\bdates?\b|expir|\bas of\b|تاريخ", re.IGNORECASE)
-
-def attach_date_entry(entry, normalize=True):
-    """Give any Entry the date behaviour: type 31122024 and it shows 31-12-2024."""
-    if getattr(entry, "_saber_date", False): return entry
-    entry._saber_date = True
-    def dashes(event=None):
-        if event is not None and event.keysym in ("BackSpace","Delete","Left","Right","Home","End","Tab","Shift_L","Shift_R","Control_L","Control_R"): return
-        try:
-            if str(entry.cget("state")) != "normal": return
-            value = entry.get()
-        except tk.TclError: return
-        if not value or any(ch.isalpha() for ch in value) or (len(value)==10 and value[4]=="-"): return
-        formatted = auto_dash_date(value)
-        if formatted != value: entry.delete(0,"end"); entry.insert(0,formatted); entry.icursor("end")
-    entry.bind("<KeyRelease>", dashes, add="+")
-    if normalize:
-        def tidy(_event=None):
-            try:
-                if str(entry.cget("state")) != "normal": return
-                value = entry.get().strip()
-                if value: formatted = formatted_user_date(value); entry.delete(0,"end"); entry.insert(0,formatted)
-            except (ValueError, tk.TclError): pass
-        entry.bind("<FocusOut>", tidy, add="+")
-    return entry
-
-def looks_like_date_field(entry):
-    """True when the label written next to (or above) an Entry mentions a date."""
-    try:
-        parent = entry.master; manager = entry.winfo_manager(); labels = []
-        if manager == "grid":
-            info = entry.grid_info(); row, column = int(info["row"]), int(info["column"])
-            same_row = [w for w in parent.grid_slaves(row=row) if w.winfo_class()=="Label" and int(w.grid_info()["column"])<column]
-            if same_row: labels.append(max(same_row, key=lambda w: int(w.grid_info()["column"])))
-            elif row > 0: labels += [w for w in parent.grid_slaves(row=row-1, column=column) if w.winfo_class()=="Label"]
-        elif manager == "pack":
-            slaves = parent.pack_slaves(); index = slaves.index(entry)
-            if index > 0 and slaves[index-1].winfo_class()=="Label": labels.append(slaves[index-1])
-        return any(_DATE_LABEL.search(str(label.cget("text"))) for label in labels)
-    except Exception:
-        return False
-
 def sortable_date(value):
     text=str(value or "").strip()
     for pattern in ("%d-%m-%Y","%Y-%m-%d"):
@@ -127,7 +84,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.13")
+        self.title("Saber Accounting 2.9.14")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -177,7 +134,6 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self._style()
         self.bind_all("<F2>",self.open_active_account_lookup)
         self.bind_all("<Control-f>",self.focus_page_search); self.bind_all("<Control-F>",self.focus_page_search)
-        self.install_mouse_and_date_helpers()
         self.login_screen()
 
     def _style(self):
@@ -225,7 +181,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         return today.strftime("%d-%m-%Y") if year==today.year else f"01-01-{year}"
 
     def date_entry(self,parent,variable,width=13):
-        entry=tk.Entry(parent,textvariable=variable,width=width); entry._saber_date=True
+        entry=tk.Entry(parent,textvariable=variable,width=width)
         def dashes(event=None):
             if event is not None and event.keysym in ("BackSpace","Delete","Left","Right","Home","End","Tab","Shift_L","Shift_R"): return
             value=variable.get()
@@ -457,40 +413,10 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         if self.can_use("payroll"): builders.append(self.build_payroll)
         if self.can_use("vat"): builders.append(self.build_vat_return)
         builders+=[self.build_journal,self.build_trial,self.build_profit_loss,self.build_financial_reports,self.build_statement,self.build_accounts,self.build_settings]
-        # Fast opening: show the first page at once, then build the other pages one by one in the background
-        # so the window never freezes. Opening a page that is not ready yet builds the rest immediately.
-        self._build_generation=getattr(self,"_build_generation",0)+1; generation=self._build_generation
-        self._pending_builds=list(builders)
-        def build_one(build):
+        for build in builders:
             try: build()
             except Exception as exc:
                 traceback.print_exc(); messagebox.showerror("Saber Accounting",f"A page could not be loaded ({build.__name__.replace('build_','').replace('_',' ')}): {exc}\n\nThe other pages are still available.")
-        def build_next():
-            if generation!=self._build_generation or not self._pending_builds: return
-            build_one(self._pending_builds.pop(0))
-            if self._pending_builds: self.after(15,build_next)
-            else: self.finish_page_builds()
-        self._build_one_page=build_one
-        build_one(self._pending_builds.pop(0)); self.update_idletasks()
-        notebook.bind("<<NotebookTabChanged>>",lambda _event:self.complete_page_builds(),add="+")
-        self.after(30,build_next)
-
-    def complete_page_builds(self):
-        """Build every page that is still waiting (used when the user opens a page early)."""
-        pending=getattr(self,"_pending_builds",None)
-        if not pending: return
-        try:
-            if self.nametowidget(self.main_notebook.select()) is self.main_tab_pages[0]: return  # still on the first page
-        except Exception: pass
-        self.config(cursor="watch"); self.update_idletasks()
-        try:
-            while self._pending_builds: self._build_one_page(self._pending_builds.pop(0))
-        finally: self.config(cursor="")
-        self.finish_page_builds()
-
-    def finish_page_builds(self):
-        if getattr(self,"_pages_finished_generation",None)==self._build_generation: return
-        self._pages_finished_generation=self._build_generation
         self.setup_context_f2()
         self.after(700,lambda:self.show_document_alerts(startup=True))
 
@@ -506,83 +432,6 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         meta=[f"From {self.journal_from_date.get() or '-'} to {self.journal_to_date.get() or '-'}"]+([f"Voucher: {self.journal_find.get()}"] if self.journal_find.get().strip() else [])+([f"Details: {self.journal_find_details.get()}"] if self.journal_find_details.get().strip() else [])
         self.output_sections("General Journal",meta,[{"heading":f"{len(rows)} line(s)","headers":headers,"rows":body,"total_rows":[len(body)-1]}],"General_Journal",
                              {"preview":"preview","pdf":"pdf","print":"print"}[mode])
-
-    # ------------------------------------------------------------ mouse wheel, right-click search, automatic date dashes
-    def install_mouse_and_date_helpers(self):
-        self.bind_all("<MouseWheel>", self.page_mouse_wheel, add="+")
-        self.bind_all("<Shift-MouseWheel>", lambda e: self.page_mouse_wheel(e, horizontal=True), add="+")
-        self.bind_all("<Button-3>", self.right_click_search, add="+")
-        self.bind_class("Entry", "<FocusIn>", self.detect_date_entry, add="+")
-
-    def detect_date_entry(self, event):
-        entry = event.widget
-        if getattr(entry, "_saber_date", False) or getattr(entry, "_saber_date_checked", False): return
-        entry._saber_date_checked = True
-        if not getattr(entry, "_is_search_entry", False) and looks_like_date_field(entry): attach_date_entry(entry)
-
-    def page_mouse_wheel(self, event, horizontal=False):
-        """Scroll the whole page with the wheel; tables and text boxes keep scrolling themselves first."""
-        try: widget = self.winfo_containing(event.x_root, event.y_root)
-        except Exception: return
-        step = -1 if event.delta > 0 else 1
-        while widget is not None:
-            kind = widget.winfo_class()
-            if kind in ("TCombobox", "Spinbox", "TSpinbox"): return
-            if kind in ("Treeview", "Text", "Listbox") and not horizontal:
-                try: first, last = widget.yview()
-                except Exception: return
-                if (step < 0 and first > 0.0) or (step > 0 and last < 1.0): return  # the table scrolls itself
-            if kind == "Canvas":
-                command = widget.cget("xscrollcommand" if horizontal else "yscrollcommand")
-                if command:
-                    first, last = widget.xview() if horizontal else widget.yview()
-                    if (first, last) != (0.0, 1.0):
-                        (widget.xview_scroll if horizontal else widget.yview_scroll)(step * 3, "units")
-                        return "break"
-            widget = widget.master
-
-    def right_click_search(self, event):
-        """Right-click on a page or table jumps to its Search box; inside a typing box it offers copy/paste too."""
-        widget = event.widget
-        if not isinstance(widget, tk.Misc): return
-        try:
-            if widget.bind("<Button-3>"): return  # this table has its own right-click action
-        except Exception: pass
-        search = self.nearest_search_entry(widget)
-        if widget.winfo_class() in ("Entry", "TEntry", "Text", "TCombobox"):
-            menu = tk.Menu(self, tearoff=0)
-            menu.add_command(label="Cut", command=lambda: widget.event_generate("<<Cut>>"))
-            menu.add_command(label="Copy", command=lambda: widget.event_generate("<<Copy>>"))
-            menu.add_command(label="Paste", command=lambda: widget.event_generate("<<Paste>>"))
-            if search is not None and search is not widget:
-                menu.add_separator(); menu.add_command(label="Search", command=lambda: self._focus_search(search))
-            try: menu.tk_popup(event.x_root, event.y_root)
-            finally: menu.grab_release()
-            return "break"
-        if search is not None: self._focus_search(search); return "break"
-
-    def _focus_search(self, entry):
-        try: entry.focus_set(); entry.select_range(0, "end"); entry.icursor("end")
-        except tk.TclError: pass
-
-    def nearest_search_entry(self, widget):
-        """The visible Search box closest to the clicked widget (same table/section first, then the page)."""
-        current = widget
-        while current is not None:
-            stack = [current]
-            while stack:
-                item = stack.pop(0)
-                if getattr(item, "_is_search_entry", False):
-                    try:
-                        if item.winfo_ismapped(): return item
-                    except tk.TclError: pass
-                stack.extend(item.winfo_children())
-            if isinstance(current, (tk.Toplevel, tk.Tk)): break
-            try:
-                if current in getattr(self, "main_tab_pages", []): break
-            except Exception: pass
-            current = current.master
-        return None
 
     def focus_page_search(self,_event=None):
         """Ctrl+F: put the cursor in the first visible Search box of the current page."""
@@ -702,6 +551,16 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         for key,label,_width in columns: tree.heading(key,text=label,command=lambda column=key:sort_column(column))
         search_var.trace_add("write",apply_search)
         search_entry.bind("<Escape>",lambda _event:search_var.set(""))
+        context_menu=tk.Menu(tree,tearoff=0)
+        def focus_search():
+            search_entry.focus_set(); search_entry.select_range(0,"end")
+        context_menu.add_command(label="Search…",command=focus_search)
+        context_menu.add_command(label="Clear search",command=lambda:search_var.set(""))
+        def show_context_menu(event):
+            try: context_menu.tk_popup(event.x_root,event.y_root)
+            finally: context_menu.grab_release()
+        tree.bind("<Button-3>",show_context_menu)  # right-click on Windows/Linux
+        tree.bind("<Button-2>",show_context_menu)  # right-click on macOS trackpads
         return tree
 
     def build_dashboard(self):
@@ -1862,6 +1721,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.action_button(employee_actions,"Official R3-1 Form",lambda:self.download_payroll_form("R3-1")).pack(side="left",padx=4)
         nssf_forms=tk.Frame(employees,bg=LIGHT); nssf_forms.pack(fill="x",padx=10,pady=(0,5))
         tk.Label(nssf_forms,text="NSSF employee forms:",bg=LIGHT,fg=NAVY,font=("Segoe UI",9,"bold")).pack(side="left",padx=4)
+        self.action_button(nssf_forms,"Employment Declaration Worksheet",lambda:self.employee_nssf_declaration("hire","preview")).pack(side="left",padx=4)
+        self.action_button(nssf_forms,"Termination Declaration Worksheet",lambda:self.employee_nssf_declaration("leave","preview")).pack(side="left",padx=4)
         self.action_button(nssf_forms,"New Employee Registration",lambda:self.download_payroll_form("NSSF-HIRE-NEW")).pack(side="left",padx=4)
         self.action_button(nssf_forms,"Hire Existing NSSF Member",lambda:self.download_payroll_form("NSSF-HIRE-EXISTING")).pack(side="left",padx=4)
         self.action_button(nssf_forms,"Employee Leaving",lambda:self.download_payroll_form("NSSF-LEAVE")).pack(side="left",padx=4)
@@ -1963,6 +1824,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         if not selected: return messagebox.showwarning("R3 Registration","Select an employee first")
         employee=next((row for row in getattr(self,"employee_rows",[]) if str(row["id"])==str(selected[0])),None)
         if not employee: return messagebox.showwarning("R3 Registration","Refresh the employee list and select an employee")
+        company=self.client.settings()
+        employer=((("Employer / company",company.get("company_name")),("Employer address",company.get("company_address")),
+                   ("Employer phone",company.get("company_phone")),("MOF / VAT number",company.get("company_mof")),
+                   ("NSSF employer number",company.get("company_nssf"))))
+        employer_rows=[[label,value if value not in (None,"") else "MISSING"] for label,value in employer]
         fields=(("Full name","full_name"),("Father's name","father_name"),("Mother's name","mother_name"),
                 ("Nationality","nationality"),("Date of birth","birth_date"),("Place of birth","birth_place"),
                 ("National ID","national_id"),("MOF personal number","mof_number"),("NSSF number","nssf_number"),
@@ -1970,14 +1836,47 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                 ("Phone","contact_number"),("Profession","job_title"),("Start date","hire_date"))
         rows=[[label,employee.get(key) if employee.get(key) not in (None,"") else "MISSING"] for label,key in fields]
         missing=[label for (label,key),row in zip(fields,rows) if row[1]=="MISSING"]
+        missing+=[label for label,row in zip(("Employer / company","Employer address","Employer phone","MOF / VAT number","NSSF employer number"),employer_rows) if row[1]=="MISSING"]
         meta=[f'Employee ID: {employee["employee_number"]}',
-              "Preparation worksheet only. Complete and submit the Ministry of Finance R3 form separately.",
+              "Preparation worksheet only. Complete and submit the Ministry of Finance R3 / R3-1 form separately.",
               "Official form: https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf",
               "Check the official form for other details and supporting documents."]
-        if missing: meta.append("Missing in employee file: " + ", ".join(missing))
+        if missing: meta.append("Missing in the company or employee file: " + ", ".join(missing))
         self.output_sections("R3 Employee Registration Worksheet",meta,
-            [{"heading":"Employee information","headers":["Field","Value"],"rows":rows,"total_rows":[]}],
+            [{"heading":"Employer information","headers":["Field","Value"],"rows":employer_rows,"total_rows":[]},
+             {"heading":"Employee information","headers":["Field","Value"],"rows":rows,"total_rows":[]}],
             f'R3_Worksheet_{employee["employee_number"]}',format_name)
+
+    def employee_nssf_declaration(self,kind,format_name):
+        titles={"hire":("NSSF Employment Declaration","NSSF Employment Declaration (Estekhdam Ajir) Worksheet | \u0625\u0639\u0644\u0627\u0645 \u0627\u0633\u062a\u062e\u062f\u0627\u0645 \u0623\u062c\u064a\u0631","NSSF-HIRE-NEW","hire_date","Start date"),
+                "leave":("NSSF Termination Declaration","NSSF Termination Declaration (Tark Ajir) Worksheet | \u0625\u0639\u0644\u0627\u0645 \u062a\u0631\u0643 \u0623\u062c\u064a\u0631","NSSF-LEAVE","leave_date","Leaving date")}
+        warn,title,form,date_key,date_label=titles[kind]
+        selected=self.employee_tree.selection()
+        if not selected: return messagebox.showwarning(warn,"Select an employee first")
+        employee=next((row for row in getattr(self,"employee_rows",[]) if str(row["id"])==str(selected[0])),None)
+        if not employee: return messagebox.showwarning(warn,"Refresh the employee list and select an employee")
+        company=self.client.settings()
+        employer=(("Employer / company",company.get("company_name")),("Employer address",company.get("company_address")),
+                  ("Employer phone",company.get("company_phone")),("NSSF employer number",company.get("company_nssf")),
+                  ("MOF / VAT number",company.get("company_mof")))
+        employer_rows=[[label,value if value not in (None,"") else "MISSING"] for label,value in employer]
+        fields=(("Full name","full_name"),("Father's name","father_name"),("Mother's name","mother_name"),
+                ("Nationality","nationality"),("Date of birth","birth_date"),("Place of birth","birth_place"),
+                ("National ID","national_id"),("NSSF number","nssf_number"),("Marital status","marital_status"),
+                ("Children","children"),("Address","address"),("Phone","contact_number"),("Profession","job_title"),
+                (date_label,date_key),("Base salary","base_salary"))
+        rows=[[label,employee.get(key) if employee.get(key) not in (None,"") else "MISSING"] for label,key in fields]
+        missing=[label for (label,key),row in zip(fields,rows) if row[1]=="MISSING"]
+        missing+=[label for label,row in zip(("Employer / company","Employer address","Employer phone","NSSF employer number","MOF / VAT number"),employer_rows) if row[1]=="MISSING"]
+        meta=[f'Employee ID: {employee["employee_number"]}',
+              "Preparation worksheet only. Complete and submit the official CNSS form separately.",
+              "Download the official blank form from the NSSF employee forms buttons."]
+        if kind=="leave" and (employee.get("leave_date") in (None,"")): meta.append("No leaving date on file - set it in the employee file before you file the termination.")
+        if missing: meta.append("Missing in the company or employee file: " + ", ".join(missing))
+        self.output_sections(title,meta,
+            [{"heading":"Employer information","headers":["Field","Value"],"rows":employer_rows,"total_rows":[]},
+             {"heading":"Employee information","headers":["Field","Value"],"rows":rows,"total_rows":[]}],
+            f'NSSF_{kind}_Worksheet_{employee["employee_number"]}',format_name)
 
     def download_payroll_form(self,form):
         official={"R3":"https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf",
@@ -2392,11 +2291,13 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             ("inflow","Inflow",130),("outflow","Outflow",130),("net","Net cash movement",150)])
         self.report_buttons(cash_outlook,"cash_projection")
         long_cash_bar=tk.Frame(cash_outlook,bg=LIGHT); long_cash_bar.pack(fill="x",padx=10,pady=(0,8))
-        self.cash_long_target=tk.StringVar(value=""); self.cash_long_growth=tk.StringVar(value="0")
+        self.cash_long_target=tk.StringVar(value=""); self.cash_long_growth=tk.StringVar(value="0"); self.cash_long_growth_by_year=tk.StringVar(value="")
         tk.Label(long_cash_bar,text="5-Year Projection to date (DD-MM-YYYY)",bg=LIGHT,fg=NAVY).pack(side="left")
         tk.Entry(long_cash_bar,textvariable=self.cash_long_target,width=12).pack(side="left",padx=(4,10))
         tk.Label(long_cash_bar,text="Growth % per year",bg=LIGHT,fg=NAVY).pack(side="left")
         tk.Entry(long_cash_bar,textvariable=self.cash_long_growth,width=7).pack(side="left",padx=(4,10))
+        tk.Label(long_cash_bar,text="Per-year % (e.g. 2027=10, 2028=5)",bg=LIGHT,fg=NAVY).pack(side="left")
+        tk.Entry(long_cash_bar,textvariable=self.cash_long_growth_by_year,width=22).pack(side="left",padx=(4,10))
         self.action_button(long_cash_bar,"5-Year Projection",self.cashflow_long_term_projection).pack(side="left",padx=3)
         tk.Label(long_cash_bar,text="Uses \"Report year\" above as the base year; compounds the growth % each year ahead.",bg=LIGHT,fg=NAVY).pack(side="left",padx=10)
         self.cash_long_tree=self.table(cash_outlook,[("year","Year",70),("up_to","Up to",100),("currency","Currency",85),("source","Source",85),
@@ -2538,6 +2439,20 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             self.cash_projection_tree.insert("","end",values=(row["month"],row["status"],row["currency"],
                 f'{row["inflow"]:,.2f}',f'{row["outflow"]:,.2f}',f'{row["net"]:,.2f}'))
 
+    def _parse_growth_by_year(self,text):
+        """Parse 'YYYY=rate%' pairs (comma/semicolon separated) into {year: decimal_rate}. Empty -> {}."""
+        result={}
+        for part in str(text or "").replace(";",",").split(","):
+            part=part.strip()
+            if not part: continue
+            for sep in ("=",":"):
+                if sep in part: key,_,value=part.partition(sep); break
+            else: raise ValueError(f"Use YYYY=rate for per-year growth, not '{part}'")
+            try: year=int(key.strip()); rate=float(value.strip().rstrip("%"))/100
+            except ValueError: raise ValueError(f"Invalid per-year growth entry '{part}'")
+            result[year]=rate
+        return result
+
     def cashflow_long_term_projection(self):
         from financial_projection import long_term_projection
         try: base_year=int(self.cash_outlook_year.get())
@@ -2546,6 +2461,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         except ValueError: return messagebox.showwarning("5-Year Projection","Enter the target date as DD-MM-YYYY, for example 31-12-2030")
         try: growth_rate=float(self.cash_long_growth.get() or 0)/100
         except ValueError: growth_rate=0
+        try: growth_by_year=self._parse_growth_by_year(self.cash_long_growth_by_year.get())
+        except ValueError as exc: return messagebox.showwarning("5-Year Projection",str(exc))
         currency=None if self.view_currency.get()=="All Currencies" else self.view_currency.get()
         try: actual_rows=self.client.cash_flow(f"01-01-{base_year}",f"31-12-{base_year}",currency)
         except Exception as exc: return messagebox.showerror("5-Year Projection",str(exc))
@@ -2556,7 +2473,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         if not base_by_currency: return messagebox.showwarning("5-Year Projection",f"No cash flow actuals in {base_year} to project from")
         rows=[]
         for code,base_values in sorted(base_by_currency.items()):
-            try: projection=long_term_projection(base_values,base_year,target_date,growth_rate)
+            try: projection=long_term_projection(base_values,base_year,target_date,growth_rate,growth_by_year=growth_by_year)
             except ValueError as exc: return messagebox.showwarning("5-Year Projection",str(exc))
             for entry in projection:
                 inflow=entry["values"]["inflow"]; outflow=entry["values"]["outflow"]

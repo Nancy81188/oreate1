@@ -1,5 +1,21 @@
 # Saber Accounting MVP
 
+## Version 2.9.14 (Right-click search on every table)
+
+- Every listing table now opens a right-click menu (Windows/Linux right button, macOS trackpad two-finger) with "Search…" and "Clear search". "Search…" jumps to and selects the table's search box so you can type immediately; "Clear search" empties it and shows all rows again. This is an additional way to reach the search bar that was already on top of every table (Ctrl+F still works) — no existing behaviour was changed.
+- Validation: 147 automated tests passed (143 previous + 4 new that guard the right-click context menu, its Search / Clear search entries, and both right-click bindings). No existing feature or test was removed.
+- Changed files: `desktop.py`, `test_table_context_menu.py`, `installer.iss` and this README.
+
+## Version 2.9.11 (Payroll fairness rules and per-year projections)
+
+- Family income-tax deduction is now split in half for a married employee whose spouse also works, so the spouse and children deduction is shared between the two working spouses instead of being claimed twice. A compliance note reminds you to confirm the split with your accountant. When the spouse does not work the full deduction is kept as before.
+- The NSSF family allowance paid with the salary is shown explicitly on the individual salary statement (R6): a dedicated "NSSF Family Allowance" column reports the allowance already paid on behalf of the NSSF for each month, alongside gross, tax, NSSF and net.
+- The employer end-of-service contribution (8.5%) is automatically exempted for foreign nationals (not covered by the end-of-service scheme) and for employees over 64 (past the end-of-service retirement age), based on the nationality and date of birth in the employee file. A compliance note states the reason; confirm eligibility with your accountant. Lebanese employees under 64 still owe the contribution.
+- R3 / R3-1 registration and the NSSF employment (إعلام استخدام أجير) and termination (إعلام ترك أجير) declaration worksheets are auto-filled from the company (employer name, address, phone, MOF/VAT and NSSF employer numbers) and the selected employee file. Missing employer or employee fields are flagged. The official blank forms remain downloadable.
+- The 5-Year Projection for both Cash Flow and Budget accepts a per-year growth override (for example `2027=10, 2028=5`) in addition to the single flat growth rate. Each future year can grow at its own rate; a saved budget for a year still wins over any growth assumption.
+- Validation: 143 automated tests passed (138 previous + 5 new for the family-deduction split, end-of-service exemption, NSSF family allowance on the statement, and per-year projection growth). No existing feature or test was removed.
+- Changed files: `database.py`, `payroll_reports.py`, `financial_projection.py`, `desktop.py`, `desktop_dimensions.py`, `test_final_features.py`, `test_financial_projection.py`, `installer.iss` and this README.
+
 ## Version 2.9.10 (Combined payroll and financial reporting update)
 
 - Integrates PR #4 payroll/NSSF, journal-entry, visibility and login updates with PR #5 financial reporting. Version markers are unified; both change histories are retained.
