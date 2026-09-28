@@ -25,7 +25,10 @@ class PartialMonthPayrollTest(unittest.TestCase):
             short=db.calculate_payroll({"employee_id":partial["id"],"period_date":"31-05-2026"})
             self.assertEqual((short["worked_days"],short["calendar_days"]),(16,31))
             self.assertEqual(short["salary"],float((Decimal(120000000)*16/31).quantize(Decimal("0.01"))))
-            self.assertAlmostEqual(short["income_tax_lbp"],whole["income_tax_lbp"]*16/31,delta=0.02)
+            tax_fraction=Decimal(15)/30  # May 16-31 is 15 days on the statutory 30-day month
+            annualized=Decimal(str(short["salary"]))*12/tax_fraction
+            annual_tax=db._progressive_tax(max(Decimal(0),annualized-Decimal(settings["single_allowance"])),settings["tax_brackets"])
+            self.assertAlmostEqual(short["income_tax_lbp"],float(annual_tax*tax_fraction/12),delta=0.02)
             actual=db.calculate_payroll({"employee_id":partial["id"],"period_date":"31-05-2026",
                 "salary":"70000000"})
             self.assertEqual(actual["salary"],70000000)
