@@ -2271,7 +2271,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         public=tk.StringVar(value="0"); private=tk.StringVar(value="0")
         window=tk.Toplevel(self); window.title("Annual Schooling Grant"); window.transient(self)
         window.configure(bg=LIGHT); window.geometry("500x280")
-        tk.Label(window,text=f"Rules from {safe_display_date(rules.get('date_from'))}  |  {employee['full_name']}",
+        tk.Label(window,text=f"Schooling rules from {safe_display_date(rules.get('schooling_rules_date') or rules.get('date_from'))}  |  {employee['full_name']}",
             bg=LIGHT,fg=NAVY,font=("Segoe UI",10,"bold")).pack(anchor="w",padx=12,pady=10)
         for label,var in (("Public / free school or Lebanese University children",public),
                           ("Private school / university children",private)):
