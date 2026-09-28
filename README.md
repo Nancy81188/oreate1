@@ -1,5 +1,31 @@
 # Saber Accounting MVP
 
+## Version 2.9.9 (NSSF reporting and employee forms)
+
+- NSSF contributions report defaults to Auto by employee count: fewer than ten employees in the selected month gives the full quarter; ten or more gives that month. The report shows the roster count and chosen declaration period. Monthly, quarterly and yearly remain selectable for review.
+- Payroll > Employees offers blank official CNSS forms for registering a new employee, hiring an employee already registered with CNSS, and notifying CNSS that an employee left. R3 and R3-1 remain available.
+- The annual NSSF settlement automatically shows monthly posted payroll contributions and wage bases alongside the filed wage bases and payments entered by the accountant. Unknown filed amounts remain blank instead of being guessed.
+- Tax & NSSF Settings already provides editable, dated Family Ceiling and Sickness Ceiling. Default Family Ceiling is LBP 18,000,000 through April 2026 and LBP 28,000,000 from May 2026, with the effective May family allowances. Payroll tax and retroactive pay use the saved settings for their periods.
+
+## Version 2.9.8 (Employee dates in Payroll)
+
+- Payroll > Employees shows Starting Date and Leaving Date in the employee list, using the dates saved in each employee file. Double-click an employee or use Edit Selected to change them.
+
+## Version 2.9.7 (Independent Department and Project controls)
+
+- Departments and Projects now each have their own visibility checkbox in their respective Security data sheets. Either field can be hidden independently in entry forms, report filters, and Journal Voucher without deleting saved values. The application title matches the installer version.
+
+## Version 2.9.6 (Department and Project visibility)
+
+- The Departments and Projects data sheets under Security each have a Show Department / Project checkbox for entry forms, budget and report filters, and the Journal Voucher sheet.
+- Hiding fields only changes the display; saved department and project data remains intact. Report filters return to All when hidden so an unseen filter cannot narrow the report.
+
+## Version 2.9.5 (Journal entry and shared-server login protection)
+
+- In Journal Voucher, the first letter selects a currency in the voucher header and the line currency cell. The line detail copies into the next line; editing the next line leaves the first unchanged.
+- New Account in Journal Voucher creates an account immediately and places it on an available line without saving the voucher. Accounts created on the Accounts page are immediately recognized by an already-open Journal Voucher.
+- Failed logins are audited without passwords or tokens. Five failures per username or 30 per client IP within 15 minutes trigger a 15-minute lockout; the server returns HTTP 429 while blocked.
+- The shared server accepts a trusted TLS certificate and key. Plaintext is limited to localhost unless `--allow-insecure-lan` is deliberately specified for a trusted VPN/LAN.
 ## Version 2.9.5 (5-Year Projection for Budget and Cash Flow)
 
 - Budget page: a "5-Year Projection" section next to the existing quarterly/6-month/yearly forecast. Enter a target date up to 5 years after the "Actual report year" and, optionally, a yearly growth % applied to that year's posted income/expense actuals. For any future year that already has a saved budget, the saved budget is used instead of the growth %. The final (partial) year is prorated to the target date. Shown as net income/expense by year and by account, exportable like the existing forecast.
@@ -88,7 +114,7 @@ Saber Accounting is a Windows desktop accounting application with a central shar
 
 ## Important status
 
-This is an MVP for controlled testing. Before production use, add HTTPS, automatic encrypted backups, user-management screens, sequential journal controls, complete inventory valuation, period locking, exchange-rate revaluation, invoice editing/reversal workflows, and Lebanese tax-report validation by the firm's accountant.
+This is an MVP for controlled testing. TLS is available for shared access but requires a trusted certificate and secure server configuration. Fiscal-year closing blocks later edits, while finer monthly period locks remain to be added. Before production use, complete encrypted backup and restore, exchange-rate revaluation, and independent validation of Lebanese tax/NSSF reporting by the firm's accountant.
 
 ## Quick start on one computer
 
@@ -111,12 +137,12 @@ Sign in with username `admin`, your chosen server password, and server address `
 
 1. Choose one always-on office computer or Windows server to host the shared database.
 2. Give that computer a fixed local IP address.
-3. Allow TCP port `8765` only on the trusted office network.
-4. Run `run_server.py` only on the server computer.
+3. Allow TCP port `8765` only on the trusted office network. Provision a certificate whose name matches the host name used by clients and whose CA is trusted on their computers.
+4. Run `python run_server.py --host SERVER-IP --tls-cert server-cert.pem --tls-key server-key.pem` only on the server computer. Keep the private key restricted to the server account.
 5. Run the desktop client on each of the three computers.
-6. Enter `http://SERVER-IP:8765` on the sign-in screen.
+6. Enter `https://SERVER-NAME:8765` on the sign-in screen, using the name on the certificate.
 
-For access outside the office, do not expose port 8765 directly to the internet. Use a professionally configured HTTPS reverse proxy or VPN.
+For access outside the office, do not expose port 8765 directly to the internet. Use a professionally configured HTTPS reverse proxy or VPN. When TLS terminates at a reverse proxy, bind the Python server to `127.0.0.1` and proxy only to that loopback address. Existing trusted VPN/LAN installations that intentionally need plaintext must pass `--allow-insecure-lan`; HTTP traffic on such networks exposes passwords and tokens to anyone able to observe it.
 
 ## Excel import rules
 

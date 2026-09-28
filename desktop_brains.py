@@ -33,6 +33,13 @@ def _date_text(value):
     return text
 
 
+def currency_from_prefix(value, codes):
+    """Expand an unambiguous currency prefix; preserve full codes."""
+    value = str(value or "").strip().upper()
+    choices = [code for code in codes if code.upper().startswith(value)] if value else []
+    return choices[0] if len(choices) == 1 else value
+
+
 class EditableSheet:
     """A Treeview that edits like a spreadsheet: double-click / Enter to type, Tab / Enter to move on."""
 
@@ -42,6 +49,9 @@ class EditableSheet:
         frame = tk.Frame(parent, bg=LIGHT); frame.pack(fill="both", expand=True, padx=10, pady=4)
         self.tree = ttk.Treeview(frame, columns=[c[0] for c in columns], show="headings", height=height, selectmode="browse")
         for key, label, width, anchor in columns: self.tree.heading(key, text=label); self.tree.column(key, width=width, anchor=anchor, stretch=key == "account")
+        if any(key in ("department", "project") for key, *_ in columns):
+            app._dimension_sheets.append(self)
+            self.set_dimension_visibility(app.show_department.get(), app.show_project.get())
         yscroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview); xscroll = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
         self.tree.grid(row=0, column=0, sticky="nsew"); yscroll.grid(row=0, column=1, sticky="ns"); xscroll.grid(row=1, column=0, sticky="ew")
@@ -81,13 +91,22 @@ class EditableSheet:
     def _clicked(self, event):
         iid = self.tree.identify_row(event.y); column = self.tree.identify_column(event.x)
         if not iid or not column: return
-        key = self.columns[int(column.lstrip("#")) - 1][0]
+        visible = self.tree["displaycolumns"]
+        keys = [c[0] for c in self.columns] if visible == ("#all",) else list(visible)
+        key = keys[int(column.lstrip("#")) - 1]
         self.edit(iid, key if key in self.editable else self.editable[0])
+
+    def set_dimension_visibility(self, show_department, show_project):
+        keys = [column[0] for column in self.columns]
+        self.tree.configure(displaycolumns=[key for key in keys if (key != "department" or show_department)
+                             and (key != "project" or show_project)])
 
     def edit(self, iid, key):
         if not iid or not self.tree.exists(iid) or not self.tree.winfo_ismapped(): return
         index = [c[0] for c in self.columns].index(key); self.tree.see(iid)
-        bbox = self.tree.bbox(iid, f"#{index + 1}")
+        displayed = list(self.tree["displaycolumns"])
+        if key not in displayed: return
+        bbox = self.tree.bbox(iid, f"#{displayed.index(key) + 1}")
         if not bbox: return
         row = self.rows[iid]; value = row.get(key, "")
         editor = tk.Entry(self.tree, justify={"w": "left", "e": "right"}.get(self.columns[index][3], "center"))
@@ -100,13 +119,22 @@ class EditableSheet:
             if self.on_change(iid, key, text) is False: return
             self.refresh(iid)
             if move:
-                position = self.editable.index(key)
-                if position + 1 < len(self.editable): self.app.after(10, lambda: self.edit(iid, self.editable[position + 1]))
+                available = [field for field in self.editable if field in self.tree["displaycolumns"]]
+                position = available.index(key)
+                if position + 1 < len(available): self.app.after(10, lambda: self.edit(iid, available[position + 1]))
                 else:
                     rows = self.tree.get_children(); at = rows.index(iid)
-                    if at + 1 < len(rows): self.app.after(10, lambda: self.edit(rows[at + 1], self.editable[0]))
+                    if at + 1 < len(rows): self.app.after(10, lambda: self.edit(rows[at + 1], available[0]))
         editor.bind("<Return>", lambda _e: commit(True)); editor.bind("<Tab>", lambda _e: (commit(True), "break")[1])
         editor.bind("<FocusOut>", lambda _e: commit(False)); editor.bind("<Escape>", lambda _e: (done.__setitem__("flag", True), editor.destroy()))
+        if key == "line_currency":
+            def currency_typed(event):
+                if done["flag"] or len(event.keysym) != 1 or not event.keysym.isalpha(): return
+                entered = editor.get().strip()
+                matched = currency_from_prefix(entered, self.app.currency_codes)
+                if matched in self.app.currency_codes:
+                    editor.delete(0, "end"); editor.insert(0, matched); commit(True)
+            editor.bind("<KeyRelease>", currency_typed)
         if key == self.lookup_column:
             def lookup(_e=None):
                 variable = tk.StringVar(value=editor.get()); done["flag"] = True; editor.destroy()
@@ -130,6 +158,7 @@ class BrainsScreensMixin:
         tk.Button(bar, text="Automatic DOE", command=self.show_doe_page, bg=GOLD, fg=NAVY, border=0, padx=8).pack(side="left", padx=2, pady=4)
         tk.Button(bar, text="Delete", command=self.delete_current_voucher, bg=RED, fg="white", border=0, padx=12).pack(side="left", padx=2, pady=4)
         self.action_button(bar,"Add Line",self.add_manual_item).pack(side="left",padx=(14,2),pady=4)
+        self.action_button(bar,"New Account",self.create_voucher_account).pack(side="left",padx=2,pady=4)
         self.action_button(bar,"Insert Line",self.insert_manual_item).pack(side="left",padx=2,pady=4)
         tk.Button(bar,text="Delete Line",command=self.remove_manual_item,bg=RED,fg="white",border=0,padx=10).pack(side="left",padx=2,pady=4)
         self.action_button(bar,"Show Rates",self.toggle_voucher_rates).pack(side="left",padx=(8,2),pady=4)
@@ -143,7 +172,14 @@ class BrainsScreensMixin:
         tk.Entry(header, textvariable=self.manual_no, width=15, state="readonly", readonlybackground="white", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(4, 8))
         tk.Label(header, text="Date", bg=LIGHT).pack(side="left"); self.date_entry(header, self.manual_date, 12).pack(side="left", padx=(4, 12))
         tk.Label(header, text="Currency", bg=LIGHT).pack(side="left")
-        ttk.Combobox(header, textvariable=self.manual_currency, values=self.currency_codes, state="readonly", width=6).pack(side="left", padx=(4, 12))
+        voucher_currency_box=ttk.Combobox(header, textvariable=self.manual_currency, values=self.currency_codes, state="readonly", width=6)
+        voucher_currency_box.pack(side="left", padx=(4, 12))
+        def select_currency_initial(event):
+            if len(event.keysym)==1 and event.keysym.isalpha():
+                matched=currency_from_prefix(event.char,self.currency_codes)
+                if matched in self.currency_codes: self.manual_currency.set(matched)
+                return "break"
+        voucher_currency_box.bind("<KeyPress>",select_currency_initial)
         tk.Label(header, text="Branch", bg=LIGHT).pack(side="left"); self.branch_selector(header, self.manual_branch, 12, False).pack(side="left", padx=(4, 8))
         tk.Label(header, text="Find", bg=LIGHT).pack(side="left")
         self.manual_find_box = ttk.Combobox(header, textvariable=self.manual_find, width=24); self.manual_find_box.pack(side="left", padx=4)
@@ -201,7 +237,7 @@ class BrainsScreensMixin:
 
     def new_voucher_line(self, account=""):
         currency = self.manual_currency.get() or "USD"; rates = self.voucher_rates_for(currency)
-        return self.recalculate_voucher_line({"account": account, "description": "", "line_currency": currency, "side": "D", "amount": "", "due_date": self.manual_date.get(), "reference": "", "department": "", "project": "",
+        return self.recalculate_voucher_line({"account": account, "description": "", "_description_inherited": True, "line_currency": currency, "side": "D", "amount": "", "due_date": self.manual_date.get(), "reference": "", "department": "", "project": "",
                                               "rate_lbp": rates["rate_lbp"], "rate_usd": rates["rate_usd"]})
 
     def recalculate_voucher_line(self, row):
@@ -224,11 +260,22 @@ class BrainsScreensMixin:
                 if party and party.get("currency") and not row.get("amount"): self.voucher_cell_changed(iid, "line_currency", party["currency"])
             row["account"] = code
         elif key == "line_currency":
-            currency = text.upper() or self.manual_currency.get()
+            currency = currency_from_prefix(text,self.currency_codes) or self.manual_currency.get()
             if currency in ("01", "1"): currency = "LBP"
             if currency in ("02", "2"): currency = "USD"
             if currency not in self.currency_codes: messagebox.showwarning("Journal Voucher", "Choose a currency from Settings"); return False
             rates = self.voucher_rates_for(currency); row.update(line_currency=currency, rate_lbp=rates["rate_lbp"], rate_usd=rates["rate_usd"])
+        elif key == "description":
+            row["description"] = text
+            row["_description_inherited"] = False
+            siblings = list(self.voucher_sheet.tree.get_children())
+            position = siblings.index(iid)
+            if position + 1 < len(siblings):
+                next_id = siblings[position + 1]; next_row = self.voucher_sheet.rows[next_id]
+                if not next_row.get("description") or next_row.get("_description_inherited"):
+                    next_row["description"] = text
+                    next_row["_description_inherited"] = True
+                    self.voucher_sheet.refresh(next_id)
         elif key == "side":
             side = text.upper()[:1]
             if side not in ("D", "C"): messagebox.showwarning("Journal Voucher", "Type D for Debit or C for Credit"); return False
@@ -253,7 +300,36 @@ class BrainsScreensMixin:
         if not getattr(self, "_account_cache", None):
             try: self._account_cache = {str(a["code"]): a for a in self.client.accounts()}
             except Exception: self._account_cache = {}
+        if code and str(code) not in self._account_cache:
+            try: self._account_cache = {str(a["code"]): a for a in self.client.accounts()}
+            except Exception: pass
         return self._account_cache.get(str(code))
+
+    def create_voucher_account(self):
+        """Create an account independently of the current unsaved voucher."""
+        window=tk.Toplevel(self); window.title("New Journal Account"); window.configure(bg=LIGHT)
+        window.transient(self); window.grab_set()
+        code=tk.StringVar(); name=tk.StringVar(); kind=tk.StringVar(value="expense")
+        for index,(label,variable) in enumerate((("4-digit prefix or 9-digit account",code),("Account name",name))):
+            tk.Label(window,text=label,bg=LIGHT).grid(row=index,column=0,sticky="w",padx=12,pady=8)
+            tk.Entry(window,textvariable=variable,width=32).grid(row=index,column=1,padx=12,pady=8)
+        tk.Label(window,text="Type",bg=LIGHT).grid(row=2,column=0,sticky="w",padx=12,pady=8)
+        ttk.Combobox(window,textvariable=kind,values=["asset","liability","equity","income","expense"],state="readonly",width=29).grid(row=2,column=1,padx=12,pady=8)
+        def save():
+            try: account=self.client.save_account({"code":code.get(),"name_en":name.get(),"type":kind.get()})
+            except Exception as exc: return messagebox.showerror("New Journal Account",str(exc),parent=window)
+            self._account_cache=None
+            self.load_accounts()
+            iid,row=self.voucher_sheet.selected()
+            if row is None or row.get("account"):
+                iid=self.voucher_sheet.insert(self.new_voucher_line())
+            self.voucher_cell_changed(iid,"account",account["code"])
+            self.voucher_sheet.refresh(iid)
+            self.voucher_sheet.tree.selection_set(iid); self.voucher_sheet.tree.focus(iid)
+            window.destroy()
+            self.manual_line_info.config(text=f'Account {account["code"]} created and ready; voucher is still unsaved')
+        self.action_button(window,"Create Account",save).grid(row=3,column=1,sticky="e",padx=12,pady=12)
+        window.bind("<Return>",lambda _event:save()); window.bind("<Escape>",lambda _event:window.destroy())
 
     def voucher_line_selected(self, selection):
         _iid, row = selection
@@ -262,7 +338,10 @@ class BrainsScreensMixin:
         self.manual_line_info.config(text=f"{row.get('account') or ''}  {name}      {_fmt(row.get('amount'), 3)} {row.get('line_currency')}      {_fmt(row.get('amount_lbp'), 3)} LBP      {_fmt(row.get('amount_usd'), 3)} USD")
 
     def add_manual_item(self, edit=True):
-        iid = self.voucher_sheet.insert(self.new_voucher_line())
+        row=self.new_voucher_line()
+        previous=self.voucher_sheet.ordered()
+        if previous: row["description"]=previous[-1].get("description") or ""
+        iid = self.voucher_sheet.insert(row)
         self.voucher_sheet.tree.selection_set(iid); self.voucher_sheet.tree.focus(iid)
         if edit: self.after(30, lambda: self.voucher_sheet.edit(iid, "account"))
         self.update_manual_totals()
@@ -270,7 +349,10 @@ class BrainsScreensMixin:
     def insert_manual_item(self):
         iid, _row = self.voucher_sheet.selected()
         index = self.voucher_sheet.tree.index(iid) if iid else "end"
-        new = self.voucher_sheet.insert(self.new_voucher_line(), index)
+        row=self.new_voucher_line()
+        previous=self.voucher_sheet.ordered()
+        if previous and isinstance(index,int) and index>0: row["description"]=previous[index-1].get("description") or ""
+        new = self.voucher_sheet.insert(row, index)
         self.voucher_sheet.tree.selection_set(new); self.voucher_sheet.tree.focus(new); self.after(30, lambda: self.voucher_sheet.edit(new, "account"))
 
     def remove_manual_item(self):

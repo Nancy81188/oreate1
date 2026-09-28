@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS users (
  role TEXT NOT NULL CHECK(role IN ('admin','accountant','viewer')), language TEXT NOT NULL DEFAULT 'en', active INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS login_attempts (
+ key TEXT PRIMARY KEY, failed_count INTEGER NOT NULL, first_failed_at TEXT NOT NULL, locked_until TEXT
+);
 CREATE TABLE IF NOT EXISTS parties (
  id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('customer','supplier','both')),
  name TEXT NOT NULL, tax_number TEXT, mof_number TEXT, address TEXT, contact_number TEXT,
@@ -528,11 +531,34 @@ class Database:
         today=today or datetime.now().strftime("%Y-%m-%d")
         return str(expires) < today
 
-    def login(self, username, password):
+    def login(self, username, password, remote_addr=None):
+        """Authenticate with a persistent 15-minute lockout and audit every denial."""
+        username=str(username or "").strip(); now=datetime.now(timezone.utc)
+        keys=["user:"+username.casefold()]
+        if remote_addr: keys.append("ip:"+str(remote_addr))
         with self.connect() as db:
+            attempts={row["key"]:row for row in db.execute(
+                f"SELECT * FROM login_attempts WHERE key IN ({','.join('?' for _ in keys)})",keys)}
+            locked=any(row["locked_until"] and (parse_ts(row["locked_until"]) or now)>now for row in attempts.values())
             user = db.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
+            if locked:
+                db.execute("INSERT INTO audit_log(user_id,action,entity,details,created_at) VALUES(?,?,?,?,?)",
+                           (user["id"] if user else None,"login_blocked","auth",json.dumps({"username":username,"remote_addr":remote_addr}),utcnow()))
+                return {"rate_limited": True}
             if not user or not verify_password(password, user["password_hash"]):
+                for key in keys:
+                    previous=attempts.get(key)
+                    first=parse_ts(previous["first_failed_at"]) if previous else None
+                    count=(previous["failed_count"]+1) if first and now-first<timedelta(minutes=15) else 1
+                    limit=5 if key.startswith("user:") else 30
+                    until=(now+timedelta(minutes=15)).isoformat() if count>=limit else None
+                    db.execute("INSERT INTO login_attempts(key,failed_count,first_failed_at,locked_until) VALUES(?,?,?,?) "
+                               "ON CONFLICT(key) DO UPDATE SET failed_count=excluded.failed_count,first_failed_at=excluded.first_failed_at,locked_until=excluded.locked_until",
+                               (key,count,previous["first_failed_at"] if first and now-first<timedelta(minutes=15) else utcnow(),until))
+                db.execute("INSERT INTO audit_log(user_id,action,entity,details,created_at) VALUES(?,?,?,?,?)",
+                           (user["id"] if user else None,"login_failed","auth",json.dumps({"username":username,"remote_addr":remote_addr}),utcnow()))
                 return None
+            db.execute("DELETE FROM login_attempts WHERE key=?",(keys[0],))
             if self.user_is_expired(user):
                 raise PermissionError(f"This account expired on {display_date(user['expires_at'])}. Ask the administrator to renew it.")
             token = secrets.token_urlsafe(32)
@@ -2394,14 +2420,16 @@ class Database:
         children=max(0,int(item.get("children") or 0)); spouse_works=1 if item.get("spouse_works",False) else 0; active=1 if item.get("active",True) else 0
         employee_group=str(item.get("employee_group") or "employee").lower()
         if employee_group not in ("employee","manager"): raise ValueError("Employee group must be Employee or Manager")
+        hire_date=iso_date(item["hire_date"],"Starting date") if item.get("hire_date") else None
+        leave_date=iso_date(item["leave_date"],"Leaving date") if item.get("leave_date") else None
+        if hire_date and leave_date and leave_date<hire_date: raise ValueError("Leaving date cannot be before starting date")
         employee_id=item.get("id")
         values=(number,name,str(item.get("national_id") or "").strip(),str(item.get("mof_number") or "").strip(),
             str(item.get("nssf_number") or "").strip(),str(item.get("address") or "").strip(),str(item.get("contact_number") or "").strip(),
             str(item.get("nationality") or "").strip(),str(item.get("father_name") or "").strip(),str(item.get("mother_name") or "").strip(),
             iso_date(item["birth_date"]) if item.get("birth_date") else None,str(item.get("birth_place") or "").strip(),
             str(item.get("marital_status") or "single").lower(),spouse_works,children,employee_group,
-            iso_date(item["hire_date"]) if item.get("hire_date") else None,
-            iso_date(item["leave_date"]) if item.get("leave_date") else None,
+            hire_date,leave_date,
             str(item.get("job_title") or "").strip(),int(item["branch_id"]) if item.get("branch_id") else None,currency,
             str(Decimal(str(item.get("base_salary") or 0))),item.get("salary_account") or "621100001",
             item.get("payable_account") or "421100001",active)

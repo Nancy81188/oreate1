@@ -121,9 +121,9 @@ class FinalFeaturesMixin:
         reports = ["R10 - Quarterly withholding", "R5 - Annual employer declaration", "R6 - Individual annual statement",
                    "NSSF - Contributions statement (payment)", "SETTLEMENT - NSSF annual reconciliation", "CEILINGS - NSSF ceilings by month"]
         tk.Label(controls, text="Report", bg=LIGHT).grid(row=0, column=0, padx=4, sticky="w")
-        ttk.Combobox(controls, textvariable=self.pr_report, values=reports, state="readonly", width=31).grid(row=0, column=1, padx=4)
+        report_box=ttk.Combobox(controls, textvariable=self.pr_report, values=reports, state="readonly", width=31); report_box.grid(row=0, column=1, padx=4)
         tk.Label(controls, text="Period", bg=LIGHT).grid(row=0, column=2, padx=4, sticky="w")
-        period_box = ttk.Combobox(controls, textvariable=self.pr_period_type, values=["Monthly", "Quarterly", "Yearly"], state="readonly", width=11); period_box.grid(row=0, column=3, padx=4)
+        period_box = ttk.Combobox(controls, textvariable=self.pr_period_type, values=["Monthly", "Quarterly", "Yearly"], state="readonly", width=18); period_box.grid(row=0, column=3, padx=4)
         tk.Label(controls, text="Year", bg=LIGHT).grid(row=0, column=4, padx=4, sticky="w")
         tk.Entry(controls, textvariable=self.pr_year, width=7).grid(row=0, column=5, padx=4)
         self.pr_index_box = ttk.Combobox(controls, textvariable=self.pr_index, state="readonly", width=11); self.pr_index_box.grid(row=0, column=6, padx=4)
@@ -144,7 +144,7 @@ class FinalFeaturesMixin:
             self.action_button(forms,label,lambda key=code:self.download_payroll_form(key)).pack(side="left",padx=3)
         def refresh_index(*_args):
             kind = self.pr_period_type.get()
-            if kind == "Monthly":
+            if kind in ("Monthly", "Auto (employee count)"):
                 self.pr_index_box.config(values=MONTHS, state="readonly")
                 if self.pr_index.get() not in MONTHS: self.pr_index.set(MONTHS[now.month - 1])
             elif kind == "Quarterly":
@@ -152,7 +152,16 @@ class FinalFeaturesMixin:
                 if self.pr_index.get() not in ("Q1", "Q2", "Q3", "Q4"): self.pr_index.set(f"Q{(now.month - 1) // 3 + 1}")
             else:
                 self.pr_index_box.config(values=["Full year"], state="disabled"); self.pr_index.set("Full year")
-        period_box.bind("<<ComboboxSelected>>", refresh_index); refresh_index()
+        def refresh_report(_event=None):
+            if self.pr_report.get().startswith("NSSF -"):
+                period_box.config(values=["Auto (employee count)", "Monthly", "Quarterly", "Yearly"])
+                self.pr_period_type.set("Auto (employee count)")
+            else:
+                period_box.config(values=["Monthly", "Quarterly", "Yearly"])
+                if self.pr_period_type.get() == "Auto (employee count)": self.pr_period_type.set("Quarterly")
+            refresh_index()
+        report_box.bind("<<ComboboxSelected>>", refresh_report)
+        period_box.bind("<<ComboboxSelected>>", refresh_index); refresh_report()
         self.pr_info = tk.Label(page, text="Choose a report and period, then press Generate. Official figures use posted payroll, converted to LBP.", bg=LIGHT, fg=MUTED, anchor="w", justify="left")
         self.pr_info.pack(fill="x", padx=12)
         self.pr_tree = self.report_viewer(page)
@@ -195,11 +204,11 @@ class FinalFeaturesMixin:
         period = self.pr_period_type.get().lower()
         try: year = int(self.pr_year.get().strip())
         except ValueError: raise ValueError("Enter the year as four digits, for example 2025")
-        if period == "monthly": index = MONTHS.index(self.pr_index.get()) + 1
+        if period in ("monthly", "auto (employee count)"): index = MONTHS.index(self.pr_index.get()) + 1
         elif period == "quarterly": index = int(self.pr_index.get().lstrip("Q"))
         else: index = 1
         group = {"Employees only": "employee", "Managers only": "manager"}.get(self.pr_group.get(), "both")
-        return report, period, year, index, group
+        return report, "auto" if period == "auto (employee count)" else period, year, index, group
 
     def generate_payroll_report(self):
         try:
