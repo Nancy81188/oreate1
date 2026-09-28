@@ -37,7 +37,12 @@ def _amount_after(text, keywords):
 def read_invoice_pdf(path):
     """Best guess of invoice number, date, party, currency and amounts. Always review before saving."""
     path = Path(path)
-    try: text = pdf_text(path)
+    try:
+        text = pdf_text(path)
+        if len(text.strip()) < 20:
+            import fitz
+            from ai_service import _ocr_page
+            with fitz.open(str(path)) as document: text = _ocr_page(document[0])
     except Exception as exc: return {"file": path.name, "path": str(path), "text": "", "notes": f"The PDF could not be read ({exc}). Enter the details manually."}
     return _parse_invoice_text(path, text)
 
@@ -97,6 +102,12 @@ def read_invoice_pdf_pages(path):
     groups = []
     for number, page in enumerate(reader.pages, 1):
         text = page.extract_text() or ""
+        if len(text.strip()) < 20:
+            try:
+                import fitz
+                from ai_service import _ocr_page
+                with fitz.open(str(path)) as document: text = _ocr_page(document[number - 1])
+            except Exception: pass
         parsed = _parse_invoice_text(path, text)
         invoice_number = parsed.get("invoice_number")
         if groups and invoice_number and invoice_number == groups[-1]["invoice_number"]:
