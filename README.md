@@ -1,5 +1,15 @@
 # Saber Accounting MVP
 
+## Version 2.9.23 (Payroll: family allocation shown at once and editable)
+
+- Payroll > Payroll Entry: the **Family Allocation** field now shows the automatic amount as soon as the employee (or the period date) is chosen, and after Calculate: spouse and children allowances of the period (Tax & NSSF Settings), within the maximum. Type in the field to use another amount for this payroll; Calculate and Save then use your amount (with a compliance note). Choosing another employee shows the automatic amount again.
+- Includes everything from 2.9.19 - 2.9.22. Changed files: `desktop.py`, `test_ui_v2_9_18.py`, `installer.iss` and this README. Validation: 178 automated tests passed.
+
+## Version 2.9.22 (Payroll: transport filled from the transport days)
+
+- Payroll > Payroll Entry: typing the **Transport Days** fills **Transport** at once = days x the daily transport of the payroll period (Tax & NSSF Settings > Transport Exempt / Day, LBP 450,000 under the Lebanese rules), converted to the employee's currency at the period's rate for USD / other-currency employees. The amount can still be changed by hand afterwards.
+- Includes everything from 2.9.19 - 2.9.21. Changed files: `desktop.py`, `test_ui_v2_9_18.py`, `installer.iss` and this README. Validation: 177 automated tests passed.
+
 ## Version 2.9.21 (Fix: Windows build test failure; switching company / year)
 
 - Fixed the Windows build failure in "Run all tests" (`test_program_opens_on_the_dashboard_first_and_builds_the_rest`). On a slower PC the previous company's pages had finished building, and their (destroyed) widgets were still remembered, so after Switch Company / Year the program could think a page was already built. Every page widget of the previous screen is now forgotten when the screen is rebuilt, so the pages are rebuilt for the newly opened company / year. The test now reproduces the slower-PC case.

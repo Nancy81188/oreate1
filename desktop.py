@@ -9,6 +9,7 @@ import time
 import json
 from urllib.request import urlopen
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -83,7 +84,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.21")
+        self.title("Saber Accounting 2.9.23")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -2017,8 +2018,17 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(form,text="Retro From",bg=LIGHT).grid(row=4,column=0,padx=6,pady=4,sticky="w"); self.date_entry(form,self.payroll_retro_from,14).grid(row=4,column=1,padx=6,pady=4,sticky="w")
         tk.Label(form,text="Retro To",bg=LIGHT).grid(row=4,column=2,padx=6,pady=4,sticky="w"); self.date_entry(form,self.payroll_retro_to,14).grid(row=4,column=3,padx=6,pady=4,sticky="w")
         self.payroll_transport_days=tk.StringVar()
-        tk.Label(form,text="Transport Days",bg=LIGHT).grid(row=4,column=4,padx=6,pady=4,sticky="w"); tk.Entry(form,textvariable=self.payroll_transport_days,width=6).grid(row=4,column=5,padx=6,pady=4,sticky="w")
-        tk.Label(form,text="Family Allocation (empty = automatic)",bg=LIGHT).grid(row=4,column=6,padx=6,pady=4,sticky="w"); tk.Entry(form,textvariable=self.payroll_family_override,width=12).grid(row=4,column=7,padx=6,pady=4,sticky="w")
+        tk.Label(form,text="Transport Days",bg=LIGHT).grid(row=4,column=4,padx=6,pady=4,sticky="w"); days_entry=tk.Entry(form,textvariable=self.payroll_transport_days,width=6); days_entry.grid(row=4,column=5,padx=6,pady=4,sticky="w")
+        # Typing the transport days fills Transport at once: days x the daily transport of the period (Tax & NSSF Settings).
+        days_entry.bind("<KeyRelease>",lambda _event:self.payroll_transport_from_days(),add="+"); days_entry.bind("<FocusOut>",lambda _event:self.payroll_transport_from_days(),add="+")
+        tk.Label(form,text="Family Allocation",bg=LIGHT).grid(row=4,column=6,padx=6,pady=4,sticky="w")
+        family_entry=tk.Entry(form,textvariable=self.payroll_family_override,width=12); family_entry.grid(row=4,column=7,padx=6,pady=4,sticky="w")
+        # The automatic family allocation appears here as soon as the employee / period is chosen; typing in it
+        # makes it a manual amount for this payroll (Calculate / Save use it).
+        self._family_manual=False
+        family_entry.bind("<KeyRelease>",lambda event:setattr(self,"_family_manual",True) if len(event.keysym)==1 or event.keysym in ("BackSpace","Delete") else None,add="+")
+        period_widgets=[w for w in form.grid_slaves(row=0,column=3)]
+        for widget in period_widgets: widget.bind("<FocusOut>",lambda _event:self.payroll_family_auto(),add="+")
         self.payroll_breakdown=tk.Label(form,text="",bg=LIGHT,fg="#5f6b76",anchor="w",justify="left",wraplength=1060); self.payroll_breakdown.grid(row=6,column=0,columnspan=8,padx=6,sticky="w")
         self.payroll_notes=tk.Label(form,text="",bg=LIGHT,fg="#8B1E1E",anchor="w",justify="left",font=("Segoe UI",9,"bold"),wraplength=1060); self.payroll_notes.grid(row=7,column=0,columnspan=8,padx=6,sticky="w")
         self.payroll_result=tk.StringVar(value="Gross: 0 | Tax: 0 | Employee NSSF: 0 | Net: 0")
@@ -2186,6 +2196,40 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
     def payroll_employee_chosen(self):
         employee=getattr(self,"payroll_employee_map",{}).get(self.payroll_employee.get())
         if employee: self.payroll_vars["salary"].set(str(employee.get("base_salary") or "0"))
+        self._family_manual=False; self.payroll_family_auto()
+
+    def payroll_family_auto(self):
+        """Show the automatic family allocation of the chosen employee and period (unless it was typed by hand)."""
+        if getattr(self,"_family_manual",False) or not hasattr(self,"payroll_family_override"): return
+        try:
+            payload=self.payroll_payload(); payload.pop("family_allowance_override",None)
+            result=self.client.calculate_payroll(payload)
+        except Exception: return
+        value=float(result.get("family_allowance") or 0)
+        self.payroll_family_override.set(f"{value:.0f}" if result.get("currency")=="LBP" else f"{value:.2f}")
+
+    def payroll_transport_from_days(self):
+        """Transport = transport days x daily transport of the payroll period, in the employee's currency."""
+        text=self.payroll_transport_days.get().strip()
+        if not text: return
+        try: days=int(text)
+        except ValueError: return
+        if days<0 or days>31: return
+        employee=getattr(self,"payroll_employee_map",{}).get(self.payroll_employee.get())
+        currency=(employee or {}).get("currency") or "LBP"
+        try: period=formatted_user_date(self.payroll_period.get())
+        except ValueError: period=None
+        key=(period,currency); cache=self.__dict__.setdefault("_transport_rate_cache",{})
+        try:
+            if key not in cache:
+                daily=Decimal(str(self.client.payroll_settings(period).get("transport_daily_exempt") or 0))
+                rate=Decimal("1") if currency=="LBP" else Decimal(str(self.client.suggested_rates(currency,period)["rate_lbp"]))
+                cache[key]=(daily,rate)
+            daily,rate=cache[key]
+        except Exception: return
+        if daily<=0 or rate<=0: return
+        amount=daily*days/rate
+        self.payroll_vars["transport"].set(f"{amount:.0f}" if currency=="LBP" else f"{amount.quantize(Decimal('0.01'))}")
 
     def payroll_payload(self):
         employee=self.payroll_employee_map.get(self.payroll_employee.get())
@@ -2193,7 +2237,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         payload={"employee_id":employee["id"],"period_date":formatted_user_date(self.payroll_period.get())}
         payload.update({key:var.get().strip() or "0" for key,var in self.payroll_vars.items()})
         if self.payroll_transport_days.get().strip(): payload["transport_days"]=self.payroll_transport_days.get().strip()
-        if getattr(self,"payroll_family_override",None) is not None and self.payroll_family_override.get().strip(): payload["family_allowance_override"]=self.payroll_family_override.get().strip()
+        if getattr(self,"payroll_family_override",None) is not None and getattr(self,"_family_manual",False) and self.payroll_family_override.get().strip():
+            payload["family_allowance_override"]=self.payroll_family_override.get().strip()
         if float(payload.get("retro_salary") or 0):
             if not self.payroll_retro_from.get().strip() or not self.payroll_retro_to.get().strip(): raise ValueError("Enter Retro From and Retro To dates")
             payload["retro_from"]=formatted_user_date(self.payroll_retro_from.get()); payload["retro_to"]=formatted_user_date(self.payroll_retro_to.get())
@@ -2202,6 +2247,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
     def calculate_payroll(self):
         try: result=self.client.calculate_payroll(self.payroll_payload())
         except Exception as exc: return messagebox.showerror("Payroll",str(exc))
+        if not getattr(self,"_family_manual",False) and hasattr(self,"payroll_family_override"):
+            value=float(result.get("family_allowance") or 0)
+            self.payroll_family_override.set(f"{value:.0f}" if result.get("currency")=="LBP" else f"{value:.2f}")
         retro=f' (of which retro tax {result["retro_tax"]:,.2f})' if result.get("retro_tax") else ""
         rules=result.get("settings_period") or {}
         period=f' | Rules from {safe_display_date(rules["date_from"])}' if rules.get("date_from") else ""
@@ -2224,6 +2272,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.load_payroll(); self.load_journal(); self.load_trial(); messagebox.showinfo("Payroll",f'Payroll {saved["payroll_number"]} posted successfully')
 
     def load_payroll_settings(self):
+        self.__dict__.pop("_transport_rate_cache",None)  # settings may have changed: recalculate transport from days
         if not hasattr(self,"payroll_setting_vars"): return
         try: settings=self.client.payroll_settings(self.payroll_period.get().strip())
         except Exception as exc: return messagebox.showerror("Payroll Settings",str(exc))

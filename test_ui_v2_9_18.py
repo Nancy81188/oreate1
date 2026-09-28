@@ -179,6 +179,28 @@ class ProgramWindowFixesTest(unittest.TestCase):
         self.assertTrue(hasattr(self.app, "payroll_tree"))          # needing one builds them at once
         self.assertFalse(self.app.__dict__.get("_pending_builders"))
 
+    def test_transport_days_fill_the_transport_amount(self):
+        api = self.app.client; api.apply_lebanese_payroll_rules()
+        api.save_employee({"employee_number": "7000", "full_name": "Transport Emp", "currency": "LBP", "base_salary": "40000000"})
+        self.app.load_payroll(); self.app.load_payroll_settings(); self.app.update()
+        label = next(k for k in self.app.payroll_employee_map if "Transport Emp" in k)
+        self.app.payroll_employee.set(label); self.app.payroll_period.set("31-03-2026")
+        self.app.payroll_transport_days.set("20"); self.app.payroll_transport_from_days()
+        self.assertEqual(self.app.payroll_vars["transport"].get(), "9000000")  # 20 days x 450,000 LBP
+
+    def test_family_allocation_shows_automatically_and_can_be_edited(self):
+        api = self.app.client; api.apply_lebanese_payroll_rules()
+        api.save_employee({"employee_number": "7100", "full_name": "Family Emp", "currency": "LBP", "base_salary": "40000000",
+                           "marital_status": "married", "children": "2"})
+        self.app.load_payroll(); self.app.update()
+        label = next(k for k in self.app.payroll_employee_map if "Family Emp" in k)
+        self.app.payroll_period.set("31-05-2026"); self.app.payroll_employee.set(label); self.app.payroll_employee_chosen()
+        self.assertEqual(self.app.payroll_family_override.get(), "4410000")  # 2,100,000 spouse + 2 x 1,155,000
+        self.assertNotIn("family_allowance_override", self.app.payroll_payload())
+        self.app.payroll_family_override.set("3000000"); self.app._family_manual = True
+        self.assertEqual(self.app.payroll_payload()["family_allowance_override"], "3000000")
+        self.app.calculate_payroll(); self.assertEqual(self.app.payroll_family_override.get(), "3000000")
+
 
 if __name__ == "__main__":
     unittest.main()
