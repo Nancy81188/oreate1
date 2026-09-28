@@ -127,7 +127,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.10")
+        self.title("Saber Accounting 2.9.13")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -457,10 +457,40 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         if self.can_use("payroll"): builders.append(self.build_payroll)
         if self.can_use("vat"): builders.append(self.build_vat_return)
         builders+=[self.build_journal,self.build_trial,self.build_profit_loss,self.build_financial_reports,self.build_statement,self.build_accounts,self.build_settings]
-        for build in builders:
+        # Fast opening: show the first page at once, then build the other pages one by one in the background
+        # so the window never freezes. Opening a page that is not ready yet builds the rest immediately.
+        self._build_generation=getattr(self,"_build_generation",0)+1; generation=self._build_generation
+        self._pending_builds=list(builders)
+        def build_one(build):
             try: build()
             except Exception as exc:
                 traceback.print_exc(); messagebox.showerror("Saber Accounting",f"A page could not be loaded ({build.__name__.replace('build_','').replace('_',' ')}): {exc}\n\nThe other pages are still available.")
+        def build_next():
+            if generation!=self._build_generation or not self._pending_builds: return
+            build_one(self._pending_builds.pop(0))
+            if self._pending_builds: self.after(15,build_next)
+            else: self.finish_page_builds()
+        self._build_one_page=build_one
+        build_one(self._pending_builds.pop(0)); self.update_idletasks()
+        notebook.bind("<<NotebookTabChanged>>",lambda _event:self.complete_page_builds(),add="+")
+        self.after(30,build_next)
+
+    def complete_page_builds(self):
+        """Build every page that is still waiting (used when the user opens a page early)."""
+        pending=getattr(self,"_pending_builds",None)
+        if not pending: return
+        try:
+            if self.nametowidget(self.main_notebook.select()) is self.main_tab_pages[0]: return  # still on the first page
+        except Exception: pass
+        self.config(cursor="watch"); self.update_idletasks()
+        try:
+            while self._pending_builds: self._build_one_page(self._pending_builds.pop(0))
+        finally: self.config(cursor="")
+        self.finish_page_builds()
+
+    def finish_page_builds(self):
+        if getattr(self,"_pages_finished_generation",None)==self._build_generation: return
+        self._pages_finished_generation=self._build_generation
         self.setup_context_f2()
         self.after(700,lambda:self.show_document_alerts(startup=True))
 
