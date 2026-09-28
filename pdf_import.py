@@ -64,14 +64,22 @@ def _parse_invoice_text(path, text):
     result["vat"] = _amount_after(text, ("vat amount", "vat 11%", "vat", "tva", "tax", "ض.ق.م"))
     result["subtotal"] = _amount_after(text, ("subtotal", "sub-total", "sub total", "before vat", "total ht", "net amount", "excl"))
     if result["total"] and result["vat"] and not result["subtotal"]: result["subtotal"] = round(result["total"] - result["vat"], 2)
-    if result["subtotal"] and result["vat"] is None: result["vat"] = round(result["subtotal"] * 0.11, 2)
     if result["subtotal"] and result["vat"] is not None and not result["total"]: result["total"] = round(result["subtotal"] + result["vat"], 2)
+    result["deductible"] = _amount_after(text, ("deductible amount", "deductible value", "déductible", "قابل للحسم"))
+    result["non_deductible"] = _amount_after(text, ("non deductible amount", "non-deductible amount", "non deductible value", "غير قابل للحسم"))
+    result["items"] = []
+    for line in text.splitlines():
+        # Table extraction is deliberately conservative: quantity, unit price and line total
+        # must all be visible, otherwise the line stays for manual review.
+        item = re.match(r"^\\s*(.{3,80}?)\\s{2,}(\\d+(?:\\.\\d+)?)\\s{2,}"+AMOUNT+r"\\s{2,}"+AMOUNT+r"\\s*$", line)
+        if item and any(ch.isalpha() for ch in item.group(1)):
+            result["items"].append({"description": item.group(1).strip(), "quantity": _number(item.group(2)), "unit_price": _number(item.group(3)), "total": _number(item.group(4))})
     for line in text.splitlines():
         clean = line.strip()
         if len(clean) >= 3 and not re.search(r"invoice|facture|date|tel|phone|page|www|@", clean, re.I) and sum(ch.isalpha() for ch in clean) >= 3:
             result["party_name"] = clean[:60]; break
     missing = [label for key, label in (("invoice_number", "number"), ("invoice_date", "date"), ("total", "total")) if not result.get(key)]
-    result["notes"] = "Read from PDF - please check" + (f"; not found: {', '.join(missing)}" if missing else "")
+    result["notes"] = "Read from PDF - please check" + (f"; not found: {', '.join(missing)}" if missing else "") + ("; VAT not printed" if result["vat"] is None else "")
     return result
 
 
