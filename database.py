@@ -2797,7 +2797,13 @@ class Database:
         exempt_transport_lbp=min(to_lbp(money["transport"]),setting("transport_daily_exempt")*days)
         children=int(employee["children"] or 0)
         schooling_limit=setting("schooling_annual_exempt") if min(children,int(setting("schooling_max_children","3")))>0 else D("0")
-        exempt_schooling_lbp=min(to_lbp(money["schooling"]),schooling_limit)
+        with self.connect() as db:
+            past_schooling=db.execute("""SELECT period_date,currency,exempt_schooling FROM payroll_records
+                WHERE employee_id=? AND period_date>=? AND period_date<?""",
+                (employee_id,period[:4]+"-01-01",month_start)).fetchall()
+        already_exempt=sum((self._converted_amount(D(str(row["exempt_schooling"] or 0)),row["currency"],"LBP",row["period_date"])
+                            for row in past_schooling),D("0"))
+        exempt_schooling_lbp=min(to_lbp(money["schooling"]),max(D("0"),schooling_limit-already_exempt))
         taxable_transport_lbp=to_lbp(money["transport"])-exempt_transport_lbp; taxable_schooling_lbp=to_lbp(money["schooling"])-exempt_schooling_lbp
         if taxable_transport_lbp>0: notes.append(f"Transport above the exempt {int(setting('transport_daily_exempt')):,} LBP x {days} days is taxed")
         if taxable_schooling_lbp>0: notes.append("Schooling above the exempt annual limit is taxed")
