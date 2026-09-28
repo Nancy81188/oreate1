@@ -6,6 +6,20 @@ from database import Database
 
 
 class SchoolingRulesTest(unittest.TestCase):
+    def test_existing_auto_company_reads_schooling_rules_without_replacing_settings(self):
+        with TemporaryDirectory() as folder:
+            db=Database(Path(folder)/"company.db")
+            db.initialize("secret12345")
+            with db.connect() as connection:
+                connection.execute("""UPDATE payroll_settings SET schooling_public_child='0',
+                    schooling_public_cap='0', schooling_private_child='0',
+                    schooling_private_cap='0' WHERE date_from='2026-07-16'""")
+            july=db.payroll_settings_for("2026-07-31")
+            self.assertEqual(july["schooling_private_child"],"36000000")
+            with db.connect() as connection:
+                stored=connection.execute("SELECT schooling_private_child FROM payroll_settings WHERE date_from='2026-07-16'").fetchone()[0]
+            self.assertEqual(stored,"0")
+
     def test_decrees_and_manual_period_override(self):
         with TemporaryDirectory() as folder:
             db=Database(Path(folder)/"company.db")
