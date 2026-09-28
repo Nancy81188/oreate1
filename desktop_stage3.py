@@ -41,16 +41,13 @@ class Stage3Mixin:
         return key.strip() if key else None
 
     def run_ai_task(self, work, success):
-        key=self.ai_key_for_session()
-        if not key: return
-        if not messagebox.askyesno("AI assistance", "This sends the selected description or first PDF page to OpenAI. API usage may be charged. Continue?"):
-            return
+        """Run free local document/account assistance off the UI thread."""
         def run():
-            try: result=work(key)
+            try: result=work(None)
             except Exception as exc:
-                error=str(exc); self.after(0,lambda:messagebox.showerror("AI assistance",error)); return
+                error=str(exc); self.after(0,lambda:messagebox.showerror("Local PDF assistance",error)); return
             self.after(0,lambda:success(result))
-        threading.Thread(target=run,daemon=True,name="SaberAIAssist").start()
+        threading.Thread(target=run,daemon=True,name="SaberLocalAssist").start()
 
     # ================================================================ Import
     def build_import(self):
@@ -641,7 +638,7 @@ class Stage3Mixin:
         tk.Button(r4, text="Save", command=self.save_purchase, bg=GOLD, fg=NAVY, border=0, padx=18, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=3)
         tk.Button(r4, text="Delete", command=self.delete_purchase, bg=RED, fg="white", border=0, padx=12, pady=6).pack(side="left", padx=3)
         self.action_button(r5, "Upload PDF", self.choose_purchase_pdf).pack(side="left", padx=3)
-        self.action_button(r5, "AI Read PDF", self.ai_read_purchase_pdf).pack(side="left", padx=3)
+        self.action_button(r5, "Free PDF Read", self.ai_read_purchase_pdf).pack(side="left", padx=3)
         self.action_button(r5, "Attachments", lambda: self.purchase_attachments()).pack(side="left", padx=3)
         f["pdf_label"].pack(side="left", padx=8)
         cost = tk.LabelFrame(cost_parent or page, text="Cost on Purchase (customs / freight / insurance) for the selected purchase", bg=LIGHT, padx=8, pady=4); cost.pack(fill="x", padx=8, pady=3)
@@ -816,6 +813,12 @@ class Stage3Mixin:
                 if data.get("subtotal") is not None and not v["taxable"].get(): v["taxable"].set(f'{(data.get("deductible") if data.get("deductible") is not None else data["subtotal"] - (data.get("non_deductible") or 0)):.2f}')
                 if data.get("non_deductible") is not None and not v["exempt"].get(): v["exempt"].set(f'{data["non_deductible"]:.2f}')
                 if data.get("vat") is not None and not v["vat"].get(): v["vat"].set(f'{data["vat"]:.2f}'); f["vat_typed"] = True
+                if not f["items_sheet"].ordered():
+                    for line in data.get("items", []):
+                        qty, price, total = line.get("quantity"), line.get("unit_price"), line.get("total")
+                        if qty and price is not None and total is not None and abs(qty * price - total) <= 0.02:
+                            self.purchase_item_line({"item_code": "", "name": line["description"], "quantity": qty,
+                                                     "unit": "unit", "unit_cost": price, "discount_percent": 0})
                 self.purchase_amounts_changed("none")
             f["pdf_label"].config(text=f"{Path(path).name}: {data.get('notes', '')}", fg=NAVY)
         else: f["pdf_label"].config(text=Path(path).name, fg=NAVY)
@@ -828,10 +831,17 @@ class Stage3Mixin:
             f=self.purchase_form; v=f["vars"]; f["pdf"]=path
             for key,source in (("number","invoice_number"),("date","invoice_date"),("currency","currency"),("supplier","party_name")):
                 if data.get(source): v[key].set(data[source])
-            if data.get("subtotal") is not None: v["taxable"].set(f'{data["subtotal"]:.2f}')
+            f["items_sheet"].clear()
+            for line in data.get("items", []):
+                qty, price, total = line.get("quantity"), line.get("unit_price"), line.get("total")
+                if qty and price is not None and total is not None and abs(qty * price - total) <= 0.02:
+                    self.purchase_item_line({"item_code": "", "name": line["description"], "quantity": qty,
+                                             "unit": "unit", "unit_cost": price, "discount_percent": 0})
+            if data.get("subtotal") is not None: v["taxable"].set(f'{(data.get("deductible") if data.get("deductible") is not None else data["subtotal"] - (data.get("non_deductible") or 0)):.2f}')
+            if data.get("non_deductible") is not None: v["exempt"].set(f'{data["non_deductible"]:.2f}')
             if data.get("vat") is not None: v["vat"].set(f'{data["vat"]:.2f}'); f["vat_typed"]=True
             self.purchase_amounts_changed("none")
-            f["pdf_label"].config(text=f"AI preview of page 1: {Path(path).name} — review before Save",fg=NAVY)
+            f["pdf_label"].config(text=f"Local preview of page 1: {Path(path).name} — review before Save",fg=NAVY)
         self.run_ai_task(lambda key:read_ai_pdf(path,key),show)
 
     def ai_read_sales_pdf(self):
@@ -843,14 +853,28 @@ class Stage3Mixin:
             if data.get("invoice_date"): self.sales_date.set(data["invoice_date"])
             if data.get("party_name"): self.sales_party.set(data["party_name"])
             if data.get("currency"): self.sales_currency.set(data["currency"])
-            line=self.sales_items[0]
-            line.update(description=f"As per {Path(path).name}",quantity=1,unit_price=data.get("subtotal") or data.get("total") or 0)
-            if data.get("subtotal") and data.get("vat") is not None:
-                line["vat_rate"]=round(data["vat"] / data["subtotal"]*100,4)
-            self.recalculate_sales_item(line)
-            self.sales_sheet.item(line["_iid"],values=self.sales_row_values(line))
+            extracted = [item for item in data.get("items", []) if item.get("quantity") and item.get("unit_price") is not None
+                         and item.get("total") is not None and abs(item["quantity"] * item["unit_price"] - item["total"]) <= 0.02]
+            if extracted:
+                line = self.sales_items[0]
+                for index, item in enumerate(extracted):
+                    target = line if index == 0 else None
+                    values = {"description": item["description"], "quantity": item["quantity"], "unit": "unit",
+                              "unit_price": item["unit_price"], "discount_percent": 0,
+                              "vat_rate": round(data["vat"] / data["subtotal"] * 100, 4) if data.get("subtotal") and data.get("vat") is not None else 0}
+                    if target is None: self.add_sales_item(values)
+                    else:
+                        target.update(values); self.recalculate_sales_item(target)
+                        self.sales_sheet.item(target["_iid"], values=self.sales_row_values(target))
+            else:
+                line=self.sales_items[0]
+                line.update(description=f"As per {Path(path).name}",quantity=1,unit_price=data.get("subtotal") or data.get("total") or 0)
+                if data.get("subtotal") and data.get("vat") is not None:
+                    line["vat_rate"]=round(data["vat"] / data["subtotal"]*100,4)
+                self.recalculate_sales_item(line)
+                self.sales_sheet.item(line["_iid"],values=self.sales_row_values(line))
             self.update_sales_totals()
-            messagebox.showinfo("AI PDF preview",f"Read page 1 of {Path(path).name}. Check the customer, VAT, amounts and invoice number before Save.")
+            messagebox.showinfo("PDF preview",f"Read page 1 of {Path(path).name}. Check the customer, VAT, amounts and invoice number before Save.")
         self.run_ai_task(lambda key:read_ai_pdf(path,key),show)
 
     def purchase_payload(self):
