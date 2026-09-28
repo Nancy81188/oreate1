@@ -3,6 +3,7 @@ import calendar
 from datetime import datetime
 
 HORIZONS = {"Quarter (3 months)": 3, "6 Months": 6, "Yearly (12 months)": 12}
+MAX_LONG_TERM_YEARS = 5
 
 
 def completed_months(year, now=None):
@@ -27,3 +28,58 @@ def future_months(year, last, count):
 def trailing_average(monthly, last, field, window=3):
     months = range(max(1, last - window + 1), last + 1)
     return sum(float(monthly.get(month, {}).get(field, 0)) for month in months) / len(months) if last else 0.0
+
+
+# ---------------------------------------------------------------- long-term (up to 5 years) projection
+def apply_growth(base_annual, years_ahead, growth_rate):
+    """Compound base_annual by growth_rate (e.g. 0.10 for +10%) for the given whole number of years ahead."""
+    return float(base_annual or 0) * ((1 + float(growth_rate or 0)) ** years_ahead)
+
+
+def year_fraction(target):
+    """Fraction of `target`'s calendar year that has elapsed by `target` (a datetime), 1.0 on 31 December."""
+    days_in_year = 366 if calendar.isleap(target.year) else 365
+    day_of_year = (target - datetime(target.year, 1, 1)).days + 1
+    return min(1.0, day_of_year / days_in_year)
+
+
+def long_term_projection(base_year_values, base_year, target_date, growth_rate=None, budget_by_year=None):
+    """Year-by-year projection from `base_year_values` (a dict of category/account -> full base-year amount)
+    up to `target_date` ("YYYY-MM-DD"), at most MAX_LONG_TERM_YEARS years ahead of `base_year`.
+
+    For each future year, a saved budget for that year (via `budget_by_year`, a dict {year: {key: amount}})
+    is used when present; otherwise the base-year amounts are compounded by `growth_rate` for the number of
+    years ahead. The final year is prorated to the fraction of the year reached by `target_date` when that
+    date does not land on 31 December.
+
+    Returns a list of {"year", "date_to", "fraction", "source" ("budget"/"growth"), "values"}.
+    """
+    try:
+        target = datetime.strptime(target_date, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        raise ValueError("Enter a valid target date (YYYY-MM-DD)")
+    try:
+        base_year = int(base_year)
+    except (TypeError, ValueError):
+        raise ValueError("Enter a valid base year")
+    if target.year == base_year:
+        raise ValueError("Target date must be at least one year after the base year")
+    if target.year - base_year > MAX_LONG_TERM_YEARS:
+        raise ValueError(f"Target date cannot be more than {MAX_LONG_TERM_YEARS} years ahead of {base_year}")
+    budget_by_year = budget_by_year or {}
+    rows = []
+    for year in range(base_year + 1, target.year + 1):
+        years_ahead = year - base_year
+        budget_values = budget_by_year.get(year)
+        if budget_values:
+            values = {key: float(amount or 0) for key, amount in budget_values.items()}; source = "budget"
+        else:
+            values = {key: apply_growth(amount, years_ahead, growth_rate) for key, amount in base_year_values.items()}
+            source = "growth"
+        fraction = 1.0
+        if year == target.year and not (target.month == 12 and target.day == 31):
+            fraction = year_fraction(target)
+            values = {key: amount * fraction for key, amount in values.items()}
+        rows.append({"year": year, "date_to": target.strftime("%Y-%m-%d") if year == target.year else f"{year}-12-31",
+                     "fraction": round(fraction, 4), "source": source, "values": values})
+    return rows
