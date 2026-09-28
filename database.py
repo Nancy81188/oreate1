@@ -2776,13 +2776,14 @@ class Database:
         if taxable_schooling_lbp>0: notes.append("Schooling above the exempt annual limit is taxed")
         allowance=setting("single_allowance")
         married=employee["marital_status"] in ("married","spouse"); spouse_works=married and bool(int(employee["spouse_works"] or 0))
-        family_deduction=D("0")
-        if married: family_deduction+=setting("spouse_allowance")
-        family_deduction+=setting("child_allowance")*min(children,int(setting("max_children_deduction","5")))
-        if spouse_works and family_deduction>0:
-            family_deduction=family_deduction/2
-            notes.append("Family tax deduction halved: married and the spouse also works, so the family deduction is split between the two spouses (confirm the split with your accountant)")
-        allowance+=family_deduction
+        # The personal deduction belongs to each employee. A spouse deduction applies
+        # only for a dependent spouse; when both parents work, split only the child deduction.
+        dependent_spouse_deduction=setting("spouse_allowance") if married and not spouse_works else D("0")
+        child_deduction=setting("child_allowance")*min(children,int(setting("max_children_deduction","5")))
+        if spouse_works and child_deduction:
+            child_deduction/=2
+            notes.append("Child tax deduction split equally because both spouses work")
+        allowance+=dependent_spouse_deduction+child_deduction
         if children>int(setting("max_children_deduction","5")): notes.append(f"Family deduction limited to {int(setting('max_children_deduction','5'))} children")
         regular_lbp=to_lbp(money["salary"]+money["overtime"]+money["commission"])+taxable_transport_lbp+taxable_schooling_lbp
         tax=lambda annual: self._progressive_tax(max(D("0"),annual-allowance),brackets)
@@ -2800,7 +2801,13 @@ class Database:
             share=money["retro_salary"]/len(retro_months)
             for month in retro_months:
                 month_settings=self.payroll_settings_for(month); month_brackets=month_settings.get("tax_brackets",brackets)
-                monthly=lambda annual: self._progressive_tax(max(D("0"),annual-allowance),month_brackets)/12
+                month_allowance=D(str(month_settings.get("single_allowance") or 0))
+                if married and not spouse_works:
+                    month_allowance+=D(str(month_settings.get("spouse_allowance") or 0))
+                month_children=min(children,int(month_settings.get("max_children_deduction") or 5))
+                month_child_allowance=D(str(month_settings.get("child_allowance") or 0))*month_children
+                month_allowance+=month_child_allowance/2 if spouse_works else month_child_allowance
+                monthly=lambda annual: self._progressive_tax(max(D("0"),annual-month_allowance),month_brackets)/12
                 retro_tax+=monthly((regular_lbp+to_lbp(share,month))*12)-monthly(regular_lbp*12)
         rounding=setting("tax_rounding")
         def rounded(value):
