@@ -2058,6 +2058,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.payroll_notes=tk.Label(form,text="",bg=LIGHT,fg="#8B1E1E",anchor="w",justify="left",font=("Segoe UI",9,"bold"),wraplength=1060); self.payroll_notes.grid(row=7,column=0,columnspan=8,padx=6,sticky="w")
         self.payroll_result=tk.StringVar(value="Gross: 0 | Tax: 0 | Employee NSSF: 0 | Net: 0")
         tk.Label(form,textvariable=self.payroll_result,bg=LIGHT,fg=NAVY,font=("Segoe UI",10,"bold"),wraplength=1000,justify="left").grid(row=5,column=0,columnspan=8,padx=6,pady=6,sticky="w")
+        for variable in (self.payroll_employee,self.payroll_period,*self.payroll_vars.values(),self.payroll_transport_days):
+            variable.trace_add("write",self.mark_payroll_stale)
         buttons=tk.Frame(form,bg=LIGHT); buttons.grid(row=0,column=4,columnspan=4,sticky="w",padx=6)
         self.action_button(buttons,"Schooling Law",self.schooling_law_dialog).pack(side="left",padx=3)
         self.action_button(buttons,"Calculate",self.calculate_payroll).pack(side="left",padx=3)
@@ -2337,6 +2339,12 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         amount=daily*days/rate
         self.payroll_vars["transport"].set(f"{amount:.0f}" if currency=="LBP" else f"{amount.quantize(Decimal('0.01'))}")
 
+    def mark_payroll_stale(self,*_args):
+        if hasattr(self,"payroll_result"):
+            self.payroll_result.set("Inputs changed - click Calculate for the current tax and net salary")
+        if hasattr(self,"payroll_breakdown"): self.payroll_breakdown.config(text="")
+        if hasattr(self,"payroll_notes"): self.payroll_notes.config(text="")
+
     def payroll_payload(self):
         employee=self.payroll_employee_map.get(self.payroll_employee.get())
         if not employee: raise ValueError("Select an employee")
@@ -2352,7 +2360,9 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def calculate_payroll(self):
         try: result=self.client.calculate_payroll(self.payroll_payload())
-        except Exception as exc: return messagebox.showerror("Payroll",str(exc))
+        except Exception as exc:
+            messagebox.showerror("Payroll",str(exc))
+            return None
         if not getattr(self,"_family_manual",False) and hasattr(self,"payroll_family_override"):
             value=float(result.get("family_allowance") or 0)
             self.payroll_family_override.set(f"{value:.0f}" if result.get("currency")=="LBP" else f"{value:.2f}")
@@ -2360,11 +2370,17 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         rules=result.get("settings_period") or {}
         period=f' | Rules from {safe_display_date(rules["date_from"])}' if rules.get("date_from") else ""
         self.payroll_breakdown.config(text=f'Worked {result.get("worked_days","?")}/{result.get("calendar_days","?")} days | Tax: regular {result.get("regular_tax",0):,.2f} + bonus/13th {result.get("one_off_tax",0):,.2f} + retro {result.get("retro_tax",0):,.2f}   |   Exempt: transport {result.get("exempt_transport",0):,.2f} ({result.get("transport_days","")} days), schooling {result.get("exempt_schooling",0):,.2f}   |   NSSF family allowance paid: {result.get("family_allowance",0):,.2f} {result["currency"]}')
+        tax_detail=(f"Annualized recurring {result.get('annualized_recurring_lbp',0):,.0f} LBP"
+                    f" - family deduction {result.get('family_deduction_lbp',0):,.0f} LBP"
+                    f" = taxable {result.get('annualized_taxable_lbp',0):,.0f} LBP")
+        self.payroll_breakdown.config(text=self.payroll_breakdown.cget("text")+"  |  "+tax_detail)
         self.payroll_notes.config(text=("Check: "+"  |  ".join(result.get("compliance_notes") or [])) if result.get("compliance_notes") else "Compliant with the rules of this period")
         self.payroll_notes.config(fg="#8B1E1E" if result.get("compliance_notes") else NAVY)
         self.payroll_result.set(f'Gross: {result["gross_salary"]:,.2f} | Tax: {result["income_tax"]:,.2f} {result["currency"]} ({result["income_tax_lbp"]:,.0f} LBP){retro} | Employee NSSF: {result["employee_nssf"]:,.2f} | Employer NSSF: {result["employer_medical"]+result["employer_family"]+result["employer_end_service"]:,.2f} | Net: {result["net_salary"]:,.2f}{period}')
+        return result
 
     def save_payroll(self):
+        if self.calculate_payroll() is None: return
         try: saved=self.client.save_payroll(self.payroll_payload())
         except Exception as exc: return messagebox.showerror("Payroll",str(exc))
         self.load_payroll(); messagebox.showinfo("Payroll",f'Payroll {saved["payroll_number"]} saved as draft')
