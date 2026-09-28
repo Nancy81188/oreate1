@@ -140,8 +140,8 @@ class Stage3Mixin:
         rows = self.import_sheet.ordered()
         if not rows: return messagebox.showwarning("Import", "Choose an Excel or PDF file first")
         kind, entry_type = TYPES[self.import_type.get()]
-        missing = [r["line"] for r in rows if not r.get("party_name") or not r.get("invoice_date") or r.get("total") in (None, "")]
-        if missing: return messagebox.showwarning("Import", f"Row(s) {', '.join(missing[:10])}: enter the customer/supplier and the total")
+        missing = [r["line"] for r in rows if not r.get("party_name") or not r.get("invoice_date") or r.get("total") in (None, "") or r.get("vat") in (None, "")]
+        if missing: return messagebox.showwarning("Import", f"Row(s) {', '.join(missing[:10])}: enter the date, customer/supplier, VAT (0 if none), and TTC")
         if self.import_replace.get() and not messagebox.askyesno("Replace previous data", "ALL previous invoices will be removed and replaced. A safety backup is made first. Continue?"): return
         done = 0; errors = []
         try:
