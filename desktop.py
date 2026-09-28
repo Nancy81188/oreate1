@@ -2439,9 +2439,6 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def build_settings(self):
         nested=ttk.Notebook(self.settings_tab); nested.pack(fill="both",expand=True,padx=10,pady=10)
-        visibility=tk.Frame(self.settings_tab,bg=LIGHT); visibility.pack(fill="x",padx=20,pady=(0,8))
-        tk.Checkbutton(visibility,text="Show Department / Project fields in all sheets",variable=self.show_dimensions,
-                       command=self.toggle_dimensions,bg=LIGHT,fg=NAVY,font=("Segoe UI",9,"bold")).pack(side="left")
         users=tk.Frame(nested,bg=LIGHT); backups=tk.Frame(nested,bg=LIGHT); rates=tk.Frame(nested,bg=LIGHT); branches=tk.Frame(nested,bg=LIGHT); general=tk.Frame(nested,bg=LIGHT)
         is_admin=(self.current_user or {}).get("role")=="admin"
         if is_admin: nested.add(users,text="Users & Permissions")
