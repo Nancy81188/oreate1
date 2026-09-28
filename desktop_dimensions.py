@@ -75,6 +75,10 @@ class DimensionsMixin:
     def build_dimensions_pages(self, nested):
         departments = tk.Frame(nested, bg=LIGHT); projects = tk.Frame(nested, bg=LIGHT)
         nested.add(departments, text="Departments"); nested.add(projects, text="Projects")
+        for page in (departments, projects):
+            tk.Checkbutton(page, text="Show Department / Project in all sheets", variable=self.show_dimensions,
+                           command=self.toggle_dimensions, bg=LIGHT, fg=NAVY,
+                           font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=14, pady=(8, 0))
         self.dep_id = None; self.dep_code = tk.StringVar(); self.dep_name = tk.StringVar(); self.dep_active = tk.BooleanVar(value=True)
         form = tk.Frame(departments, bg=LIGHT); form.pack(fill="x", padx=10, pady=10)
         tk.Label(form, text="Code (blank = automatic)", bg=LIGHT).pack(side="left"); tk.Entry(form, textvariable=self.dep_code, width=10).pack(side="left", padx=(4, 10))
