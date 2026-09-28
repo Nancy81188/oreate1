@@ -43,40 +43,42 @@ class DimensionsMixin:
         return "" if text in ("", NONE, "All") else text.split(" - ", 1)[0].strip()
 
     def dimension_selectors(self, parent, department_var, project_var, include_all=False):
-        group = tk.Frame(parent, bg=LIGHT)
-        group.pack(side="left")
-        self._dimension_groups.append((group, department_var, project_var, include_all))
-        tk.Label(group, text="Department", bg=LIGHT).pack(side="left")
-        department = ttk.Combobox(group, textvariable=department_var, values=self.department_choices(include_all), state="readonly", width=20); department.pack(side="left", padx=(4, 10))
-        tk.Label(group, text="Project", bg=LIGHT).pack(side="left")
-        project = ttk.Combobox(group, textvariable=project_var, values=self.project_choices(include_all), state="readonly", width=21); project.pack(side="left", padx=(4, 10))
+        dep_group = tk.Frame(parent, bg=LIGHT); dep_group.pack(side="left")
+        project_group = tk.Frame(parent, bg=LIGHT); project_group.pack(side="left")
+        self._dimension_groups.append((dep_group, project_group, department_var, project_var, include_all))
+        tk.Label(dep_group, text="Department", bg=LIGHT).pack(side="left")
+        department = ttk.Combobox(dep_group, textvariable=department_var, values=self.department_choices(include_all), state="readonly", width=20); department.pack(side="left", padx=(4, 10))
+        tk.Label(project_group, text="Project", bg=LIGHT).pack(side="left")
+        project = ttk.Combobox(project_group, textvariable=project_var, values=self.project_choices(include_all), state="readonly", width=21); project.pack(side="left", padx=(4, 10))
         def refresh(_event=None):
             self.dimension_lists(refresh=True); department["values"] = self.department_choices(include_all); project["values"] = self.project_choices(include_all)
         department.bind("<Button-1>", refresh, add="+"); project.bind("<Button-1>", refresh, add="+")
         if not department_var.get(): department_var.set("All" if include_all else NONE)
         if not project_var.get(): project_var.set("All" if include_all else NONE)
-        if not self.show_dimensions.get():
-            if include_all: department_var.set("All"); project_var.set("All")
-            group.pack_forget()
+        if not self.show_department.get(): dep_group.pack_forget()
+        if not self.show_project.get(): project_group.pack_forget()
         return department, project
 
     def toggle_dimensions(self):
-        visible = self.show_dimensions.get()
-        for group, department, project, include_all in self._dimension_groups:
-            if not group.winfo_exists(): continue
-            if visible: group.pack(side="left")
-            else:
-                if include_all: department.set("All"); project.set("All")
-                group.pack_forget()
+        for dep_group, project_group, department, project, include_all in self._dimension_groups:
+            for group, visible, variable in ((dep_group, self.show_department.get(), department),
+                                              (project_group, self.show_project.get(), project)):
+                if not group.winfo_exists(): continue
+                if visible:
+                    if not group.winfo_manager(): group.pack(side="left")
+                else:
+                    if include_all: variable.set("All")
+                    group.pack_forget()
         for sheet in self._dimension_sheets:
-            if sheet.tree.winfo_exists(): sheet.set_dimension_visibility(visible)
+            if sheet.tree.winfo_exists(): sheet.set_dimension_visibility(self.show_department.get(), self.show_project.get())
 
     # ------------------------------------------------------------ settings pages
     def build_dimensions_pages(self, nested):
         departments = tk.Frame(nested, bg=LIGHT); projects = tk.Frame(nested, bg=LIGHT)
         nested.add(departments, text="Departments"); nested.add(projects, text="Projects")
-        for page in (departments, projects):
-            tk.Checkbutton(page, text="Show Department / Project in all sheets", variable=self.show_dimensions,
+        for page, label, variable in ((departments, "Show Department in all sheets", self.show_department),
+                                      (projects, "Show Project in all sheets", self.show_project)):
+            tk.Checkbutton(page, text=label, variable=variable,
                            command=self.toggle_dimensions, bg=LIGHT, fg=NAVY,
                            font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=14, pady=(8, 0))
         self.dep_id = None; self.dep_code = tk.StringVar(); self.dep_name = tk.StringVar(); self.dep_active = tk.BooleanVar(value=True)
