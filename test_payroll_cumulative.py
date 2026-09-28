@@ -36,7 +36,7 @@ class CumulativePayrollTest(unittest.TestCase):
                 "schooling":"5000000"},user)
             second=db.calculate_payroll({"employee_id":employee["id"],"period_date":"28-02-2026",
                 "schooling":"5000000"})
-            self.assertEqual(first["exempt_schooling"],5000000)
+            self.assertEqual(float(first["exempt_schooling"]),5000000)
             self.assertEqual(second["exempt_schooling"],1000000)
 
 
