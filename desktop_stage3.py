@@ -152,7 +152,7 @@ class Stage3Mixin:
                     without = r.get("non_deductible")
                     if without is None: without = item.get("without_vat_subtotal")
                     if without is None: raise ValueError("Review the non-deductible value before importing expenses")
-                    item.update(expense_date=r["invoice_date"], description=r.get("items") or item.get("description") or r["party_name"], currency=r["currency"], reference=r.get("invoice_number") or "",
+                    item.update(expense_date=r["invoice_date"], description=" - ".join(filter(None, [r["party_name"], r.get("items") or item.get("description")])), currency=r["currency"], reference=r.get("invoice_number") or "",
                                 with_vat_subtotal=round(base - float(without), 2), without_vat_subtotal=float(without), vat=vat)
                     try:
                         expense_id = self.client.add_expense(item)["expense_id"]; done += 1
