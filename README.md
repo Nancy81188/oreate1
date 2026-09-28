@@ -1,5 +1,13 @@
 # Saber Accounting MVP
 
+## Version 2.9.27 (Local PDF reader and payroll corrections)
+
+- PDF invoice previews use local text extraction. For scanned images, install free Tesseract OCR with English/French/Arabic language data; the app never requests an OpenAI key or sends invoices to a cloud AI service.
+- Purchase PDF item lines populate the editable purchase form. Items without an existing stock code are created when the purchase is saved. Sales PDF lines populate the sales form where reliably detected; review every field.
+- Payroll tax now uses a 30-day tax month for partial periods and cumulative prior saved payrolls for variable pay. The salary amount itself still uses actual calendar days.
+- The schooling tax exemption is an annual remaining balance, distinct from public/private schooling grant rates. An older company database with auto-seeded payroll rules reads current schooling amounts without overwriting stored settings.
+- PDF layouts vary. Review extracted date, supplier, item lines, VAT and TTC before saving. Scanned OCR requires Tesseract to be installed on the Windows computer.
+
 ## Version 2.9.26 (Payroll periods and import review)
 
 - Payroll prorates salary and annual tax amounts by worked calendar days for an employee hired or leaving during the selected month.
