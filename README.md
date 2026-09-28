@@ -1,5 +1,15 @@
 # Saber Accounting MVP
 
+## Version 2.9.6 (Financial statements, notes and audit draft)
+
+- Business Reports > Financial Statements + Audit + Notes: enter one or two years (for example `2025` or `2024,2025`). Each year comes from the selected company's own database, latest year first. Annual calendar-year periods use posted entries, opening balances and exclude closing P&L transfers.
+- Includes financial position, profit/loss and OCI, changes in equity by component, cash flow reconciliation, account schedules, editable notes and an editable audit-report draft. Print, PDF and Excel use the same selected-year pack; exports refresh to prevent stale results.
+- Edit Notes / Audit / Mapping saves disclosures and account-prefix classification overrides per company/year, with an audit log. Presentation settings may be edited for closed years without unlocking or changing their books; viewers cannot save them.
+- This is a preparation/review pack, not a compliance certification or issued audit opinion. Single-year or nonconsecutive comparisons are labelled. OCI and classified cash-flow totals must be supplied and reconciled; blanks remain REVIEW REQUIRED. Book equivalents do not automatically implement IAS 21 translation or IAS 29 restatement. Direct equity movements need disclosure of owner transactions, OCI and restatements. Review all classifications, disclosures and applicable standards, including IFRS 18 for periods from 2027.
+- Validation: 130 automated tests passed, including separate-year API routing, closed-year draft permissions, closing-entry exclusion, cash reconciliation, saved disclosures, and PDF/Excel exports. PDF pages were visually reviewed.
+- Changed files: `financial_statements.py`, `desktop_v22.py`, `server.py`, `client.py`, `report_export.py`, `test_financial_statements.py`, `installer.iss`, the Windows build workflow and this README.
+- References: [IAS 1](https://www.ifrs.org/issued-standards/list-of-standards/ias-1-presentation-of-financial-statements/), [IAS 7](https://www.ifrs.org/issued-standards/list-of-standards/ias-7-statement-of-cash-flows/), [ISA 700](https://www.iaasb.org/publications/international-standard-auditing-isa-700-revised-forming-opinion-and-reporting-financial-statements).
+
 ## Version 2.9.5 (5-Year Projection for Budget and Cash Flow)
 
 - Budget page: a "5-Year Projection" section next to the existing quarterly/6-month/yearly forecast. Enter a target date up to 5 years after the "Actual report year" and, optionally, a yearly growth % applied to that year's posted income/expense actuals. For any future year that already has a saved budget, the saved budget is used instead of the growth %. The final (partial) year is prorated to the target date. Shown as net income/expense by year and by account, exportable like the existing forecast.

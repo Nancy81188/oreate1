@@ -166,10 +166,25 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return self._json(200,ledger_reports.json_ready({"statement":bank_rec.statement_lines(self.db,account,start,end),"books":bank_rec.book_lines(self.db,account,currency,start,end),
                     "report":bank_rec.reconciliation(self.db,account,currency,start,end,self._query(parsed,"balance"))}))
             except Exception as exc: return self._json(400,{"error":str(exc)})
+        if path == "/api/reports/financial-config":
+            try:
+                import financial_statements
+                year = int(self._query(parsed,"year",self.headers.get("X-Fiscal-Year")))
+                target = self.company_manager.database(self.headers.get("X-Company-ID"),year)
+                return self._json(200,financial_statements.config(target))
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/reports/business":
             try:
                 import business_reports
-                result=business_reports.build(self.db,self._query(parsed,"report",""),json.loads(self._query(parsed,"options","{}") or "{}"))
+                report = self._query(parsed,"report","")
+                options = json.loads(self._query(parsed,"options","{}") or "{}")
+                if report == "financial_statements":
+                    import financial_statements
+                    years = financial_statements.years_from(options.get("years"))
+                    databases = {year:self.company_manager.database(self.headers.get("X-Company-ID"),year) for year in years}
+                    result = financial_statements.build(databases,options)
+                else:
+                    result=business_reports.build(self.db,report,options)
                 return self._json(200,ledger_reports.json_ready(result))
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/departments": return self._json(200,{"items":self.db.list_departments()})
@@ -385,12 +400,18 @@ class ApiHandler(BaseHTTPRequestHandler):
             except Exception as exc: return self._json(400,{"error":str(exc)})
             return self._json(201,{"company":result})
         if not self._select_database(): return
-        fiscal_admin_paths=("/api/fiscal-years/reopen","/api/fiscal-years/refresh-opening","/api/fiscal-years/delete")
+        fiscal_admin_paths=("/api/reports/financial-config","/api/fiscal-years/reopen","/api/fiscal-years/refresh-opening","/api/fiscal-years/delete")
         if path not in fiscal_admin_paths and self.headers.get("X-Company-ID") and self.headers.get("X-Fiscal-Year") and self.company_manager.year_status(self.headers.get("X-Company-ID"),self.headers.get("X-Fiscal-Year"))=="closed":
             return self._json(423,{"error":"This fiscal year is closed and read-only"})
         if user["role"] == "viewer":
             return self._json(403,{"error":"Viewer access is read-only"})
         if self._module_denied(user, path): return
+        if path == "/api/reports/financial-config":
+            try:
+                import financial_statements
+                target = self.company_manager.database(self.headers.get("X-Company-ID"),int(body["year"]))
+                return self._json(200,financial_statements.save_config(target,body["config"],user["id"]))
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/fixed-assets":
             try: return self._json(201,{"asset":fixed_assets.save_asset(self.db,body,user_id=user["id"])})
             except Exception as exc: return self._json(400,{"error":str(exc)})
