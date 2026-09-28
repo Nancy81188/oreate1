@@ -54,6 +54,8 @@ class EmployeeRegistrationTest(unittest.TestCase):
             self.assertEqual(updated["mother_name"], "Lina")
             db.initialize("secret12345")
             self.assertEqual(db.list_employees()[0]["birth_place"], "Jounieh")
+            with self.assertRaisesRegex(ValueError, "Leaving date cannot be before starting date"):
+                db.save_employee({"full_name":"Invalid dates", "hire_date":"01-05-2026", "leave_date":"30-04-2026"}, user_id)
 
     def test_nssf_roster_counts_employees_without_payroll(self):
         with TemporaryDirectory() as folder:
