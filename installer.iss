@@ -1,5 +1,5 @@
 #define MyAppName "Saber Accounting"
-#define MyAppVersion "2.9.10"
+#define MyAppVersion "2.9.11"
 #define MyAppPublisher "Saber for Audit"
 
 [Setup]
@@ -31,8 +31,14 @@ RestartApplications=no
 ; Off by default: backups are made from Backup & Restore when the user asks. Tick it to start a daily background backup of every company and year with Windows.
 Name: "autobackup"; Description: "Start automatic daily backups with Windows (all companies and years)"; Flags: unchecked
 
+[InstallDelete]
+; Remove the old single-file build's leftovers when upgrading.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
-Source: "dist\SaberAccounting.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Fast-start folder build: the program and its libraries are installed once,
+; so nothing is unpacked to a temp folder each time the app opens.
+Source: "dist\SaberAccounting\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "dist\SaberAccountingBackup.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "assets\Saber_for_Audit_logo.png"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "assets\Fonts\Amiri-OFL.txt"; DestDir: "{app}\assets\fonts"; Flags: ignoreversion
