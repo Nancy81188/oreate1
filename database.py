@@ -2790,7 +2790,7 @@ class Database:
         worked_days=max(0,(datetime.strptime(active_end,"%Y-%m-%d")-datetime.strptime(active_start,"%Y-%m-%d")).days+1)
         if not worked_days: raise ValueError("Employee did not work in the selected payroll month")
         work_fraction=D(worked_days)/D(month_days)
-        tax_days=max(0,min(int(active_end[-2:]),30)-min(int(active_start[-2:]),30)+1)
+        tax_days=max(0,(30 if active_end==rules_date else min(int(active_end[-2:]),30))-min(int(active_start[-2:]),30)+1)
         tax_fraction=D(tax_days)/D(30)
         base_salary=D(str(employee["base_salary"] or 0))
         if worked_days<month_days and money["salary"]==base_salary:
