@@ -684,7 +684,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             "pnl_tab": ("build_profit_loss",), "reports_tab": ("build_financial_reports",),
             "settings_tab": ("build_settings",)}
         page_name=self.main_tab_pages[index]
-        attribute=next((name for name in names if self.__dict__.get(name) is page_name),None)
+        attribute=next((name for name in names if getattr(getattr(self.__dict__.get(name),"master",None),"master",None) is page_name),None)
         pending=self.__dict__.get("_pending_builders") or []
         for builder_name in names.get(attribute,()):
             builder=next((item for item in pending if item.__name__==builder_name),None)
