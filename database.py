@@ -2420,14 +2420,16 @@ class Database:
         children=max(0,int(item.get("children") or 0)); spouse_works=1 if item.get("spouse_works",False) else 0; active=1 if item.get("active",True) else 0
         employee_group=str(item.get("employee_group") or "employee").lower()
         if employee_group not in ("employee","manager"): raise ValueError("Employee group must be Employee or Manager")
+        hire_date=iso_date(item["hire_date"],"Starting date") if item.get("hire_date") else None
+        leave_date=iso_date(item["leave_date"],"Leaving date") if item.get("leave_date") else None
+        if hire_date and leave_date and leave_date<hire_date: raise ValueError("Leaving date cannot be before starting date")
         employee_id=item.get("id")
         values=(number,name,str(item.get("national_id") or "").strip(),str(item.get("mof_number") or "").strip(),
             str(item.get("nssf_number") or "").strip(),str(item.get("address") or "").strip(),str(item.get("contact_number") or "").strip(),
             str(item.get("nationality") or "").strip(),str(item.get("father_name") or "").strip(),str(item.get("mother_name") or "").strip(),
             iso_date(item["birth_date"]) if item.get("birth_date") else None,str(item.get("birth_place") or "").strip(),
             str(item.get("marital_status") or "single").lower(),spouse_works,children,employee_group,
-            iso_date(item["hire_date"]) if item.get("hire_date") else None,
-            iso_date(item["leave_date"]) if item.get("leave_date") else None,
+            hire_date,leave_date,
             str(item.get("job_title") or "").strip(),int(item["branch_id"]) if item.get("branch_id") else None,currency,
             str(Decimal(str(item.get("base_salary") or 0))),item.get("salary_account") or "621100001",
             item.get("payable_account") or "421100001",active)
