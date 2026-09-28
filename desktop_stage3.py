@@ -116,10 +116,10 @@ class Stage3Mixin:
                 messagebox.showerror("Import PDF",f"{Path(path).name}: {exc}")
                 continue
             for data in documents:
-                rows.append({"invoice_number": data.get("invoice_number") or "", "invoice_date": data.get("invoice_date") or datetime.now().strftime("%d-%m-%Y"),
+                rows.append({"invoice_number": data.get("invoice_number") or "", "invoice_date": data.get("invoice_date") or "",
                          "party_name": data.get("party_name") or "", "currency": data.get("currency") or self.currency.get(),
                          "items": "; ".join(i["description"] for i in data.get("items", [])), "deductible": data.get("deductible"), "non_deductible": data.get("non_deductible"),
-                          "subtotal": data.get("subtotal"), "vat": data.get("vat"), "total": data.get("total"), "source": f'{data["file"]} - {data["page_range"]}', "notes": data.get("notes", ""), "_path": path})
+                          "subtotal": data.get("subtotal"), "vat": data.get("vat"), "total": data.get("total"), "source": f'{data["file"]} - {data["page_range"]}', "notes": data.get("notes", ""), "_items": data.get("items", []), "_path": path})
         self.import_mode = "pdf"; self.import_rows = rows
         self.file_label.config(text=f"{len(paths)} PDF file(s). Double-click any cell to correct it before importing.", fg=NAVY); self.populate_import_preview()
 
@@ -163,6 +163,34 @@ class Stage3Mixin:
                         expense_id = self.client.add_expense(item)["expense_id"]; done += 1
                         if r.get("_path"): self.client.upload_expense_attachment(expense_id, Path(r["_path"]).name, "application/pdf", Path(r["_path"]).read_bytes())
                     except Exception as exc: errors.append(f"{r['line']}: {exc}")
+            elif entry_type == "purchases" and self.import_mode == "pdf":
+                if self.import_replace.get():
+                    raise ValueError("Turn off Replace previous invoices when receiving PDF purchase items")
+                for r in rows:
+                    parsed = [line for line in r.get("_items", []) if line.get("quantity") and line.get("unit_price") is not None
+                              and line.get("total") is not None and abs(line["quantity"]*line["unit_price"]-line["total"]) <= 0.02]
+                    if (r.get("non_deductible") or 0) > 0:
+                        errors.append(f'{r["line"]}: split deductible/non-deductible items in Purchase Invoice before saving')
+                        continue
+                    if not parsed or abs(sum(line["total"] for line in parsed)-float(r["subtotal"])) > 0.02:
+                        errors.append(f'{r["line"]}: item lines do not match subtotal; open Purchase Invoice and review this PDF')
+                        continue
+                    try:
+                        lines=[]; running_vat=0.0
+                        for index,line in enumerate(parsed):
+                            stock=self.client.find_or_create_item(line["description"],"unit",None)
+                            line_vat=round(float(r["vat"])*line["total"]/float(r["subtotal"]),2) if index<len(parsed)-1 else round(float(r["vat"])-running_vat,2)
+                            running_vat+=line_vat
+                            lines.append({"item_code":stock["sku"],"description":line["description"],"quantity":line["quantity"],
+                                          "unit":"unit","unit_price":line["unit_price"],"vat_rate":0,"vat":line_vat,
+                                          "warehouse":"MAIN"})
+                        saved=self.client.create_manual_invoice({"invoice_number":r.get("invoice_number") or "",
+                            "invoice_date":r["invoice_date"],"party_name":r["party_name"],"kind":"purchases",
+                            "currency":r["currency"],"status":"posted","source_file":Path(r["_path"]).name},lines)
+                        done+=1
+                        self.client.upload_attachment(saved["invoice_id"],Path(r["_path"]).name,
+                                                      "application/pdf",Path(r["_path"]).read_bytes())
+                    except Exception as exc: errors.append(f'{r["line"]}: {exc}')
             elif self.import_mode == "excel":
                 items = [{**{k: v for k, v in r.items() if not k.startswith("_") and k not in ("line", "source", "notes")}, "entry_type": entry_type, "kind": kind} for r in rows]
                 result = self.client.import_invoices(items, replace_existing=self.import_replace.get()); done = result["imported"]
