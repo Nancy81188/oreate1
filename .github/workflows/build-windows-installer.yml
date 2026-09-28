@@ -49,8 +49,8 @@ jobs:
           }
           Write-Host "OK: dist\SaberAccounting\SaberAccounting.exe was produced."
 
+      # Must succeed: the installer's "daily backups" option runs this program.
       - name: Build background backup service
-        continue-on-error: true
         run: |
           pyinstaller --noconfirm --clean --onefile --windowed `
             --hidden-import inventory --hidden-import chart_extra --hidden-import lebanese_accounts --hidden-import lebanese_payroll `
