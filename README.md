@@ -1,5 +1,23 @@
 # Saber Accounting MVP
 
+## Version 2.9.21 (Fix: Windows build test failure; switching company / year)
+
+- Fixed the Windows build failure in "Run all tests" (`test_program_opens_on_the_dashboard_first_and_builds_the_rest`). On a slower PC the previous company's pages had finished building, and their (destroyed) widgets were still remembered, so after Switch Company / Year the program could think a page was already built. Every page widget of the previous screen is now forgotten when the screen is rebuilt, so the pages are rebuilt for the newly opened company / year. The test now reproduces the slower-PC case.
+- Changed files: `desktop.py`, `test_ui_v2_9_18.py`, `installer.iss` and this README. Validation: 176 automated tests passed.
+
+## Version 2.9.20 (Company data files named after the company, like the backups)
+
+- Each company's data is now kept in a folder with the company's name, one file per fiscal year, named like its backups:
+  - Data: `SaberAccounting\companies\<Company Name>\<Company Name>_<year>.db` (for example `companies\ECOLOGE LEBANON SARL\ECOLOGE LEBANON SARL_2025.db`).
+  - Backups (unchanged): `SaberAccounting\backups\<Company Name>\<year>\<Company Name>_<year>_<date>.db`.
+  - Deleted fiscal years: `companies\<Company Name>\deleted_years\`.
+- Existing files are moved automatically the first time 2.9.20 starts. Each file is copied with SQLite's backup, checked (integrity check and the number of rows of every table), the company list is updated, and only then the old file is removed. A file that is in use by another program is left where it is, keeps working, and is moved on a later start. A company year that was stored inside the main file `saber_accounting_v0_7.db` is copied out to its company folder; the main file stays (it holds the users and passwords).
+- Renaming a company (Manage Selected > Company Name) renames its data files and its backups folder to the new name.
+- New companies and new fiscal years (Create Separate Year, year closing) are created directly in the company-named folder. Two companies with the same name get their company id added to the folder name.
+- Tests changed on purpose because the file locations changed: `test_final_features.py` (deleted-years folder) and `test_regressions.py` (company data is read from the company file, not the main file).
+- Validation: 176 automated tests passed (173 previous + 3 new in `test_company_named_files.py`: existing files moved with their data, new company / year named after the company, rename moves the files and the backups folder).
+- Changed files: `company_manager.py`, `server.py`, `desktop.py` (version), `test_company_named_files.py` (new), `test_final_features.py`, `test_regressions.py`, `test_ui_v2_9_18.py` (frees window objects on the main thread), `installer.iss` and this README.
+
 ## Version 2.9.19 (Faster opening, DOE in LBP or USD books, payroll periods / director remuneration / family allocation, date dashes, item cost link)
 
 - **Faster opening.** The program now shows the Dashboard as soon as a company is opened (measured about 10x faster to the first screen) and builds the other pages in the background right after; a page you click first is built at once. The Excel / PDF libraries are loaded the first time you export instead of when the program starts (the program's own code now loads about 4x faster).

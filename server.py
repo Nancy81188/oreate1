@@ -851,6 +851,10 @@ def run_server(host="127.0.0.1", port=8765, database="saber_accounting.db", admi
     db = Database(database, pooled=True)
     db.initialize(admin_password)
     ApiHandler.db = db; ApiHandler.master_db=db; ApiHandler.company_manager=CompanyManager(database, pooled=True)
+    # Company data lives in companies/<Company Name>/<Company Name>_<year>.db (moved there once, safely).
+    try:
+        for source,target in ApiHandler.company_manager.organize_files(): print(f"Company file moved: {source} -> {target}")
+    except Exception as exc: print(f"Company files were not reorganised this time: {exc}")
     server = ThreadingHTTPServer((host, port), ApiHandler)
     if tls_cert:
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

@@ -34,6 +34,68 @@ class CompanyManager:
                         db.execute("INSERT INTO app_settings(key,value) VALUES('company_name','ECOLOGE LEBANON SARL') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
                 except Exception: pass
 
+    # ------------------------------------------------------------ files named after the company
+    @staticmethod
+    def safe_name(name, fallback="company"):
+        """The company name as it can be used for a Windows folder / file name (same rule as the backups)."""
+        text="".join(ch for ch in str(name or "") if ch.isalnum() or ch in " -_&.").strip()
+        return text or fallback
+
+    def company_folder(self, company, data=None):
+        """companies/<Company Name>/ - two companies with the same name get their id added."""
+        safe=self.safe_name(company.get("name"),company.get("id") or "company")
+        others=[c for c in (data or self._read())["companies"] if c.get("id")!=company.get("id")]
+        if any(self.safe_name(c.get("name"),c.get("id")).casefold()==safe.casefold() for c in others): safe=f'{safe} ({company.get("id")})'
+        return self.root/safe
+
+    def year_file(self, company, year, data=None):
+        """companies/<Company Name>/<Company Name>_<year>.db - named like the backups (<Company Name>_<year>_<date>.db)."""
+        folder=self.company_folder(company,data)
+        return folder/f"{folder.name}_{int(year)}.db"
+
+    def organize_files(self, only_company_id=None):
+        """Move every company-year file to companies/<Company Name>/<Company Name>_<year>.db.
+
+        Each file is copied with SQLite's backup (a consistent copy), checked (integrity and the number of
+        rows of every table), the company list is updated, and only then is the old file removed. The main
+        file (users and passwords) is never removed: a company year that was kept inside it is copied out.
+        A file that cannot be moved now (for example open in another program) keeps working where it is
+        and is moved on a later start. Returns the list of moves."""
+        import os
+        data=self._read(); moved=[]
+        for company in data["companies"]:
+            if only_company_id and company.get("id")!=only_company_id: continue
+            for fiscal in company.get("years",[]):
+                source=Path(fiscal["database"]).resolve(); target=self.year_file(company,fiscal["year"],data).resolve()
+                if source==target or not source.exists(): continue
+                if target.exists(): continue  # never overwrite; resolve by hand
+                cached=self._cache.pop(str(source),None)
+                if cached is not None: cached.release()
+                try:
+                    target.parent.mkdir(parents=True,exist_ok=True)
+                    temporary=target.with_suffix(".moving")
+                    if temporary.exists(): temporary.unlink()
+                    with closing(sqlite3.connect(str(source))) as old,closing(sqlite3.connect(str(temporary))) as new: old.backup(new)
+                    with closing(sqlite3.connect(str(source))) as old,closing(sqlite3.connect(str(temporary))) as new:
+                        if new.execute("PRAGMA integrity_check").fetchone()[0]!="ok": raise ValueError("copy failed the integrity check")
+                        for (table,) in old.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall():
+                            if old.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]!=new.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]:
+                                raise ValueError(f"table {table} differs after the copy")
+                    os.replace(temporary,target)
+                except Exception:
+                    try: temporary.unlink()
+                    except Exception: pass
+                    continue
+                fiscal["database"]=str(target); self._write(data); moved.append((str(source),str(target)))
+                if source!=self.master_path.resolve():
+                    for suffix in ("","-wal","-shm"):
+                        try: Path(str(source)+suffix).unlink()
+                        except FileNotFoundError: pass
+                        except OSError: pass
+                    try: source.parent.rmdir()  # the old id-named folder, when it is now empty
+                    except OSError: pass
+        return moved
+
     def _read(self):
         try: return json.loads(self.registry_path.read_text(encoding="utf-8"))
         except Exception: return {"companies":[]}
@@ -62,7 +124,7 @@ class CompanyManager:
         path=str(Path(selected["database"]).resolve())
         if path not in self._cache:
             database=Database(path,pooled=self.pooled)
-            safe="".join(ch for ch in company["name"] if ch.isalnum() or ch in " -_&.").strip() or company["id"]
+            safe=self.safe_name(company["name"],company["id"])
             database.backup_folder=str(self.master_path.parent/"backups"/safe/str(selected["year"])); database.backup_label=f'{safe}_{selected["year"]}'
             # Bring files made by an older version up to date (new tables and columns); existing data is kept.
             if Path(path).exists() and Path(path)!=self.master_path: database.initialize(secrets.token_urlsafe(24))
@@ -80,8 +142,9 @@ class CompanyManager:
         if not name or year<2000 or year>2100: raise ValueError("Enter a valid company name and fiscal year")
         data=self._read(); company_id=re.sub(r"[^a-z0-9]+","-",name.lower()).strip("-") or uuid.uuid4().hex[:10]
         if any(c["id"]==company_id or c["name"].casefold()==name.casefold() for c in data["companies"]): raise ValueError("Company already exists")
-        company_id=f"{company_id}-{uuid.uuid4().hex[:6]}"; folder=self.root/company_id; folder.mkdir(parents=True,exist_ok=True)
-        path=folder/f"{year}.db"; target=Database(path); target.initialize(secrets.token_urlsafe(24))
+        company_id=f"{company_id}-{uuid.uuid4().hex[:6]}"
+        path=self.year_file({"id":company_id,"name":name},year,data); path.parent.mkdir(parents=True,exist_ok=True)
+        target=Database(path); target.initialize(secrets.token_urlsafe(24))
         self._copy_master_data(master_db,target)
         settings={"company_name":name,"company_address":item.get("address","").strip(),"company_phone":item.get("phone","").strip(),
             "company_mof":item.get("mof_number","").strip(),"company_email":item.get("email","").strip(),"company_website":item.get("website","").strip()}
@@ -93,6 +156,7 @@ class CompanyManager:
     def update_company(self,company_id,item):
         data=self._read(); company=next((c for c in data["companies"] if c["id"]==company_id),None)
         if not company: raise KeyError("Company not found")
+        old_backups=self.master_path.parent/"backups"/self.safe_name(company["name"],company["id"])
         if str(item.get("name") or "").strip(): company["name"]=str(item["name"]).strip()
         if "active" in item: company["active"]=bool(item["active"])
         self._write(data)
@@ -100,7 +164,14 @@ class CompanyManager:
             db=Database(year["database"])
             with db.connect() as connection:
                 connection.execute("INSERT INTO app_settings(key,value) VALUES('company_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(company["name"],))
-        return company
+        # A renamed company: its files and its backups folder follow the new name.
+        self.organize_files(company_id)
+        new_backups=self.master_path.parent/"backups"/self.safe_name(company["name"],company["id"])
+        if old_backups!=new_backups and old_backups.is_dir() and not new_backups.exists():
+            try: old_backups.rename(new_backups)
+            except OSError: pass
+        for path in [p for p in self._cache]: self._cache.pop(path).release()  # backup folders are set again on next use
+        return next(c for c in self._read()["companies"] if c["id"]==company_id)
 
     def create_year(self,company_id,year,user_id):
         year=int(year); data=self._read(); company=next((c for c in data["companies"] if c["id"]==company_id),None)
@@ -111,7 +182,7 @@ class CompanyManager:
         source=Database(previous["database"])
         import fixed_assets
         fixed_assets.check_carry_forward(source,year)
-        path=self.root/company_id/f"{year}.db"; path.parent.mkdir(parents=True,exist_ok=True); target=Database(path); target.initialize(secrets.token_urlsafe(24)); self._copy_master_data(source,target)
+        path=self.year_file(company,year,data); path.parent.mkdir(parents=True,exist_ok=True); target=Database(path); target.initialize(secrets.token_urlsafe(24)); self._copy_master_data(source,target)
         import inventory
         inventory.carry_forward(source,target,year,user_id)
         fixed_assets.carry_forward(source,target,year)
@@ -132,7 +203,7 @@ class CompanyManager:
         if len(years)==1: raise ValueError("The only fiscal year of a company cannot be deleted")
         path=Path(current["database"]).resolve()
         if path==self.master_path.resolve(): raise ValueError("This year uses the main database file and cannot be deleted")
-        backup_folder=self.root/company_id/"deleted_years"; backup_folder.mkdir(parents=True,exist_ok=True)
+        backup_folder=self.company_folder(company,data)/"deleted_years"; backup_folder.mkdir(parents=True,exist_ok=True)
         backup=backup_folder/f"{year}_deleted_{_dt.now():%Y%m%d_%H%M%S}.db"
         cached=self._cache.pop(str(path),None)
         if cached is not None: cached.release()  # close the open file handle so it can be moved (Windows)
@@ -196,7 +267,7 @@ class CompanyManager:
                     ids=[row["id"] for row in db.execute("SELECT id FROM journal_entries WHERE source_type='opening' AND entry_number LIKE ?",(f"OPEN-{next_year}-%",))]
                     for entry_id in ids: db.execute("DELETE FROM journal_entries WHERE id=?",(entry_id,))
             else:
-                path=self.root/company_id/f"{next_year}.db"; path.parent.mkdir(parents=True,exist_ok=True)
+                path=self.year_file(company,next_year,data); path.parent.mkdir(parents=True,exist_ok=True)
                 target=Database(path); target.initialize(secrets.token_urlsafe(24)); self._copy_master_data(source,target)
             opening_vouchers=self._opening_balances(source,target,next_year,user_id)
             import inventory

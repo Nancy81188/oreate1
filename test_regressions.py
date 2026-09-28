@@ -29,6 +29,10 @@ class DataSafetyTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls): cls.folder.cleanup()
 
+    def company_database(self):
+        from company_manager import CompanyManager
+        return CompanyManager(self.database).list_companies(True)[0]["years"][0]["database"]
+
     def test_replacement_failure_preserves_invoice_and_journal(self):
         admin=ApiClient(self.url); admin.login("admin","secret12345")
         company=admin.companies()[0]; admin.select_company_year(company["id"],2024)
@@ -64,7 +68,7 @@ class DataSafetyTest(unittest.TestCase):
         self.assertEqual(backup_all(self.database),[])
 
     def test_failed_payment_edit_preserves_existing_record(self):
-        db=Database(self.database)
+        db=Database(self.company_database())  # 2.9.20: company data is in companies/<Company Name>/
         user=db.user_for_token(db.login("admin","secret12345")["token"])["id"]
         party=db.save_party({"kind":"customer","name":"Edit Safety Client"},user)
         original={"kind":"customer_receipt","party_id":party["id"],"payment_date":"03-03-2024","amount":"50","currency":"USD"}
@@ -162,7 +166,7 @@ class DataSafetyTest(unittest.TestCase):
         self.assertEqual(state.sales_open_box["values"],["SAL-2026-000002","SAL-2026-000002 (2)"])
 
     def test_replacement_rejects_allocated_invoices(self):
-        db=Database(self.database)
+        db=Database(self.company_database())  # 2.9.20: company data is in companies/<Company Name>/
         user=db.user_for_token(db.login("admin","secret12345")["token"])["id"]
         with db.connect() as connection:
             invoice=connection.execute("SELECT id FROM invoices LIMIT 1").fetchone()

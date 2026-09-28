@@ -37,7 +37,8 @@ class ProgramWindowFixesTest(unittest.TestCase):
         cls.company = company
 
     @classmethod
-    def tearDownClass(cls): cls.folder.cleanup()
+    def tearDownClass(cls):
+        import gc; gc.collect(); cls.folder.cleanup()
 
     def setUp(self):
         self.messages = []
@@ -45,6 +46,8 @@ class ProgramWindowFixesTest(unittest.TestCase):
                    for name in ("showerror", "showwarning", "showinfo", "askyesno")]
         for patch in patches: patch.start(); self.addCleanup(patch.stop)
         import desktop
+        # Tk objects must be freed on this (main) thread, never by a data-service thread's garbage collection.
+        import gc; self.addCleanup(gc.collect)
         self.app = desktop.SaberApp(); self.addCleanup(self.app.destroy)
         self.app.server.set(self.url); self.app.password.set("admin12345"); self.app.login()
         year = self.company["years"][0]["year"]
@@ -170,6 +173,7 @@ class ProgramWindowFixesTest(unittest.TestCase):
         self.assertTrue(opened.called)
 
     def test_program_opens_on_the_dashboard_first_and_builds_the_rest(self):
+        self.app.build_pending_pages(); self.app.update()  # as on a slower PC: the previous screen is complete
         self.app.main_screen()
         self.assertTrue(self.app.__dict__.get("_pending_builders"))  # the other pages are still waiting
         self.assertTrue(hasattr(self.app, "payroll_tree"))          # needing one builds them at once

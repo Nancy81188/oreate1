@@ -857,7 +857,8 @@ class DeleteYearTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "only fiscal year"): manager.delete_year(company, 2024, 1)
         years = [y["year"] for y in manager.list_companies()[0]["years"]]
         self.assertEqual(years, [2024]); self.assertEqual(manager.year_status(company, 2024), "open")
-        self.assertTrue(list((root / "companies" / company / "deleted_years").glob("2025_deleted_*.db")))
+        # 2.9.20: company files live in companies/<Company Name>/ (the deleted-years copies too)
+        self.assertTrue(list((manager.company_folder(manager.list_companies()[0]) / "deleted_years").glob("2025_deleted_*.db")))
         self.assertFalse([e for e in db.journal() if (e["description"] or "").startswith("CLOSING 6&7")])
         manager.close_and_open_year(company, 2024, 1)
         fresh = manager.database(company, 2025)

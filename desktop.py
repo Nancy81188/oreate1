@@ -83,7 +83,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.19")
+        self.title("Saber Accounting 2.9.21")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -476,6 +476,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         for name in ("purchase_form","expense_form","payment_forms","trial_state","statement_state","voucher_sheet","budget_sheet","departments_tree","pr_tree","vat_summary_tree","_dimensions","_account_cache","items_tree","sd_find_box","warehouses_tree","ir_warehouse_box","ir_item_box","ir_category_box","stock_sheet","_cash_accounts","_expense_accounts",
                      "sio_sheet","pc_sheet","pc_find_box","sio_wh_box","pc_wh_box","cat_tree","item_boxes","ir_subcategory_box","ir_unit_box","ir_supplier_box","_all_accounts"):
             self.__dict__.pop(name,None)
+        # Also forget every page widget of the previous screen: they are destroyed below, and a page that is
+        # built later (in the background) must not be mistaken for one that already exists.
+        for name,value in list(self.__dict__.items()):
+            if isinstance(value,tk.Misc) and not isinstance(value,(tk.Tk,tk.Toplevel)) and not name.startswith("_") and name not in ("tk","master"):
+                self.__dict__.pop(name,None)
         self.clear(); lang=self.language.get()
         try: self.currency_codes=[row["code"] for row in self.client.currencies()]
         except Exception: self.currency_codes=["USD","LBP","EUR","AED"]
