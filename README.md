@@ -1,5 +1,9 @@
 # Saber Accounting MVP
 
+## Version 2.9.7 (Independent Department and Project controls)
+
+- Departments and Projects now each have their own visibility checkbox in their respective Security data sheets. Either field can be hidden independently in entry forms, report filters, and Journal Voucher without deleting saved values. The application title matches the installer version.
+
 ## Version 2.9.6 (Department and Project visibility)
 
 - The Departments and Projects data sheets under Security each have a Show Department / Project checkbox for entry forms, budget and report filters, and the Journal Voucher sheet.
