@@ -84,7 +84,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.23")
+        self.title("Saber Accounting 2.9.25")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -605,7 +605,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         pending=self.__dict__.get("_pending_builders")
         if pending:
             self._run_page_builder(pending.pop(0))
-        if pending: self.after(1,lambda:self._build_next_page(generation))
+        if pending: self.after(30,lambda:self._build_next_page(generation))
         elif self.__dict__.get("_pages_finished_for")!=generation: self._pages_finished_for=generation; self._finish_pages()
 
     def build_pending_pages(self):
@@ -670,12 +670,37 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         elif direction<0 and current==0: start=max(0,len(self.main_tab_pages)-6)
         self.show_tab_window(start,target)
 
+    def _ensure_main_tab(self,page):
+        """Build only the requested tab; leave unrelated tabs on the background queue."""
+        try: index=self.main_tab_pages.index(page)
+        except (AttributeError,ValueError): return
+        names={"dashboard_tab": ("build_dashboard",), "invoices_tab": ("build_invoices",),
+            "sales_tab": ("build_sales_invoice",), "manual_tab": ("build_manual",),
+            "import_tab": ("build_import",), "parties_tab": ("build_parties",),
+            "transactions_tab": ("build_transactions",), "purchases_tab": ("build_purchases_expenses",),
+            "inventory_tab": ("build_inventory",), "payroll_tab": ("build_payroll",),
+            "vat_tab": ("build_vat_return",), "journal_tab": ("build_journal",),
+            "account_reports_tab": ("build_trial","build_statement","build_accounts"),
+            "pnl_tab": ("build_profit_loss",), "reports_tab": ("build_financial_reports",),
+            "settings_tab": ("build_settings",)}
+        page_name=self.main_tab_pages[index]
+        attribute=next((name for name in names if self.__dict__.get(name) is page_name),None)
+        pending=self.__dict__.get("_pending_builders") or []
+        for builder_name in names.get(attribute,()):
+            builder=next((item for item in pending if item.__name__==builder_name),None)
+            if builder is not None:
+                pending.remove(builder)
+                self._run_page_builder(builder)
+
     def select_main_tab(self,page):
-        if self.__dict__.get("_pending_builders"): self.build_pending_pages()
+        self._ensure_main_tab(page)
         self.main_notebook.select(page); self.highlight_main_tab()
 
     def highlight_main_tab(self):
         selected=self.main_notebook.select()
+        if selected:
+            page=next((item for item in getattr(self,"main_tab_pages",[]) if str(item)==selected),None)
+            if page is not None: self._ensure_main_tab(page)
         for page,button in zip(getattr(self,"main_tab_pages",[]),getattr(self,"tab_buttons",[])):
             button.config(bg=GOLD if str(page)==selected else NAVY,fg=NAVY if str(page)==selected else "white")
 
