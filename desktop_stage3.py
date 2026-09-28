@@ -805,7 +805,8 @@ class Stage3Mixin:
                 if data.get("invoice_number") and not v["number"].get(): v["number"].set(data["invoice_number"])
                 if data.get("invoice_date"): v["date"].set(data["invoice_date"])
                 if data.get("currency"): v["currency"].set(data["currency"])
-                if data.get("subtotal") and not v["taxable"].get(): v["taxable"].set(f'{data["subtotal"]:.2f}')
+                if data.get("subtotal") is not None and not v["taxable"].get(): v["taxable"].set(f'{(data.get("deductible") if data.get("deductible") is not None else data["subtotal"] - (data.get("non_deductible") or 0)):.2f}')
+                if data.get("non_deductible") is not None and not v["exempt"].get(): v["exempt"].set(f'{data["non_deductible"]:.2f}')
                 if data.get("vat") is not None and not v["vat"].get(): v["vat"].set(f'{data["vat"]:.2f}'); f["vat_typed"] = True
                 self.purchase_amounts_changed("none")
             f["pdf_label"].config(text=f"{Path(path).name}: {data.get('notes', '')}", fg=NAVY)
@@ -1139,7 +1140,8 @@ class Stage3Mixin:
             if data.get("invoice_date"): v["date"].set(data["invoice_date"])
             if data.get("currency"): v["currency"].set(data["currency"])
             if data.get("party_name") and not v["description"].get(): v["description"].set(data["party_name"])
-            if data.get("subtotal") and not v["with_vat"].get(): v["with_vat"].set(f'{data["subtotal"]:.2f}')
+            if data.get("subtotal") is not None and not v["with_vat"].get(): v["with_vat"].set(f'{(data.get("deductible") if data.get("deductible") is not None else data["subtotal"] - (data.get("non_deductible") or 0)):.2f}')
+            if data.get("non_deductible") is not None and not v["without_vat"].get(): v["without_vat"].set(f'{data["non_deductible"]:.2f}')
             if data.get("vat") is not None: v["vat"].set(f'{data["vat"]:.2f}'); f["vat_typed"] = True
             self.expense_amounts_changed("none"); f["pdf_label"].config(text=f"{Path(path).name}: {data.get('notes', '')}", fg=NAVY)
         else: f["pdf_label"].config(text=Path(path).name, fg=NAVY)
