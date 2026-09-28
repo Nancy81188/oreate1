@@ -2654,6 +2654,7 @@ class Database:
             effective=[period for period in lebanese_payroll.official_periods() if period["date_from"]<=target]
             if effective:
                 result.update({key:effective[-1][key] for key in schooling_keys})
+                result["schooling_rules_date"]=effective[-1]["date_from"]
         if result:
             result["tax_brackets"]=json.loads(result["tax_brackets"])
             defaults=self.default_payroll_account_map()
