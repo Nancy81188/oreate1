@@ -77,9 +77,7 @@ class FinalFeaturesMixin:
         inner.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
         canvas.configure(yscrollcommand=scroll.set); canvas.pack(side="left", fill="both", expand=True); scroll.pack(side="right", fill="y")
-        def wheel(event):
-            if canvas.winfo_ismapped(): canvas.yview_scroll(int(-1 * (event.delta / 120)) if event.delta else (1 if getattr(event, "num", 0) == 5 else -1), "units")
-        inner.bind("<Enter>", lambda _event: canvas.bind_all("<MouseWheel>", wheel)); inner.bind("<Leave>", lambda _event: canvas.unbind_all("<MouseWheel>"))
+        # The mouse wheel is handled for every page by SaberApp.page_mouse_wheel.
         return outer, inner
 
     # ------------------------------------------------------------ legal document alerts

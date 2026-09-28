@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tkinter as tk
 import sys
 import traceback
@@ -53,6 +54,48 @@ def auto_dash_date(text):
     if len(digits) <= 2: return digits
     if len(digits) <= 4: return f"{digits[:2]}-{digits[2:]}"
     return f"{digits[:2]}-{digits[2:4]}-{digits[4:]}"
+
+_DATE_LABEL = re.compile(r"\bdates?\b|expir|\bas of\b|تاريخ", re.IGNORECASE)
+
+def attach_date_entry(entry, normalize=True):
+    """Give any Entry the date behaviour: type 31122024 and it shows 31-12-2024."""
+    if getattr(entry, "_saber_date", False): return entry
+    entry._saber_date = True
+    def dashes(event=None):
+        if event is not None and event.keysym in ("BackSpace","Delete","Left","Right","Home","End","Tab","Shift_L","Shift_R","Control_L","Control_R"): return
+        try:
+            if str(entry.cget("state")) != "normal": return
+            value = entry.get()
+        except tk.TclError: return
+        if not value or any(ch.isalpha() for ch in value) or (len(value)==10 and value[4]=="-"): return
+        formatted = auto_dash_date(value)
+        if formatted != value: entry.delete(0,"end"); entry.insert(0,formatted); entry.icursor("end")
+    entry.bind("<KeyRelease>", dashes, add="+")
+    if normalize:
+        def tidy(_event=None):
+            try:
+                if str(entry.cget("state")) != "normal": return
+                value = entry.get().strip()
+                if value: formatted = formatted_user_date(value); entry.delete(0,"end"); entry.insert(0,formatted)
+            except (ValueError, tk.TclError): pass
+        entry.bind("<FocusOut>", tidy, add="+")
+    return entry
+
+def looks_like_date_field(entry):
+    """True when the label written next to (or above) an Entry mentions a date."""
+    try:
+        parent = entry.master; manager = entry.winfo_manager(); labels = []
+        if manager == "grid":
+            info = entry.grid_info(); row, column = int(info["row"]), int(info["column"])
+            same_row = [w for w in parent.grid_slaves(row=row) if w.winfo_class()=="Label" and int(w.grid_info()["column"])<column]
+            if same_row: labels.append(max(same_row, key=lambda w: int(w.grid_info()["column"])))
+            elif row > 0: labels += [w for w in parent.grid_slaves(row=row-1, column=column) if w.winfo_class()=="Label"]
+        elif manager == "pack":
+            slaves = parent.pack_slaves(); index = slaves.index(entry)
+            if index > 0 and slaves[index-1].winfo_class()=="Label": labels.append(slaves[index-1])
+        return any(_DATE_LABEL.search(str(label.cget("text"))) for label in labels)
+    except Exception:
+        return False
 
 def sortable_date(value):
     text=str(value or "").strip()
@@ -134,6 +177,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self._style()
         self.bind_all("<F2>",self.open_active_account_lookup)
         self.bind_all("<Control-f>",self.focus_page_search); self.bind_all("<Control-F>",self.focus_page_search)
+        self.install_mouse_and_date_helpers()
         self.login_screen()
 
     def _style(self):
@@ -181,7 +225,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         return today.strftime("%d-%m-%Y") if year==today.year else f"01-01-{year}"
 
     def date_entry(self,parent,variable,width=13):
-        entry=tk.Entry(parent,textvariable=variable,width=width)
+        entry=tk.Entry(parent,textvariable=variable,width=width); entry._saber_date=True
         def dashes(event=None):
             if event is not None and event.keysym in ("BackSpace","Delete","Left","Right","Home","End","Tab","Shift_L","Shift_R"): return
             value=variable.get()
@@ -432,6 +476,83 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         meta=[f"From {self.journal_from_date.get() or '-'} to {self.journal_to_date.get() or '-'}"]+([f"Voucher: {self.journal_find.get()}"] if self.journal_find.get().strip() else [])+([f"Details: {self.journal_find_details.get()}"] if self.journal_find_details.get().strip() else [])
         self.output_sections("General Journal",meta,[{"heading":f"{len(rows)} line(s)","headers":headers,"rows":body,"total_rows":[len(body)-1]}],"General_Journal",
                              {"preview":"preview","pdf":"pdf","print":"print"}[mode])
+
+    # ------------------------------------------------------------ mouse wheel, right-click search, automatic date dashes
+    def install_mouse_and_date_helpers(self):
+        self.bind_all("<MouseWheel>", self.page_mouse_wheel, add="+")
+        self.bind_all("<Shift-MouseWheel>", lambda e: self.page_mouse_wheel(e, horizontal=True), add="+")
+        self.bind_all("<Button-3>", self.right_click_search, add="+")
+        self.bind_class("Entry", "<FocusIn>", self.detect_date_entry, add="+")
+
+    def detect_date_entry(self, event):
+        entry = event.widget
+        if getattr(entry, "_saber_date", False) or getattr(entry, "_saber_date_checked", False): return
+        entry._saber_date_checked = True
+        if not getattr(entry, "_is_search_entry", False) and looks_like_date_field(entry): attach_date_entry(entry)
+
+    def page_mouse_wheel(self, event, horizontal=False):
+        """Scroll the whole page with the wheel; tables and text boxes keep scrolling themselves first."""
+        try: widget = self.winfo_containing(event.x_root, event.y_root)
+        except Exception: return
+        step = -1 if event.delta > 0 else 1
+        while widget is not None:
+            kind = widget.winfo_class()
+            if kind in ("TCombobox", "Spinbox", "TSpinbox"): return
+            if kind in ("Treeview", "Text", "Listbox") and not horizontal:
+                try: first, last = widget.yview()
+                except Exception: return
+                if (step < 0 and first > 0.0) or (step > 0 and last < 1.0): return  # the table scrolls itself
+            if kind == "Canvas":
+                command = widget.cget("xscrollcommand" if horizontal else "yscrollcommand")
+                if command:
+                    first, last = widget.xview() if horizontal else widget.yview()
+                    if (first, last) != (0.0, 1.0):
+                        (widget.xview_scroll if horizontal else widget.yview_scroll)(step * 3, "units")
+                        return "break"
+            widget = widget.master
+
+    def right_click_search(self, event):
+        """Right-click on a page or table jumps to its Search box; inside a typing box it offers copy/paste too."""
+        widget = event.widget
+        if not isinstance(widget, tk.Misc): return
+        try:
+            if widget.bind("<Button-3>"): return  # this table has its own right-click action
+        except Exception: pass
+        search = self.nearest_search_entry(widget)
+        if widget.winfo_class() in ("Entry", "TEntry", "Text", "TCombobox"):
+            menu = tk.Menu(self, tearoff=0)
+            menu.add_command(label="Cut", command=lambda: widget.event_generate("<<Cut>>"))
+            menu.add_command(label="Copy", command=lambda: widget.event_generate("<<Copy>>"))
+            menu.add_command(label="Paste", command=lambda: widget.event_generate("<<Paste>>"))
+            if search is not None and search is not widget:
+                menu.add_separator(); menu.add_command(label="Search", command=lambda: self._focus_search(search))
+            try: menu.tk_popup(event.x_root, event.y_root)
+            finally: menu.grab_release()
+            return "break"
+        if search is not None: self._focus_search(search); return "break"
+
+    def _focus_search(self, entry):
+        try: entry.focus_set(); entry.select_range(0, "end"); entry.icursor("end")
+        except tk.TclError: pass
+
+    def nearest_search_entry(self, widget):
+        """The visible Search box closest to the clicked widget (same table/section first, then the page)."""
+        current = widget
+        while current is not None:
+            stack = [current]
+            while stack:
+                item = stack.pop(0)
+                if getattr(item, "_is_search_entry", False):
+                    try:
+                        if item.winfo_ismapped(): return item
+                    except tk.TclError: pass
+                stack.extend(item.winfo_children())
+            if isinstance(current, (tk.Toplevel, tk.Tk)): break
+            try:
+                if current in getattr(self, "main_tab_pages", []): break
+            except Exception: pass
+            current = current.master
+        return None
 
     def focus_page_search(self,_event=None):
         """Ctrl+F: put the cursor in the first visible Search box of the current page."""
