@@ -2644,7 +2644,16 @@ class Database:
             row=db.execute("""SELECT * FROM payroll_settings WHERE date_from<=? AND (date_to IS NULL OR date_to='' OR date_to>=?)
                 ORDER BY date_from DESC LIMIT 1""",(target,target)).fetchone()
             if not row: row=db.execute("SELECT * FROM payroll_settings ORDER BY date_from DESC LIMIT 1").fetchone()
+            official_auto=db.execute("SELECT value FROM app_settings WHERE key='lebanese_payroll_rules_auto'").fetchone()
         result=dict(row) if row else {}
+        # Older auto-seeded company databases predate the schooling decree dates.
+        # Apply published values in memory, keeping saved user settings untouched.
+        schooling_keys=("schooling_public_child","schooling_public_cap","schooling_private_child","schooling_private_cap")
+        if result and official_auto and all(Decimal(str(result.get(key) or 0))==0 for key in schooling_keys):
+            import lebanese_payroll
+            effective=[period for period in lebanese_payroll.official_periods() if period["date_from"]<=target]
+            if effective:
+                result.update({key:effective[-1][key] for key in schooling_keys})
         if result:
             result["tax_brackets"]=json.loads(result["tax_brackets"])
             defaults=self.default_payroll_account_map()
