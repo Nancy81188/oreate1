@@ -1838,12 +1838,13 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                   "NSSF-HIRE-EXISTING":"https://drive.google.com/uc?export=download&id=1jK1Nv4RgzslncCsV-5gc7e2rHYZQThyq",
                   "NSSF-LEAVE":"https://drive.google.com/uc?export=download&id=1_stgCRJwJjdqr2kFLy07ZCwiXDkMdZIy"}
         if form not in official: raise ValueError("Unknown payroll form")
+        agency="CNSS" if form.startswith("NSSF") else "MOF"
         target=filedialog.asksaveasfilename(title=f"Save official {form} form",defaultextension=".pdf",
-            initialfile=f"Lebanon_MOF_{form}.pdf",filetypes=[("PDF files","*.pdf")])
+            initialfile=f"Lebanon_{agency}_{form}.pdf",filetypes=[("PDF files","*.pdf")])
         if not target: return
         try:
             with urlopen(official[form],timeout=20) as response: content=response.read()
-            if not content.startswith(b"%PDF"): raise ValueError("The Ministry site did not return a PDF")
+            if not content.startswith(b"%PDF"): raise ValueError(f"The {agency} form link did not return a PDF")
             Path(target).write_bytes(content)
         except Exception as exc: return messagebox.showerror(f"Official {form}",f"Could not download the form: {exc}")
         note=("\nCheck the preprinted rates against the period's NSSF settings before using this blank form."
