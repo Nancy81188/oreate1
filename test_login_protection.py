@@ -4,6 +4,7 @@ import tempfile
 import threading
 import json
 import unittest
+from contextlib import closing
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -22,13 +23,14 @@ class LoginProtectionTest(unittest.TestCase):
                 self.assertIsNone(db.login("admin","wrong-password","192.0.2.10"))
             db=Database(path)
             self.assertTrue(db.login("admin","right-password","192.0.2.10")["rate_limited"])
-            with sqlite3.connect(path) as connection:
-                actions=connection.execute("SELECT action,details FROM audit_log WHERE entity='auth'").fetchall()
-                self.assertEqual(sum(action=="login_failed" for action,_ in actions),5)
-                self.assertEqual(sum(action=="login_blocked" for action,_ in actions),1)
-                self.assertNotIn("wrong-password",str(actions))
-                self.assertNotIn("right-password",str(actions))
-                connection.execute("UPDATE login_attempts SET locked_until='2000-01-01T00:00:00+00:00'")
+            with closing(sqlite3.connect(path)) as connection:
+                with connection:
+                    actions=connection.execute("SELECT action,details FROM audit_log WHERE entity='auth'").fetchall()
+                    self.assertEqual(sum(action=="login_failed" for action,_ in actions),5)
+                    self.assertEqual(sum(action=="login_blocked" for action,_ in actions),1)
+                    self.assertNotIn("wrong-password",str(actions))
+                    self.assertNotIn("right-password",str(actions))
+                    connection.execute("UPDATE login_attempts SET locked_until='2000-01-01T00:00:00+00:00'")
             self.assertIn("token",db.login("admin","right-password","192.0.2.10"))
 
     def test_nonlocal_http_requires_explicit_opt_in(self):
