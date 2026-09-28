@@ -2843,6 +2843,30 @@ class Database:
                 month_allowance+=month_child_allowance/2 if spouse_works else month_child_allowance
                 monthly=lambda annual: self._progressive_tax(max(D("0"),annual-month_allowance),month_brackets)/12
                 retro_tax+=monthly((regular_lbp+to_lbp(share,month))*12)-monthly(regular_lbp*12)
+        # Salary tax withholding is cumulative across payrolls saved this year.
+        # Retros use the separate prior-period treatment above.
+        if not money["retro_salary"]:
+            with self.connect() as db:
+                previous=db.execute("""SELECT * FROM payroll_records
+                    WHERE employee_id=? AND period_date>=? AND period_date<? ORDER BY period_date""",
+                    (employee_id,period[:4]+"-01-01",month_start)).fetchall()
+            if previous:
+                prior_base=D("0"); prior_withheld=D("0")
+                for record in previous:
+                    gross=sum((D(str(record[key] or 0)) for key in
+                        ("salary","transport","overtime","commission","schooling","bonus","thirteenth_month")),D("0"))
+                    exempt=D(str(record["exempt_transport"] or 0))+D(str(record["exempt_schooling"] or 0))
+                    prior_base+=self._converted_amount(max(D("0"),gross-exempt),record["currency"],"LBP",record["period_date"])
+                    prior_withheld+=D(str(record["income_tax_lbp"] or 0))
+                elapsed=D(len(previous))+tax_fraction
+                bands=[[D(str(ceiling))*elapsed/12 if ceiling is not None else None,rate] for ceiling,rate in brackets]
+                def cumulative(base):
+                    return self._progressive_tax(max(D("0"),prior_base+base-allowance*elapsed/12),bands)
+                base_due=cumulative(regular_lbp)
+                full_due=cumulative(regular_lbp+one_off_lbp)
+                regular_tax=max(D("0"),base_due-prior_withheld)
+                one_off_tax=max(D("0"),full_due-base_due)
+                notes.append(f"Cumulative tax includes {len(previous)} earlier payroll(s) this year")
         rounding=setting("tax_rounding")
         def rounded(value):
             value=max(D("0"),value)
