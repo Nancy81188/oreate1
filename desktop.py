@@ -2230,6 +2230,16 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.cash_projection_tree=self.table(cash_outlook,[("month","Period",180),("status","Status",95),("currency","Currency",85),
             ("inflow","Inflow",130),("outflow","Outflow",130),("net","Net cash movement",150)])
         self.report_buttons(cash_outlook,"cash_projection")
+        long_cash_bar=tk.Frame(cash_outlook,bg=LIGHT); long_cash_bar.pack(fill="x",padx=10,pady=(0,8))
+        self.cash_long_target=tk.StringVar(value=""); self.cash_long_growth=tk.StringVar(value="0")
+        tk.Label(long_cash_bar,text="5-Year Projection to date (DD-MM-YYYY)",bg=LIGHT,fg=NAVY).pack(side="left")
+        tk.Entry(long_cash_bar,textvariable=self.cash_long_target,width=12).pack(side="left",padx=(4,10))
+        tk.Label(long_cash_bar,text="Growth % per year",bg=LIGHT,fg=NAVY).pack(side="left")
+        tk.Entry(long_cash_bar,textvariable=self.cash_long_growth,width=7).pack(side="left",padx=(4,10))
+        self.action_button(long_cash_bar,"5-Year Projection",self.cashflow_long_term_projection).pack(side="left",padx=3)
+        tk.Label(long_cash_bar,text="Uses \"Report year\" above as the base year; compounds the growth % each year ahead.",bg=LIGHT,fg=NAVY).pack(side="left",padx=10)
+        self.cash_long_tree=self.table(cash_outlook,[("year","Year",70),("up_to","Up to",100),("currency","Currency",85),("source","Source",85),
+            ("inflow","Inflow",130),("outflow","Outflow",130),("net","Net cash movement",150)])
         ageing_controls=tk.Frame(aging,bg=LIGHT); ageing_controls.pack(fill="x",padx=8,pady=4)
         self.ageing_kind=tk.StringVar(value="Customers & Suppliers")
         tk.Label(ageing_controls,text="Show",bg=LIGHT).pack(side="left")
@@ -2366,6 +2376,36 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         for row in self.cash_projection_rows:
             self.cash_projection_tree.insert("","end",values=(row["month"],row["status"],row["currency"],
                 f'{row["inflow"]:,.2f}',f'{row["outflow"]:,.2f}',f'{row["net"]:,.2f}'))
+
+    def cashflow_long_term_projection(self):
+        from financial_projection import long_term_projection
+        try: base_year=int(self.cash_outlook_year.get())
+        except ValueError: return messagebox.showwarning("5-Year Projection","Enter the base year in \"Report year\", for example 2026")
+        try: target_date=datetime.strptime(self.cash_long_target.get().strip(),"%d-%m-%Y").strftime("%Y-%m-%d")
+        except ValueError: return messagebox.showwarning("5-Year Projection","Enter the target date as DD-MM-YYYY, for example 31-12-2030")
+        try: growth_rate=float(self.cash_long_growth.get() or 0)/100
+        except ValueError: growth_rate=0
+        currency=None if self.view_currency.get()=="All Currencies" else self.view_currency.get()
+        try: actual_rows=self.client.cash_flow(f"01-01-{base_year}",f"31-12-{base_year}",currency)
+        except Exception as exc: return messagebox.showerror("5-Year Projection",str(exc))
+        base_by_currency={}
+        for row in actual_rows:
+            values=base_by_currency.setdefault(row["currency"],{"inflow":0.0,"outflow":0.0})
+            values["inflow"]+=float(row["inflow"]); values["outflow"]+=float(row["outflow"])
+        if not base_by_currency: return messagebox.showwarning("5-Year Projection",f"No cash flow actuals in {base_year} to project from")
+        rows=[]
+        for code,base_values in sorted(base_by_currency.items()):
+            try: projection=long_term_projection(base_values,base_year,target_date,growth_rate)
+            except ValueError as exc: return messagebox.showwarning("5-Year Projection",str(exc))
+            for entry in projection:
+                inflow=entry["values"]["inflow"]; outflow=entry["values"]["outflow"]
+                rows.append({"year":entry["year"],"up_to":entry["date_to"],"currency":code,"source":entry["source"].title(),
+                    "inflow":inflow,"outflow":outflow,"net":inflow-outflow})
+        self.cash_long_tree.delete(*self.cash_long_tree.get_children())
+        for row in rows:
+            self.cash_long_tree.insert("","end",values=(row["year"],row["up_to"],row["currency"],row["source"],
+                f'{row["inflow"]:,.2f}',f'{row["outflow"]:,.2f}',f'{row["net"]:,.2f}'))
+        if not rows: messagebox.showinfo("5-Year Projection","No rows to project (check the base year and target date)")
 
     def financial_report_export(self,report,format_name):
         if report=="ledger": title="General Ledger"; headers=["Date","Entry","Account","Currency","Name","Description","Debit","Credit","Balance"]; rows=[[r["entry_date"],r["entry_number"],r["account_code"],r["currency"],r["account_name"],r["description"],r["debit"],r["credit"],r["balance"]] for r in getattr(self,"ledger_rows",[])]

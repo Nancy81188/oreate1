@@ -15,6 +15,11 @@
 - New Account in Journal Voucher creates an account immediately and places it on an available line without saving the voucher. Accounts created on the Accounts page are immediately recognized by an already-open Journal Voucher.
 - Failed logins are audited without passwords or tokens. Five failures per username or 30 per client IP within 15 minutes trigger a 15-minute lockout; the server returns HTTP 429 while blocked.
 - The shared server accepts a trusted TLS certificate and key. Plaintext is limited to localhost unless `--allow-insecure-lan` is deliberately specified for a trusted VPN/LAN.
+## Version 2.9.5 (5-Year Projection for Budget and Cash Flow)
+
+- Budget page: a "5-Year Projection" section next to the existing quarterly/6-month/yearly forecast. Enter a target date up to 5 years after the "Actual report year" and, optionally, a yearly growth % applied to that year's posted income/expense actuals. For any future year that already has a saved budget, the saved budget is used instead of the growth %. The final (partial) year is prorated to the target date. Shown as net income/expense by year and by account, exportable like the existing forecast.
+- Cash Flow Outlook page: the same "5-Year Projection" idea for cash inflow/outflow, projected per currency from the "Report year" actuals and a yearly growth %; the final year is prorated to the target date the same way.
+- Both build on a new `financial_projection.long_term_projection()` helper (unit tested), capped at 5 years ahead of the base year.
 
 ## Version 2.9.4 (Equal height navigation rows)
 

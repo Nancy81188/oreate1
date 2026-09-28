@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime
 
-from financial_projection import completed_months, future_months, month_range, trailing_average
+from financial_projection import completed_months, future_months, month_range, trailing_average, long_term_projection
 
 
 class FinancialProjectionTest(unittest.TestCase):
@@ -16,6 +16,38 @@ class FinancialProjectionTest(unittest.TestCase):
     def test_trailing_average_includes_zero_activity_months(self):
         self.assertEqual(trailing_average({6:{"amount":30},8:{"amount":60}},8,"amount"),30)
         self.assertEqual(trailing_average({},0,"amount"),0)
+
+    def test_long_term_projection_compounds_growth_by_full_years(self):
+        rows=long_term_projection({"sales":100000},2026,"2029-12-31",growth_rate=0.10)
+        self.assertEqual([r["year"] for r in rows],[2027,2028,2029])
+        self.assertEqual([r["source"] for r in rows],["growth","growth","growth"])
+        self.assertAlmostEqual(rows[0]["values"]["sales"],110000)
+        self.assertAlmostEqual(rows[1]["values"]["sales"],121000)
+        self.assertAlmostEqual(rows[2]["values"]["sales"],133100)
+        self.assertEqual(rows[-1]["fraction"],1.0)
+
+    def test_long_term_projection_prorates_partial_final_year(self):
+        rows=long_term_projection({"sales":100000},2026,"2028-06-30",growth_rate=0.0)
+        self.assertEqual(rows[-1]["date_to"],"2028-06-30")
+        self.assertLess(rows[-1]["fraction"],0.51)
+        self.assertGreater(rows[-1]["fraction"],0.49)
+        self.assertAlmostEqual(rows[-1]["values"]["sales"],100000*rows[-1]["fraction"],delta=5)
+
+    def test_long_term_projection_prefers_saved_budget_over_growth(self):
+        rows=long_term_projection({"sales":100000},2026,"2029-12-31",growth_rate=0.10,budget_by_year={2028:{"sales":500000}})
+        by_year={r["year"]:r for r in rows}
+        self.assertEqual(by_year[2028]["source"],"budget")
+        self.assertEqual(by_year[2028]["values"]["sales"],500000.0)
+        self.assertEqual(by_year[2027]["source"],"growth")
+        self.assertEqual(by_year[2029]["source"],"growth")
+
+    def test_long_term_projection_rejects_bad_horizon(self):
+        with self.assertRaisesRegex(ValueError,"at least one year"):
+            long_term_projection({"sales":1},2026,"2026-12-31",growth_rate=0.1)
+        with self.assertRaisesRegex(ValueError,"more than 5 years"):
+            long_term_projection({"sales":1},2026,"2032-12-31",growth_rate=0.1)
+        with self.assertRaises(ValueError):
+            long_term_projection({"sales":1},2026,"not-a-date",growth_rate=0.1)
 
 
 if __name__=="__main__": unittest.main()
