@@ -94,8 +94,8 @@ class Stage3Mixin:
         else: row[key] = text
         row["_display"] = {k: (f"{row[k]:,.2f}" if isinstance(row.get(k), (int, float)) else "") for k in ("subtotal", "vat", "total", "deductible", "non_deductible")}
 
-    def choose_import(self):
-        path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xlsm")])
+    def choose_import(self, path=None):
+        path = path or filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xlsm")])
         if not path: return
         kind, entry_type = TYPES[self.import_type.get()]
         try:
@@ -1139,7 +1139,7 @@ class Stage3Mixin:
             if data.get("invoice_number") and not v["reference"].get(): v["reference"].set(data["invoice_number"])
             if data.get("invoice_date"): v["date"].set(data["invoice_date"])
             if data.get("currency"): v["currency"].set(data["currency"])
-            if data.get("party_name") and not v["description"].get(): v["description"].set(data["party_name"])
+            if not v["description"].get(): v["description"].set(" - ".join(filter(None, [data.get("party_name"), "; ".join(i["description"] for i in data.get("items", []))])))
             if data.get("subtotal") is not None and not v["with_vat"].get(): v["with_vat"].set(f'{(data.get("deductible") if data.get("deductible") is not None else data["subtotal"] - (data.get("non_deductible") or 0)):.2f}')
             if data.get("non_deductible") is not None and not v["without_vat"].get(): v["without_vat"].set(f'{data["non_deductible"]:.2f}')
             if data.get("vat") is not None: v["vat"].set(f'{data["vat"]:.2f}'); f["vat_typed"] = True
@@ -1268,13 +1268,6 @@ class Stage3Mixin:
     def import_expenses_excel(self):
         path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xlsm")])
         if not path: return
-        try: rows = read_expenses(path)
-        except Exception as exc: return messagebox.showerror("Expenses", f"The Excel file could not be read: {exc}")
-        if not rows: return messagebox.showwarning("Expenses", "No expense rows were found")
-        if not messagebox.askyesno("Expenses", f"Import {len(rows)} expense(s) from this file?"): return
-        done = 0; errors = []
-        for row in rows:
-            try: self.client.add_expense(row); done += 1
-            except Exception as exc: errors.append(f"Row {row['source_row']}: {exc}")
-        (messagebox.showwarning if errors else messagebox.showinfo)("Expenses", f"{done} expense(s) imported." + ("\n" + "\n".join(errors[:12]) if errors else ""))
-        self.load_expenses(); self.load_journal(); self.load_trial()
+        self.select_main_tab(self.import_tab.master.master)
+        self.import_type.set("Expenses")
+        self.choose_import(path)
