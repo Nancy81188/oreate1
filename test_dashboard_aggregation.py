@@ -39,5 +39,25 @@ class DashboardAggregationTest(unittest.TestCase):
             self.assertEqual(len(result["monthly"]),3)
 
 
+class TabLoadingTest(unittest.TestCase):
+    def test_selecting_one_tab_does_not_build_every_pending_page(self):
+        from types import SimpleNamespace
+        from desktop import SaberApp
+
+        dashboard=object(); invoice_page=object(); reports=object()
+        def frame_for(page):
+            return SimpleNamespace(master=SimpleNamespace(master=page))
+        calls=[]
+        def build_invoices(): calls.append("invoices")
+        def build_financial_reports(): calls.append("reports")
+        app=SimpleNamespace(main_tab_pages=[dashboard,invoice_page,reports],
+            invoices_tab=frame_for(invoice_page),reports_tab=frame_for(reports),
+            _pending_builders=[build_invoices,build_financial_reports])
+        app._run_page_builder=lambda builder:builder()
+        SaberApp._ensure_main_tab(app,invoice_page)
+        self.assertEqual(calls,["invoices"])
+        self.assertEqual([item.__name__ for item in app._pending_builders],["build_financial_reports"])
+
+
 if __name__ == "__main__":
     unittest.main()
