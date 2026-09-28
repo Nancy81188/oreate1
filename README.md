@@ -1,5 +1,12 @@
 # Saber Accounting MVP
 
+## Version 2.9.25 (Faster tabs and dashboard)
+
+- Opening a tab builds only that tab immediately; other screens continue loading between UI events instead of forcing every remaining page to build at once.
+- Dashboard totals are grouped in SQLite, avoiding loading every expense and invoice into Python just to calculate the cards. The currencies, overdue count and monthly figures keep their previous meaning.
+- Changed files: `desktop.py`, `database.py`, `test_dashboard_aggregation.py`, `installer.iss`, and this README. The existing full test suite and Windows build validate the change.
+
+
 ## Version 2.9.24 (Payroll tax and editable employee forms)
 
 - Salary tax: each worker keeps the personal deduction. The spouse deduction applies only if the spouse does not work; when both parents work, the child deduction is split in half. Retroactive salary uses the allowances and brackets of each original month. Existing effective dated 2024–2026 tax brackets and editable periods remain available in Tax & NSSF Settings.
