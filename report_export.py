@@ -331,6 +331,18 @@ def export_sections_excel(path, title, meta, sections):
     for section in sections:
         row += 1
         ws.cell(row, 1, section["heading"]).font = Font(size=12, bold=True, color=NAVY); row += 1
+        if section.get("narrative"):
+            import textwrap
+            for values in section["rows"]:
+                text = " — ".join(str(v) for v in values)
+                for paragraph in text.splitlines() or [""]:
+                    for chunk in textwrap.wrap(paragraph, 800) or [""]:
+                        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=width)
+                        cell = ws.cell(row, 1, chunk)
+                        cell.alignment = Alignment(wrap_text=True, vertical="top")
+                        ws.row_dimensions[row].height = max(30, 15 * ((len(chunk) // 100) + 1))
+                        row += 1
+            continue
         for column, header in enumerate(section["headers"], 1):
             h = ws.cell(row, column, header); h.font = Font(bold=True, color="FFFFFF"); h.fill = navy
             h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -353,17 +365,34 @@ def export_sections_excel(path, title, meta, sections):
 
 def export_sections_pdf(path, title, meta, sections):
     from reportlab.lib.styles import ParagraphStyle
-    page = landscape(A4)
+    financial = title.startswith("Financial Statements,")
+    page = A4 if financial else landscape(A4)
     doc = SimpleDocTemplate(str(path), pagesize=page, rightMargin=8*mm, leftMargin=8*mm, topMargin=10*mm, bottomMargin=12*mm, title=title)
     styles = getSampleStyleSheet()
-    header_style = ParagraphStyle("header", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=6.5, leading=7.5, textColor=colors.white, alignment=1)
-    cell_style = ParagraphStyle("cell", parent=styles["Normal"], fontSize=6.5, leading=7.5)
+    regular, bold_font = arabic_fonts() if financial else (None, None)
+    regular = regular or "Helvetica"; bold_font = bold_font or "Helvetica-Bold"
+    if financial:
+        for style in styles.byName.values(): style.fontName = regular
+        for key in ("Title", "Heading1", "Heading2", "Heading3"): styles[key].fontName = bold_font
+        styles["Normal"].fontSize=11; styles["Normal"].leading=15
+    header_style = ParagraphStyle("header", parent=styles["Normal"], fontName=bold_font, fontSize=10 if financial else 6.5, leading=13 if financial else 7.5, textColor=colors.white, alignment=1)
+    cell_style = ParagraphStyle("cell", parent=styles["Normal"], fontSize=10 if financial else 6.5, leading=13 if financial else 7.5)
     story = [pdf_paragraph(title, styles["Title"], True)]
     for line in list(meta or []) + [f"Generated: {datetime.now():%d-%m-%Y %H:%M}"]: story.append(pdf_paragraph(line, styles["Normal"]))
     story.append(Spacer(1, 4*mm))
     available = page[0] - 16*mm
     for section in sections:
+        if financial and (section["heading"].startswith(("Statement of", "Notes: account")) or section["heading"].endswith("DRAFT - Addressee")):
+            from reportlab.platypus import PageBreak
+            story.append(PageBreak())
         story.append(pdf_paragraph(section["heading"], styles["Heading3"], True))
+        if section.get("narrative"):
+            for values in section["rows"]:
+                for paragraph in " — ".join(str(v) for v in values).splitlines():
+                    story.append(pdf_paragraph(paragraph, styles["Normal"]))
+                    story.append(Spacer(1, 2*mm))
+            story.append(Spacer(1, 3*mm))
+            continue
         headers = section["headers"]; count = len(headers)
         body = [[_formatted(value) for value in list(values) + [""] * (count - len(values))] for values in section["rows"]]
         weights = []
@@ -373,6 +402,8 @@ def export_sections_pdf(path, title, meta, sections):
         for column in range(count):
             longest = max([header_length(headers[column])] + [len(row[column]) * (1.15 if has_arabic(row[column]) else 1) for row in body] or [6])
             weights.append(min(max(longest, 7), 30))
+        if financial and count == 5:
+            weights = [13, 24, 29, 20, 23] if headers[0] == "Account" else [35, 16, 23, 16, 16]
         scale = available / sum(weights); col_widths = [w * scale for w in weights]
         def header_cell(text):
             parts = [p.strip() for p in str(text).split(" | ")]
@@ -382,7 +413,7 @@ def export_sections_pdf(path, title, meta, sections):
         for row in body:
             data.append([pdf_paragraph(value, cell_style) if has_arabic(value) or (len(value) > 18 and not value.replace(",", "").replace(".", "").replace("-", "").isdigit()) else value for value in row])
         table = Table(data, repeatRows=1, colWidths=col_widths)
-        style = [("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#071B2E")), ("FONTSIZE", (0, 1), (-1, -1), 6.5),
+        style = [("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#071B2E")), ("FONTNAME", (0, 1), (-1, -1), regular), ("FONTSIZE", (0, 1), (-1, -1), 10 if financial else 6.5),
                  ("GRID", (0, 0), (-1, -1), .25, colors.grey), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                  ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F3F6F8")]),
                  ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]
@@ -391,11 +422,11 @@ def export_sections_pdf(path, title, meta, sections):
                 style.append(("ALIGN", (column, 1), (column, -1), "RIGHT"))
         for index in section.get("total_rows") or []:
             if 0 <= index < len(body):
-                style += [("FONTNAME", (0, index + 1), (-1, index + 1), "Helvetica-Bold"), ("BACKGROUND", (0, index + 1), (-1, index + 1), colors.HexColor("#E8EDF2"))]
+                style += [("FONTNAME", (0, index + 1), (-1, index + 1), bold_font), ("BACKGROUND", (0, index + 1), (-1, index + 1), colors.HexColor("#E8EDF2"))]
         table.setStyle(TableStyle(style)); story += [table, Spacer(1, 5*mm)]
 
     def footer(canvas, document):
-        canvas.saveState(); canvas.setFont("Helvetica", 7); canvas.setFillColor(colors.HexColor("#5F6B76"))
+        canvas.saveState(); canvas.setFont(regular, 7); canvas.setFillColor(colors.HexColor("#5F6B76"))
         footer_title = title.split(" | ")[0] if has_arabic(title) else title
         canvas.drawString(8*mm, 6*mm, footer_title); canvas.drawRightString(page[0] - 8*mm, 6*mm, f"Page {document.page}")
         canvas.restoreState()

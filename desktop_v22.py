@@ -197,13 +197,13 @@ class V22Mixin:
     # ------------------------------------------------------------ business reports (ageing, item sales, 3D, top)
     BUSINESS_REPORTS = {"Receivables Ageing (customers)": "receivables", "Payables Ageing (suppliers)": "payables", "Client Items: Qty & Value": "item_sales_client",
                         "Client Quantities by Item": "item_sales_item", "Sales Analysis (3D pivot)": "analysis", "Top Clients (HT + VAT = TTC)": "top_clients",
-                        "Top Suppliers (HT + VAT = TTC)": "top_suppliers"}
+                        "Top Suppliers (HT + VAT = TTC)": "top_suppliers", "Financial Statements + Audit + Notes": "financial_statements"}
 
     def build_business_reports_page(self, nested):
         page = tk.Frame(nested, bg=LIGHT); nested.add(page, text="Business Reports"); self.business_reports_page=page
         year = getattr(self, "current_fiscal_year", datetime.now().year)
         self.br = {k: tk.StringVar(value=v) for k, v in (("report", "Receivables Ageing (customers)"), ("from", f"01-01-{year}"), ("to", f"31-12-{year}"), ("basis", "USD"),
-                   ("only", "All currencies"), ("buckets", "30,60,90,180"), ("top", "20"), ("rows", "client"), ("columns", "month"), ("measure", "ht"))}
+                   ("only", "All currencies"), ("buckets", "30,60,90,180"), ("top", "20"), ("rows", "client"), ("columns", "month"), ("measure", "ht"), ("years", str(year)))}
         self.br_review = tk.BooleanVar(value=False)
         bar = tk.Frame(page, bg=LIGHT); bar.pack(fill="x", padx=8, pady=(8, 2))
         ttk.Combobox(bar, textvariable=self.br["report"], values=list(self.BUSINESS_REPORTS), state="readonly", width=30).pack(side="left", padx=(0, 8))
@@ -220,6 +220,11 @@ class V22Mixin:
         tk.Label(bar2, text="columns", bg=LIGHT).pack(side="left"); ttk.Combobox(bar2, textvariable=self.br["columns"], values=["month", "quarter", "client", "item", "category"], state="readonly", width=8).pack(side="left", padx=2)
         tk.Label(bar2, text="measure", bg=LIGHT).pack(side="left"); ttk.Combobox(bar2, textvariable=self.br["measure"], values=["quantity", "ht", "vat", "ttc"], state="readonly", width=8).pack(side="left", padx=(2, 8))
         tk.Checkbutton(bar2, text="Include Review", variable=self.br_review, bg=LIGHT).pack(side="left", padx=4)
+        fsbar = tk.Frame(page, bg=LIGHT); fsbar.pack(fill="x", padx=8, pady=3)
+        tk.Label(fsbar, text="Financial statements - years", bg=LIGHT).pack(side="left")
+        tk.Entry(fsbar, textvariable=self.br["years"], width=16).pack(side="left", padx=5)
+        tk.Label(fsbar, text="Example: 2024,2025 or 2025 | full calendar years; posted entries", bg=LIGHT).pack(side="left", padx=5)
+        tk.Button(fsbar, text="Edit Notes / Audit / Mapping", command=self.edit_financial_report, bg=NAVY, fg="white").pack(side="left", padx=5)
         bar3 = tk.Frame(page, bg=LIGHT); bar3.pack(fill="x", padx=8, pady=(2, 4))
         tk.Button(bar3, text="Show", command=self.run_business_report, bg=GOLD, fg=NAVY, border=0, padx=22, pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
         for text, fmt in (("Print Preview", "preview"), ("Print", "print"), ("Excel", "xlsx"), ("PDF", "pdf")):
@@ -227,6 +232,17 @@ class V22Mixin:
         tk.Label(bar3, text="Ageing shows invoice due dates, days overdue, and expected amounts due by the selected date.", bg=LIGHT, fg="#5f6b76").pack(side="left", padx=10)
         self.br_info = tk.Label(page, text="Choose a report and press Show.", bg=LIGHT, fg="#5f6b76", anchor="w"); self.br_info.pack(fill="x", padx=10)
         self.br_viewer = self.report_viewer(page, [170, 150, 110, 110, 110, 110, 110, 110, 110, 110, 110, 90])
+        self.br_viewer.bind("<Double-1>", self.view_business_report_row)
+
+    def view_business_report_row(self, _event=None):
+        from tkinter.scrolledtext import ScrolledText
+        selected = self.br_viewer.selection()
+        if not selected: return
+        values = self.br_viewer.item(selected[0], "values")
+        window = tk.Toplevel(self); window.title("Report detail"); window.geometry("850x500")
+        text = ScrolledText(window,wrap="word",font=("Segoe UI",11)); text.pack(fill="both",expand=True,padx=10,pady=10)
+        text.insert("1.0", "\n\n".join(str(v) for v in values if str(v))); text.config(state="disabled")
+
 
     def set_business_as_of(self, days):
         from datetime import timedelta
@@ -241,14 +257,81 @@ class V22Mixin:
         options.pop("only", None); return options
 
     def run_business_report(self):
+        self.business_result = None
         try: result = self.client.business_report(self.BUSINESS_REPORTS[self.br["report"].get()], self.business_options())
         except Exception as exc: return messagebox.showerror("Business Reports", str(exc))
+        if self.BUSINESS_REPORTS[self.br["report"].get()] == "financial_statements":
+            for index, width in enumerate([360, 260, 220, 160, 160]): self.br_viewer.column(f"c{index}",width=width)
+        else:
+            for index, width in enumerate([170, 150, 110, 110, 110]): self.br_viewer.column(f"c{index}",width=width)
         self.business_result = result; self.show_sections(self.br_viewer, result["sections"]); self.br_info.config(text=f'{result["title"]}  |  ' + "   ".join(result["meta"]), fg=NAVY)
 
     def export_business_report(self, mode):
-        if not getattr(self, "business_result", None): self.run_business_report()
+        self.run_business_report()
         result = getattr(self, "business_result", None)
         if result: self.output_sections(result["title"], result["meta"], result["sections"], result["title"].replace(" ", "_").replace("(", "").replace(")", ""), mode)
+
+    def edit_financial_report(self):
+        from financial_statements import NARRATIVES, AUDIT, GROUPS, SUPPLEMENTS, years_from
+        from tkinter.scrolledtext import ScrolledText
+        try: years = years_from(self.br["years"].get())
+        except Exception as exc: return messagebox.showerror("Financial Statements", str(exc))
+        window = tk.Toplevel(self); window.title("Financial Statements - saved notes, audit draft and classification")
+        window.geometry("1000x720")
+        top = ttk.Frame(window); top.pack(fill="x", padx=10, pady=8)
+        ttk.Label(top, text="Edit fiscal year").pack(side="left")
+        selected = tk.StringVar(value=str(years[0]))
+        selector = ttk.Combobox(top, textvariable=selected, values=[str(y) for y in years], state="readonly", width=8); selector.pack(side="left", padx=8)
+        ttk.Label(top, text="Save each year before switching. Amounts use the selected report currency.").pack(side="left")
+        notebook = ttk.Notebook(window); notebook.pack(fill="both", expand=True, padx=10, pady=5)
+        text_fields = {}; entries = {}; state = {}; loaded = [None]
+        for kind, definitions in (("notes",NARRATIVES),("audit",AUDIT)):
+            page = ttk.Frame(notebook); notebook.add(page,text="Notes" if kind=="notes" else "Audit report DRAFT")
+            inner = ttk.Notebook(page); inner.pack(fill="both", expand=True)
+            text_fields[kind] = {}
+            for index, (name, default) in enumerate(definitions.items(), 1):
+                tab=ttk.Frame(inner); inner.add(tab,text=f"{'Note' if kind=='notes' else 'Section'} {index}")
+                ttk.Label(tab,text=name,font=("Segoe UI",11,"bold")).pack(anchor="w",padx=8,pady=6)
+                text=ScrolledText(tab,wrap="word",font=("Segoe UI",11)); text.pack(fill="both",expand=True,padx=6,pady=6)
+                text_fields[kind][name]=(text,default)
+        page=ttk.Frame(notebook); notebook.add(page,text="OCI and Cash Flow")
+        ttk.Label(page,text="Cash flow: enter reviewed net totals. Positive = inflow, negative = outflow. Blank = review required.\nOCI is disclosure only; related asset/equity entries must already be posted.",wraplength=900).pack(anchor="w",padx=10,pady=10)
+        for key,label in SUPPLEMENTS.items():
+            row=ttk.Frame(page); row.pack(fill="x",padx=10,pady=8)
+            ttk.Label(row,text=label,width=48).pack(side="left")
+            variable=tk.StringVar(); entries[key]=variable; ttk.Entry(row,textvariable=variable,width=22).pack(side="left")
+        page=ttk.Frame(notebook); notebook.add(page,text="Account mapping")
+        ttk.Label(page,text="Optional overrides: one account or prefix = category per line. Longest prefix wins.\nExample: 4031 = noncurrent_liabilities. Review classifications and maturity before issuing.").pack(anchor="w",padx=10,pady=8)
+        mapping=ScrolledText(page,height=10); mapping.pack(fill="both",expand=True,padx=10)
+        ttk.Label(page,text="\n".join(f"{k}: {v}" for k,v in GROUPS.items()),wraplength=930).pack(anchor="w",padx=10,pady=8)
+        def load():
+            try: saved=self.client.financial_config(int(selected.get()))
+            except Exception as exc:
+                if loaded[0] is not None: selected.set(str(loaded[0]))
+                return messagebox.showerror("Financial Statements",str(exc),parent=window)
+            loaded[0]=int(selected.get()); state.clear(); state.update(saved)
+            for kind,fields in text_fields.items():
+                for name,(widget,default) in fields.items():
+                    widget.delete("1.0","end"); widget.insert("1.0",saved.get(kind,{}).get(name) or default)
+            saved_basis=saved.get("basis",self.br["basis"].get())
+            for key,var in entries.items(): var.set(saved.get("supplements",{}).get(key,"") if saved_basis==self.br["basis"].get() else "")
+            mapping.delete("1.0","end"); mapping.insert("1.0","\n".join(f"{k} = {v}" for k,v in saved.get("mapping",{}).items()))
+        def save():
+            try:
+                if loaded[0] is None: raise ValueError("Load a fiscal year first")
+                overrides={}
+                for line in mapping.get("1.0","end").splitlines():
+                    if not line.strip(): continue
+                    code,category=line.split("=",1); overrides[code.strip()]=category.strip()
+                cfg={kind:{name:widget.get("1.0","end-1c").strip() for name,(widget,_) in fields.items()} for kind,fields in text_fields.items()}
+                cfg.update(mapping=overrides,supplements={k:v.get().strip() for k,v in entries.items()},basis=self.br["basis"].get())
+                self.client.save_financial_config(loaded[0],cfg)
+                self.business_result=None
+                messagebox.showinfo("Financial Statements",f"Saved for {loaded[0]}. Journal entries were not changed.",parent=window)
+            except Exception as exc: messagebox.showerror("Financial Statements",str(exc),parent=window)
+        selector.bind("<<ComboboxSelected>>",lambda _e:load())
+        ttk.Button(window,text="Save this year's report settings",command=save).pack(pady=10)
+        load()
 
     # ------------------------------------------------------------ dashboard charts
     def build_dashboard_charts(self, parent):

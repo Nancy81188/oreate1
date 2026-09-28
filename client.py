@@ -258,6 +258,8 @@ class ApiClient:
     def download_backup(self,name):
         result=self.request("GET","/api/backups/download?"+urlencode({"name":name})); result["content"]=base64.b64decode(result["content"]); return result
     def backup_folder(self): return self.request("GET","/api/backups/folder")["folder"]
+    def financial_config(self,year): return self.request("GET","/api/reports/financial-config?"+urlencode({"year":year}))
+    def save_financial_config(self,year,config): return self.request("POST","/api/reports/financial-config",{"year":year,"config":config})
     def business_report(self,report,options): return self.request("GET","/api/reports/business?"+urlencode({"report":report,"options":json.dumps(options)}))
     def delete_payroll_period(self,date_from): return self.request("POST","/api/payroll/delete-period",{"date_from":date_from})["items"]
     def dashboard_charts(self,year,basis="USD"): return self.request("GET","/api/reports/dashboard-charts?"+urlencode({"year":year,"basis":basis}))
