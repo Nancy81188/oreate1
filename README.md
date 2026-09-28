@@ -1,5 +1,12 @@
 # Saber Accounting MVP
 
+## Version 2.9.9 (NSSF reporting and employee forms)
+
+- NSSF contributions report defaults to Auto by employee count: fewer than ten employees in the selected month gives the full quarter; ten or more gives that month. The report shows the roster count and chosen declaration period. Monthly, quarterly and yearly remain selectable for review.
+- Payroll > Employees offers blank official CNSS forms for registering a new employee, hiring an employee already registered with CNSS, and notifying CNSS that an employee left. R3 and R3-1 remain available.
+- The annual NSSF settlement automatically shows monthly posted payroll contributions and wage bases alongside the filed wage bases and payments entered by the accountant. Unknown filed amounts remain blank instead of being guessed.
+- Tax & NSSF Settings already provides editable, dated Family Ceiling and Sickness Ceiling. Default Family Ceiling is LBP 18,000,000 through April 2026 and LBP 28,000,000 from May 2026, with the effective May family allowances. Payroll tax and retroactive pay use the saved settings for their periods.
+
 ## Version 2.9.8 (Employee dates in Payroll)
 
 - Payroll > Employees shows Starting Date and Leaving Date in the employee list, using the dates saved in each employee file. Double-click an employee or use Edit Selected to change them.

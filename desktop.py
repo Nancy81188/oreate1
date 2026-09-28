@@ -84,7 +84,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.8")
+        self.title("Saber Accounting 2.9.9")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -1709,6 +1709,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.action_button(employee_actions,"R3 Excel",lambda:self.employee_r3_worksheet("xlsx")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Official R3 Form",lambda:self.download_payroll_form("R3")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Official R3-1 Form",lambda:self.download_payroll_form("R3-1")).pack(side="left",padx=4)
+        nssf_forms=tk.Frame(employees,bg=LIGHT); nssf_forms.pack(fill="x",padx=10,pady=(0,5))
+        tk.Label(nssf_forms,text="NSSF employee forms:",bg=LIGHT,fg=NAVY,font=("Segoe UI",9,"bold")).pack(side="left",padx=4)
+        self.action_button(nssf_forms,"New Employee Registration",lambda:self.download_payroll_form("NSSF-HIRE-NEW")).pack(side="left",padx=4)
+        self.action_button(nssf_forms,"Hire Existing NSSF Member",lambda:self.download_payroll_form("NSSF-HIRE-EXISTING")).pack(side="left",padx=4)
+        self.action_button(nssf_forms,"Employee Leaving",lambda:self.download_payroll_form("NSSF-LEAVE")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Refresh",self.load_payroll).pack(side="left",padx=4)
         self.employee_tree=self.table(employees,[("number","Employee ID",105),("name","Employee Name",220),("job","Job Title",150),
             ("start","Starting Date",110),("leaving","Leaving Date",110),("branch","Branch",120),("currency","Currency",70),
@@ -1828,7 +1833,10 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                   "R3-1":"https://www.finance.gov.lb/en-us/Taxation/Na/DASS1/%D8%B13-1.pdf",
                   "NSSF-DUE":"https://drive.google.com/uc?export=download&id=1ZwZR6kFj19KPbtALttm8U6Ji3ICJUjGB",
                   "NSSF-SETTLEMENT":"https://drive.google.com/uc?export=download&id=14eHUtHDblW9mE_4Vs82PmRrmbMGGSEKg",
-                  "NSSF-ANNUAL":"https://drive.google.com/uc?export=download&id=1TNwLlioahMJLaiX3ma6PPYqrgbHm07f_"}
+                  "NSSF-ANNUAL":"https://drive.google.com/uc?export=download&id=1TNwLlioahMJLaiX3ma6PPYqrgbHm07f_",
+                  "NSSF-HIRE-NEW":"https://drive.google.com/uc?export=download&id=1FHWgIuJm38oLcypxT6lMXlTlY9eCXDpe",
+                  "NSSF-HIRE-EXISTING":"https://drive.google.com/uc?export=download&id=1jK1Nv4RgzslncCsV-5gc7e2rHYZQThyq",
+                  "NSSF-LEAVE":"https://drive.google.com/uc?export=download&id=1_stgCRJwJjdqr2kFLy07ZCwiXDkMdZIy"}
         if form not in official: raise ValueError("Unknown payroll form")
         target=filedialog.asksaveasfilename(title=f"Save official {form} form",defaultextension=".pdf",
             initialfile=f"Lebanon_MOF_{form}.pdf",filetypes=[("PDF files","*.pdf")])
@@ -1839,7 +1847,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             Path(target).write_bytes(content)
         except Exception as exc: return messagebox.showerror(f"Official {form}",f"Could not download the form: {exc}")
         note=("\nCheck the preprinted rates against the period's NSSF settings before using this blank form."
-              if form.startswith("NSSF") else "")
+              if form in ("NSSF-DUE","NSSF-SETTLEMENT","NSSF-ANNUAL") else "")
         messagebox.showinfo(f"Official {form}",f"Official blank form saved to {target}{note}")
 
     def load_payroll(self):

@@ -243,11 +243,35 @@ def _month_end(iso):
     return f"{year}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
 
 
+def nssf_declaration_period(employees, year, month):
+    """Pick the declaration period from the roster at the selected month's end.
+
+    Nine or fewer employees use a quarter; ten or more use a month. An
+    employee who left earlier or has not yet joined is not counted.
+    """
+    year, month = int(year), int(month)
+    end = _month_end(f"{year}-{month:02d}-01")
+    def saved_date(value):
+        value = str(value or "")
+        return value[6:] + "-" + value[3:5] + "-" + value[:2] if len(value) == 10 and value[2:3] == "-" else value
+    count = sum((not employee.get("hire_date") or saved_date(employee["hire_date"]) <= end)
+                and (not employee.get("leave_date") or saved_date(employee["leave_date"]) >= end)
+                and (employee.get("active", True) or bool(employee.get("leave_date")))
+                for employee in employees)
+    return ("quarterly", (month - 1) // 3 + 1, count) if count < 10 else ("monthly", month, count)
+
+
 def build_nssf_statement(db, period_type="monthly", year=None, index=1, include_drafts=False):
     """Per employee: salary subject to NSSF, capped bases and contributions by branch (sickness & maternity
     employee + employer, family allowances, end of service), NSSF family allowances already paid, and the
     net amount to pay to the NSSF. Bases are the ones of each payroll month (monthly ceilings)."""
+    auto = str(period_type or "").lower() == "auto"
+    employee_count_at_selection = None
+    if auto:
+        period_type, index, employee_count_at_selection = nssf_declaration_period(
+            db.list_employees(), year or date.today().year, index)
     start, end, label = period_range(period_type, year or date.today().year, index)
+    if auto: label += f" | Auto: {employee_count_at_selection} employee(s), {period_type} declaration"
     records = _load_records(db, start, end, bool(include_drafts)); company = db.settings()
     rows = []; payroll_employee_ids = {row["employee_id"] for row in records}
     company_employees = db.list_employees()
@@ -314,6 +338,7 @@ def build_nssf_statement(db, period_type="monthly", year=None, index=1, include_
             f"Current active employees: {current_employee_count}   In selected period: {len(period_employees)}   With payroll: {len(payroll_employee_ids)}",
             f"Period: {label} ({_display(start)} to {_display(end)})   Amounts in LBP   Source: " + ("posted and draft payroll" if include_drafts else "posted payroll")]
     return {"report": "NSSF", "title": NSSF_TITLE, "period_label": label, "date_from": start, "date_to": end, "meta": meta, "sections": sections,
+            "declaration_period": period_type, "declaration_employee_count": employee_count_at_selection,
             "record_count": len(records), "employee_count": len(period_employees), "active_employee_count": current_employee_count,
             "payroll_employee_count": len(payroll_employee_ids), "net_payable_lbp": totals["net"], "summary": {k: v for k, v in totals.items()}}
 
