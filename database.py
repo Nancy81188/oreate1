@@ -5,7 +5,7 @@ import hmac
 import json
 import re
 import secrets
-import shutil
+import os
 import sqlite3
 import tempfile
 import threading
@@ -273,11 +273,44 @@ class Database:
     _locks = {}
     _locks_guard = threading.Lock()
 
-    def __init__(self, path):
+    def __init__(self, path, pooled=False):
         self.path = str(Path(path))
         self._transaction = threading.local()
+        # pooled=True (used by the running data service) keeps ONE open SQLite connection for this
+        # file and reuses it for every request instead of opening, configuring and closing a new
+        # connection each time. All access is already serialised by the per-file lock below, so
+        # the results are identical; only the per-request overhead disappears.
+        self.pooled = pooled; self._pooled_connection = None; self._pooled_identity = None
         with self._locks_guard:
             self._lock = self._locks.setdefault(str(Path(path).resolve()), threading.RLock())
+
+    def _file_identity(self):
+        try:
+            info = os.stat(self.path); return (info.st_dev, info.st_ino)
+        except OSError:
+            return None
+
+    def _open_connection(self):
+        connection = sqlite3.connect(self.path, check_same_thread=not self.pooled)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
+        # Performance PRAGMAs: WAL keeps reads fast while writing, NORMAL
+        # sync is safe under WAL, and a larger page cache / memory temp
+        # store cut disk churn. These only speed things up; the data and
+        # every existing behaviour are unchanged.
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        connection.execute("PRAGMA temp_store=MEMORY")
+        connection.execute("PRAGMA cache_size=-16000")  # ~16 MB page cache
+        return connection
+
+    def release(self):
+        """Close the kept-open connection (before the file is moved, deleted or replaced)."""
+        with self._lock:
+            connection, self._pooled_connection, self._pooled_identity = self._pooled_connection, None, None
+            if connection is not None:
+                try: connection.close()
+                except Exception: pass
 
     @contextmanager
     def connect(self):
@@ -286,17 +319,15 @@ class Database:
             if active is not None:
                 yield active
                 return
-            connection = sqlite3.connect(self.path)
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys=ON")
-            # Performance PRAGMAs: WAL keeps reads fast while writing, NORMAL
-            # sync is safe under WAL, and a larger page cache / memory temp
-            # store cut disk churn. These only speed things up; the data and
-            # every existing behaviour are unchanged.
-            connection.execute("PRAGMA journal_mode=WAL")
-            connection.execute("PRAGMA synchronous=NORMAL")
-            connection.execute("PRAGMA temp_store=MEMORY")
-            connection.execute("PRAGMA cache_size=-16000")  # ~16 MB page cache
+            if self.pooled:
+                identity = self._file_identity()
+                if self._pooled_connection is not None and (identity is None or identity != self._pooled_identity):
+                    self.release()  # the file was replaced or removed: never keep using a stale handle
+                if self._pooled_connection is None:
+                    self._pooled_connection = self._open_connection(); self._pooled_identity = self._file_identity()
+                connection = self._pooled_connection
+            else:
+                connection = self._open_connection()
             self._transaction.connection = connection
             try:
                 yield connection
@@ -306,7 +337,7 @@ class Database:
                 raise
             finally:
                 self._transaction.connection = None
-                connection.close()
+                if not self.pooled: connection.close()
 
     def initialize(self, admin_password):
         with self.connect() as db:
@@ -403,6 +434,9 @@ class Database:
                     try: fixed=iso_date(row["value"])
                     except ValueError: continue
                     if fixed!=row["value"]: db.execute(f"UPDATE OR IGNORE {table} SET {column}=? WHERE id=?",(fixed,row["id"]))
+            document_columns={row["name"] for row in db.execute("PRAGMA table_info(party_documents)")}
+            if "active" not in document_columns:  # "applies to this party" tick; existing documents stay active
+                db.execute("ALTER TABLE party_documents ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
             line_columns={row["name"] for row in db.execute("PRAGMA table_info(journal_lines)")}
             for column in ("line_currency","amount","amount_lbp","amount_usd","rate_lbp","rate_usd","due_date","reference"):
                 if column not in line_columns: db.execute(f"ALTER TABLE journal_lines ADD COLUMN {column} TEXT")
@@ -820,9 +854,11 @@ class Database:
         source=self.backup_path(name).resolve()
         self._validate_backup_file(source)
         safety=self.backup("safety")
-        source_connection=sqlite3.connect(str(source)); target_connection=sqlite3.connect(self.path)
-        try: source_connection.backup(target_connection)
-        finally: target_connection.close(); source_connection.close()
+        with self._lock:
+            self.release()  # nobody may read or write this file while it is being replaced
+            source_connection=sqlite3.connect(str(source)); target_connection=sqlite3.connect(self.path)
+            try: source_connection.backup(target_connection)
+            finally: target_connection.close(); source_connection.close()
         with self.connect() as db:
             db.execute("INSERT INTO audit_log(user_id,action,entity,details,created_at) VALUES(?,?,?,?,?)",
                 (user_id,"restore","database",json.dumps({"backup":source.name,"safety_backup":safety}),utcnow()))
@@ -1158,13 +1194,15 @@ class Database:
         if abs(total_debit-total_credit)>=Decimal("0.005"): raise ValueError(f"Journal Voucher is unbalanced. Debit {total_debit}; Credit {total_credit}; Remaining {abs(total_debit-total_credit)}")
         if voucher_type=="07":
             from chart_extra import EXCHANGE_GAIN_ACCOUNT, EXCHANGE_LOSS_ACCOUNT
+            # A DOE voucher revalues one or more class 4/5 accounts (Automatic DOE posts one voucher per
+            # currency with all its accounts) against exchange gain 7751 (credit) / loss 6751 (debit).
             affected=[(code,debit,credit) for code,_desc,debit,credit,_extra,_raw in normalized if code.startswith(("4","5"))]
             offsets=[(code,debit,credit) for code,_desc,debit,credit,_extra,_raw in normalized if code in (EXCHANGE_GAIN_ACCOUNT,EXCHANGE_LOSS_ACCOUNT)]
-            if len(normalized)!=2 or len(affected)!=1 or len(offsets)!=1:
-                raise ValueError("DOE needs one class 4 or 5 account and one exchange gain (7751) or loss (6751) account")
-            code,debit,credit=offsets[0]
-            if (code==EXCHANGE_GAIN_ACCOUNT and not credit) or (code==EXCHANGE_LOSS_ACCOUNT and not debit):
-                raise ValueError("DOE gains credit 7751 and losses debit 6751")
+            if not affected or not offsets or len(affected)+len(offsets)!=len(normalized):
+                raise ValueError("DOE needs class 4 or 5 accounts and the exchange gain (7751) or loss (6751) account only")
+            for code,debit,credit in offsets:
+                if (code==EXCHANGE_GAIN_ACCOUNT and not credit) or (code==EXCHANGE_LOSS_ACCOUNT and not debit):
+                    raise ValueError("DOE gains credit 7751 and losses debit 6751")
         with self.connect() as db:
             branch_id=self._branch_id(db,item)
             if entry_id:
@@ -1528,22 +1566,54 @@ class Database:
             if not row: raise KeyError(attachment_id)
             return dict(row)
 
+    @staticmethod
+    def _document_date(value, label):
+        text=str(value or "").strip()
+        if not text: return None
+        try: return display_date(iso_date(text))
+        except ValueError: raise ValueError(f"{label} must be a date (DD-MM-YYYY)")
+
+    def _document_fields(self,item):
+        issue=self._document_date(item.get("issue_date"),"Issue date"); expiry=self._document_date(item.get("expiry_date"),"Expiry date")
+        if issue and expiry and iso_date(expiry)<iso_date(issue): raise ValueError("Expiry date cannot be before the issue date")
+        active=item.get("active",True); active=1 if str(active).strip().lower() not in ("0","false","no","") else 0
+        return str(item.get("document_type") or "Other").strip() or "Other",issue,expiry,str(item.get("notes") or "").strip(),active
+
     def add_party_document(self,party_id,item,content,user_id):
-        file_name=str(item.get("file_name") or "").strip()
-        if not file_name or not content: raise ValueError("Choose a legal document file")
+        """Save a customer / supplier legal document. The file is optional: the type, the "applies" tick and
+        the issue / expiry dates can be saved on their own and the scanned copy uploaded later."""
+        file_name=str(item.get("file_name") or "").strip() if content else ""
+        content=content or b""
         if len(content)>15*1024*1024: raise ValueError("Document cannot exceed 15 MB")
+        document_type,issue,expiry,notes,active=self._document_fields(item)
         with self.connect() as db:
             if not db.execute("SELECT 1 FROM parties WHERE id=?",(int(party_id),)).fetchone(): raise KeyError(party_id)
-            result=db.execute("""INSERT INTO party_documents(party_id,document_type,issue_date,expiry_date,notes,file_name,mime_type,content,uploaded_by,uploaded_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?)""",(int(party_id),str(item.get("document_type") or "Other"),item.get("issue_date") or None,item.get("expiry_date") or None,
-                str(item.get("notes") or ""),file_name,str(item.get("mime_type") or "application/octet-stream"),content,user_id,utcnow()))
+            result=db.execute("""INSERT INTO party_documents(party_id,document_type,issue_date,expiry_date,notes,file_name,mime_type,content,uploaded_by,uploaded_at,active)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(int(party_id),document_type,issue,expiry,notes,file_name,
+                str(item.get("mime_type") or "application/octet-stream") if content else "",content,user_id,utcnow(),active))
             db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
-                (user_id,"attach","party",int(party_id),json.dumps({"document_type":item.get("document_type"),"file_name":file_name}),utcnow()))
+                (user_id,"attach","party",int(party_id),json.dumps({"document_type":document_type,"file_name":file_name,"issue_date":issue,"expiry_date":expiry,"active":bool(active)}),utcnow()))
             return result.lastrowid
+
+    def update_party_document(self,document_id,item,content,user_id):
+        """Change a saved legal document: type, applies tick, issue / expiry dates, notes and (optionally) a new file."""
+        document_type,issue,expiry,notes,active=self._document_fields(item)
+        if content and len(content)>15*1024*1024: raise ValueError("Document cannot exceed 15 MB")
+        with self.connect() as db:
+            row=db.execute("SELECT party_id FROM party_documents WHERE id=?",(int(document_id),)).fetchone()
+            if not row: raise KeyError(document_id)
+            db.execute("UPDATE party_documents SET document_type=?,issue_date=?,expiry_date=?,notes=?,active=? WHERE id=?",
+                (document_type,issue,expiry,notes,active,int(document_id)))
+            if content:
+                db.execute("UPDATE party_documents SET file_name=?,mime_type=?,content=?,uploaded_by=?,uploaded_at=? WHERE id=?",
+                    (str(item.get("file_name") or "document").strip(),str(item.get("mime_type") or "application/octet-stream"),content,user_id,utcnow(),int(document_id)))
+            db.execute("INSERT INTO audit_log(user_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
+                (user_id,"update","party_document",int(document_id),json.dumps({"party_id":row["party_id"],"document_type":document_type,"issue_date":issue,"expiry_date":expiry,"active":bool(active),"new_file":bool(content)}),utcnow()))
+            return int(document_id)
 
     def list_party_documents(self,party_id):
         with self.connect() as db:
-            return [dict(row) for row in db.execute("""SELECT id,party_id,document_type,issue_date,expiry_date,notes,file_name,mime_type,length(content) size,uploaded_at
+            return [dict(row) for row in db.execute("""SELECT id,party_id,document_type,issue_date,expiry_date,notes,file_name,mime_type,length(content) size,uploaded_at,active
                 FROM party_documents WHERE party_id=? ORDER BY id DESC""",(int(party_id),))]
 
     def get_party_document(self,document_id):
@@ -2815,7 +2885,7 @@ class Database:
         with self.connect() as db:
             rows=[dict(row) for row in db.execute("""SELECT d.id,d.party_id,p.name party_name,p.kind party_kind,d.document_type,
                 d.issue_date,d.expiry_date,d.file_name,d.notes FROM party_documents d JOIN parties p ON p.id=d.party_id
-                WHERE d.expiry_date IS NOT NULL AND d.expiry_date<>''""")]
+                WHERE d.expiry_date IS NOT NULL AND d.expiry_date<>'' AND COALESCE(d.active,1)=1""")]  # untick "applies" to stop the alert
         alerts=[]
         for row in rows:
             try: expiry=datetime.strptime(iso_date(row["expiry_date"]),"%Y-%m-%d").date()

@@ -15,7 +15,8 @@ from database import Database, utcnow
 class CompanyManager:
     """Keeps every company/fiscal year in its own SQLite file."""
 
-    def __init__(self, master_database):
+    def __init__(self, master_database, pooled=False):
+        self.pooled=pooled  # the running data service keeps each company file open (faster)
         self.master_path=Path(master_database).resolve()
         self.root=self.master_path.parent/"companies"; self.root.mkdir(parents=True,exist_ok=True)
         self.registry_path=self.root/"companies.json"; self._cache={}
@@ -60,7 +61,7 @@ class CompanyManager:
         if not selected: raise KeyError("Fiscal year not found")
         path=str(Path(selected["database"]).resolve())
         if path not in self._cache:
-            database=Database(path)
+            database=Database(path,pooled=self.pooled)
             safe="".join(ch for ch in company["name"] if ch.isalnum() or ch in " -_&.").strip() or company["id"]
             database.backup_folder=str(self.master_path.parent/"backups"/safe/str(selected["year"])); database.backup_label=f'{safe}_{selected["year"]}'
             # Bring files made by an older version up to date (new tables and columns); existing data is kept.
@@ -133,7 +134,8 @@ class CompanyManager:
         if path==self.master_path.resolve(): raise ValueError("This year uses the main database file and cannot be deleted")
         backup_folder=self.root/company_id/"deleted_years"; backup_folder.mkdir(parents=True,exist_ok=True)
         backup=backup_folder/f"{year}_deleted_{_dt.now():%Y%m%d_%H%M%S}.db"
-        self._cache.pop(str(path),None)
+        cached=self._cache.pop(str(path),None)
+        if cached is not None: cached.release()  # close the open file handle so it can be moved (Windows)
         if path.exists(): shutil.move(str(path),str(backup))
         company["years"]=[y for y in company["years"] if int(y["year"])!=year]
         previous=years[-2]

@@ -83,4 +83,18 @@ class AssetAndDoeTest(unittest.TestCase):
         self.assertEqual(float(after["carrying_lbp"])-float(before["carrying_lbp"]),500)
 
 
+    def test_grouped_doe_voucher_per_currency(self):
+        """Automatic DOE posts one voucher per currency with all its accounts (gains and losses separately)."""
+        saved=self.db.save_journal_voucher({"entry_date":"30-09-2024","description":"DOE USD","currency":"LBP","voucher_type":"07"},
+            [{"account_code":"4011","debit":"300"},{"account_code":"4111","credit":"200"},
+             {"account_code":"775100000","credit":"300"},{"account_code":"675100000","debit":"200"}],1)
+        self.assertEqual(saved["voucher"]["voucher_type"],"07")
+        with self.assertRaisesRegex(ValueError,"class 4 or 5"):
+            self.db.save_journal_voucher({"entry_date":"30-09-2024","description":"DOE","currency":"LBP","voucher_type":"07"},
+                [{"account_code":"4011","debit":"100"},{"account_code":"6011","debit":"50"},{"account_code":"775100000","credit":"150"}],1)
+        with self.assertRaisesRegex(ValueError,"gains credit"):
+            self.db.save_journal_voucher({"entry_date":"30-09-2024","description":"DOE","currency":"LBP","voucher_type":"07"},
+                [{"account_code":"4011","credit":"100"},{"account_code":"4111","credit":"100"},{"account_code":"775100000","debit":"200"}],1)
+
+
 if __name__=="__main__": unittest.main()

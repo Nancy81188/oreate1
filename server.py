@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import os
 import secrets
+import socket
 import ssl
 import base64
 import json
+import traceback
 import sqlite3
 import tempfile
 from contextlib import closing
@@ -29,8 +31,19 @@ class ApiHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print(f"[Saber API] {self.address_string()} {fmt % args}")
 
+    # HTTP/1.1 lets the desktop program keep one connection open and reuse it for every
+    # request, instead of opening a new TCP connection (and a new server thread) each time.
+    protocol_version = "HTTP/1.1"
+
+    def setup(self):
+        super().setup()
+        # Send each small answer at once (no Nagle / delayed-ACK wait on a kept-open connection).
+        try: self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except (OSError, AttributeError): pass
+
     def _json(self, status, body):
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        self._responded = True
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
@@ -38,8 +51,11 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _body(self):
-        length = int(self.headers.get("Content-Length", 0))
-        return json.loads(self.rfile.read(length) or b"{}")
+        raw = getattr(self, "_raw_body", None)
+        if raw is None:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            raw = self.rfile.read(length) if length > 0 else b""; self._raw_body = raw
+        return json.loads(raw or b"{}")
 
     def _user(self):
         auth = self.headers.get("Authorization", "")
@@ -625,7 +641,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             return self._json(200,{"case":result})
         if path.startswith("/api/parties/") and path.endswith("/documents"):
             try:
-                raw=base64.b64decode(body.get("content","").encode("ascii"),validate=True)
+                raw=base64.b64decode((body.get("content") or "").encode("ascii"),validate=True)
                 document_id=self.db.add_party_document(int(path.split("/")[-2]),body,raw,user["id"])
             except Exception as exc: return self._json(400,{"error":str(exc)})
             return self._json(201,{"document_id":document_id})
@@ -727,6 +743,12 @@ class ApiHandler(BaseHTTPRequestHandler):
             return self._json(423,{"error":"This fiscal year is closed and read-only"})
         if user["role"] == "viewer":
             return self._json(403,{"error":"Viewer access is read-only"})
+        if path.startswith("/api/party-documents/"):
+            try:
+                body=self._body(); raw=base64.b64decode((body.get("content") or "").encode("ascii"),validate=True)
+                return self._json(200,{"document_id":self.db.update_party_document(int(path.rsplit("/",1)[-1]),body,raw,user["id"])})
+            except KeyError: return self._json(404,{"error":"Party document not found"})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
         if path.startswith("/api/fixed-assets/"):
             try: return self._json(200,{"asset":fixed_assets.save_asset(self.db,self._body(),int(path.rsplit("/",1)[-1]),user["id"])})
             except KeyError: return self._json(404,{"error":"Asset not found"})
@@ -792,14 +814,39 @@ class ApiHandler(BaseHTTPRequestHandler):
         except Exception as exc: return self._json(400,{"error":str(exc)})
         return self._json(200,result)
 
+def _keep_alive_safe(method):
+    """Read the whole request body first and always answer, so a kept-open connection stays in step."""
+    def handle(self):
+        self._responded = False
+        try: length = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError: length = 0
+        self._raw_body = self.rfile.read(length) if length > 0 else b""
+        try:
+            method(self)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True; return
+        except Exception as exc:
+            traceback.print_exc()
+            if self._responded: self.close_connection = True; return
+            try: self._json(500, {"error": f"The data service could not complete the request: {exc}"})
+            except Exception: self.close_connection = True
+            return
+        if not self._responded:
+            self._json(500, {"error": "The data service did not answer this request"})
+    handle.__name__ = method.__name__; handle.__doc__ = method.__doc__
+    return handle
+
+for _verb in ("do_GET", "do_POST", "do_PUT", "do_DELETE"):
+    setattr(ApiHandler, _verb, _keep_alive_safe(getattr(ApiHandler, _verb)))
+
 def run_server(host="127.0.0.1", port=8765, database="saber_accounting.db", admin_password=None, tls_cert=None, tls_key=None, allow_insecure_lan=False):
     if bool(tls_cert)!=bool(tls_key): raise ValueError("Provide both TLS certificate and private key")
     if host not in ("127.0.0.1","localhost","::1") and not tls_cert and not allow_insecure_lan:
         raise ValueError("Shared network access requires --tls-cert and --tls-key (or explicit --allow-insecure-lan for a trusted VPN)")
     admin_password = admin_password or os.environ.get("SABER_ADMIN_PASSWORD") or secrets.token_urlsafe(12)
-    db = Database(database)
+    db = Database(database, pooled=True)
     db.initialize(admin_password)
-    ApiHandler.db = db; ApiHandler.master_db=db; ApiHandler.company_manager=CompanyManager(database)
+    ApiHandler.db = db; ApiHandler.master_db=db; ApiHandler.company_manager=CompanyManager(database, pooled=True)
     server = ThreadingHTTPServer((host, port), ApiHandler)
     if tls_cert:
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

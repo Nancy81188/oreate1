@@ -7,7 +7,7 @@ import tempfile
 import tkinter as tk
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, ttk
 
 from report_export import export_sections_pdf
 
@@ -59,6 +59,24 @@ class EditableSheet:
         self.tree.tag_configure("odd", background="#fbf3e4")
         self.tree.bind("<Double-1>", self._clicked); self.tree.bind("<Return>", lambda _e: self.edit(self.tree.focus(), self.editable[0]))
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self.on_select(self.selected()) if self.on_select else None)
+        self.tree.bind("<Button-3>", self._right_clicked)  # right-click a cell: open the search for that cell
+
+    def _right_clicked(self, event):
+        """Right-click on the account cell opens the account search; on an item sheet the item search."""
+        iid = self.tree.identify_row(event.y); column = self.tree.identify_column(event.x)
+        if not iid: return
+        self.tree.focus(iid); self.tree.selection_set(iid); self.tree.focus_set()
+        visible = self.tree["displaycolumns"]
+        keys = [c[0] for c in self.columns] if visible == ("#all",) else list(visible)
+        try: key = keys[int(column.lstrip("#")) - 1]
+        except (ValueError, IndexError): key = None
+        if key and key == self.lookup_column:
+            variable = tk.StringVar(value=str(self.rows.get(iid, {}).get(key, "") or ""))
+            def chosen(*_args):
+                if variable.get() and iid in self.rows and self.on_change(iid, key, variable.get().split(" - ", 1)[0].strip()) is not False: self.refresh(iid)
+            variable.trace_add("write", chosen); self.app.open_account_lookup(variable); return "break"
+        action = getattr(self.tree, "_f2", None)
+        if action: action(); return "break"
 
     def clear(self):
         self.tree.delete(*self.tree.get_children()); self.rows = {}
@@ -154,7 +172,6 @@ class BrainsScreensMixin:
             tk.Button(bar, text=text, command=lambda s=step: self.navigate_voucher(s), bg=GOLD, fg=NAVY, border=0, width=3, font=("Segoe UI", 9, "bold")).pack(side="left", padx=2, pady=4)
         tk.Button(bar, text="New", command=self.new_manual_voucher, bg="white", fg=NAVY, border=0, padx=12).pack(side="left", padx=(12, 2), pady=4)
         tk.Button(bar, text="Save", command=self.save_manual_invoice, bg=GOLD, fg=NAVY, border=0, padx=14, font=("Segoe UI", 9, "bold")).pack(side="left", padx=2, pady=4)
-        tk.Button(bar, text="Calculate DOE", command=self.prepare_doe, bg="white", fg=NAVY, border=0, padx=8).pack(side="left", padx=2, pady=4)
         tk.Button(bar, text="Automatic DOE", command=self.show_doe_page, bg=GOLD, fg=NAVY, border=0, padx=8).pack(side="left", padx=2, pady=4)
         tk.Button(bar, text="Delete", command=self.delete_current_voucher, bg=RED, fg="white", border=0, padx=12).pack(side="left", padx=2, pady=4)
         self.action_button(bar,"Add Line",self.add_manual_item).pack(side="left",padx=(14,2),pady=4)
@@ -479,133 +496,106 @@ class BrainsScreensMixin:
         self.update_manual_totals(); self.manual_line_info.config(text=f"Voucher {voucher['entry_number']} opened")
 
     def show_doe_page(self):
-        """Review foreign class 4/5 balances and post one auditable DOE per account."""
-        page=tk.Toplevel(self); page.title("DOE - Automatic Exchange Difference"); page.geometry("1120x570")
+        """Automatic DOE for ALL currencies at once: review every foreign-currency class 4/5 balance and
+        post ONE auditable DOE voucher per currency (a USD voucher, a EUR voucher, ...) with all its accounts."""
+        page=tk.Toplevel(self); page.title("DOE - Automatic Exchange Difference (all currencies)"); page.geometry("1180x620")
         page.configure(bg=LIGHT); page.transient(self)
-        date=tk.StringVar(value=self.manual_date.get()); currency=tk.StringVar(value="USD"); rate=tk.StringVar()
-        bar=tk.Frame(page,bg=LIGHT); bar.pack(fill="x",padx=10,pady=10)
+        date=tk.StringVar(value=self.manual_date.get())
+        bar=tk.Frame(page,bg=LIGHT); bar.pack(fill="x",padx=10,pady=(10,4))
         tk.Label(bar,text="DOE posting date",bg=LIGHT).pack(side="left")
         tk.Entry(bar,textvariable=date,width=12).pack(side="left",padx=(4,12))
-        tk.Label(bar,text="Currency",bg=LIGHT).pack(side="left")
-        currency_box=ttk.Combobox(bar,textvariable=currency,values=[c for c in self.currency_codes if c!="LBP"],state="readonly",width=7)
-        currency_box.pack(side="left",padx=(4,12))
-        tk.Label(bar,text="LBP per 1 currency unit",bg=LIGHT).pack(side="left")
-        tk.Entry(bar,textvariable=rate,width=16).pack(side="left",padx=(4,12))
-        info=tk.Label(page,text="Load balances, review the date rate, then preview the DOE vouchers.",bg=LIGHT,fg=NAVY,anchor="w"); info.pack(fill="x",padx=10)
-        columns=("account","name","foreign","carrying","target","difference","offset")
+        rates_bar=tk.Frame(page,bg=LIGHT); rates_bar.pack(fill="x",padx=10,pady=(0,4))
+        info=tk.Label(page,text="Load balances, review the DOE date rate of each currency, then Preview.",bg=LIGHT,fg=NAVY,anchor="w"); info.pack(fill="x",padx=10)
+        columns=("currency","account","name","foreign","carrying","target","difference","offset")
         tree=ttk.Treeview(page,columns=columns,show="headings",selectmode="extended")
-        for key,label,width in (("account","Class 4/5 account",135),("name","Account name",225),("foreign","Foreign balance",145),
-                                ("carrying","Carrying LBP",145),("target","DOE date LBP",145),("difference","Difference LBP",145),("offset","Gain / Loss A/C",140)):
+        for key,label,width in (("currency","Currency",70),("account","Class 4/5 account",130),("name","Account name",220),("foreign","Foreign balance",140),
+                                ("carrying","Carrying LBP",140),("target","DOE date LBP",140),("difference","Difference LBP",140),("offset","Gain / Loss A/C",120)):
             tree.heading(key,text=label); tree.column(key,width=width,stretch=key=="name")
         tree.pack(fill="both",expand=True,padx=10,pady=6)
-        state={"candidates":[],"preview":{},"date":None}
+        state={"candidates":[],"preview":{},"date":None,"rates":{},"rate_vars":{}}
+
+        def read_rates():
+            rates={}
+            for code,variable in state["rate_vars"].items():
+                value=Decimal(variable.get().strip().replace(",",""))
+                if not value.is_finite() or value<=0: raise ValueError(f"Enter a positive DOE date rate for {code}")
+                rates[code]=value
+            return rates
 
         def load():
             try:
                 day=datetime.strptime(date.get().strip(),"%d-%m-%Y").strftime("%d-%m-%Y")
                 result=self.client.doe_candidates(day)
             except Exception as exc: return messagebox.showerror("DOE",str(exc),parent=page)
-            state.update(candidates=[r for r in result["items"] if r["currency"]==currency.get()],preview={},date=day)
-            suggested=next((r["suggested_rate"] for r in state["candidates"]),None)
-            if suggested: rate.set(str(suggested))
+            state.update(candidates=[r for r in result["items"] if r["currency"]!="LBP"],preview={},date=day,rates={},rate_vars={})
+            for child in rates_bar.winfo_children(): child.destroy()
+            tk.Label(rates_bar,text="LBP per 1 unit on the DOE date:",bg=LIGHT,font=("Segoe UI",9,"bold")).pack(side="left",padx=(0,8))
+            for code in sorted({r["currency"] for r in state["candidates"]},key=lambda c:(c!="USD",c)):
+                suggested=next((r["suggested_rate"] for r in state["candidates"] if r["currency"]==code),"")
+                variable=tk.StringVar(value=str(suggested or "")); state["rate_vars"][code]=variable
+                tk.Label(rates_bar,text=code,bg=LIGHT).pack(side="left"); tk.Entry(rates_bar,textvariable=variable,width=12).pack(side="left",padx=(4,12))
             tree.delete(*tree.get_children())
             skipped=result.get("skipped_accounts") or []
-            info.config(text=f'{len(state["candidates"])} foreign account(s) in class 4/5. ' +
-                (f"Mixed-currency accounts omitted for manual review: {', '.join(skipped)}." if skipped else "Enter the DOE date rate, then Preview."))
-        currency_box.bind("<<ComboboxSelected>>",lambda _event:load())
+            currencies=", ".join(state["rate_vars"]) or "none"
+            info.config(text=f'{len(state["candidates"])} foreign-currency account(s) in class 4/5 ({currencies}). ' +
+                (f"Mixed-currency accounts omitted for manual review: {', '.join(skipped)}." if skipped else "Check the rates, then Preview."))
 
         def preview():
             if state["date"]!=date.get().strip(): return messagebox.showwarning("DOE","Load balances after changing the DOE date",parent=page)
-            try:
-                selected_rate=Decimal(rate.get().strip().replace(",",""))
-                if not selected_rate.is_finite() or selected_rate<=0: raise ValueError("Enter a positive DOE date rate")
-            except (InvalidOperation,ValueError) as exc: return messagebox.showwarning("DOE",str(exc),parent=page)
-            tree.delete(*tree.get_children()); state["preview"]={}
+            try: rates=read_rates()
+            except (InvalidOperation,ValueError) as exc: return messagebox.showwarning("DOE",str(exc) if isinstance(exc,ValueError) and str(exc) else "Enter the DOE date rates as numbers",parent=page)
+            tree.delete(*tree.get_children()); state["preview"]={}; state["rates"]=rates
             for row in state["candidates"]:
-                balance=Decimal(row["balance"]); carrying=Decimal(row["carrying_lbp"])
-                target=(balance*selected_rate).quantize(Decimal("0.01"))
-                difference=target-carrying
+                code_currency=row["currency"]; balance=Decimal(row["balance"]); carrying=Decimal(row["carrying_lbp"])
+                target=(balance*rates[code_currency]).quantize(Decimal("0.01")); difference=target-carrying
                 if not difference: continue
-                offset="775100000" if difference>0 else "675100000"
-                code=row["account"]; state["preview"][code]=(row,difference,selected_rate)
-                tree.insert("","end",iid=code,values=(code,row["name"],f'{balance:,.2f} {currency.get()}',f'{carrying:,.2f}',
-                    f'{target:,.2f}',f'{difference:+,.2f}',offset))
-            tree.selection_set(*tree.get_children())
-            info.config(text=f'{len(state["preview"])} DOE voucher(s) ready for review; positive difference credits 7751, negative debits 6751.')
+                offset="775100000" if difference>0 else "675100000"; key=f'{code_currency}|{row["account"]}'
+                state["preview"][key]=(row,difference)
+                tree.insert("","end",iid=key,values=(code_currency,row["account"],row["name"],f'{balance:,.2f} {code_currency}',f'{carrying:,.2f}',
+                    f'{target:,.2f}',f'{difference:,.2f}',offset))
+            tree.selection_set(tree.get_children())
+            vouchers=len({key.split("|")[0] for key in state["preview"]})
+            info.config(text=f'{len(state["preview"])} account(s) to adjust = {vouchers} DOE voucher(s), one per currency; positive differences credit 7751, negative debit 6751.')
 
         def post():
             selected=list(tree.selection())
             if not selected: return messagebox.showwarning("DOE","Select the accounts to post",parent=page)
             if state["date"]!=date.get().strip(): return messagebox.showwarning("DOE","Preview again after changing the date",parent=page)
             try:
-                if Decimal(rate.get().strip().replace(",",""))!=next(iter(state["preview"].values()))[2]:
-                    return messagebox.showwarning("DOE","Preview again after changing the rate",parent=page)
-            except (InvalidOperation,StopIteration): return messagebox.showwarning("DOE","Preview the vouchers first",parent=page)
-            if not messagebox.askyesno("Post DOE",f"Post {len(selected)} DOE voucher(s) dated {state['date']}?",parent=page): return
-            posted=0
+                if not state["preview"] or read_rates()!=state["rates"]: return messagebox.showwarning("DOE","Preview again after changing a rate",parent=page)
+            except (InvalidOperation,ValueError): return messagebox.showwarning("DOE","Preview the vouchers first",parent=page)
+            by_currency={}
+            for key in selected: by_currency.setdefault(key.split("|")[0],[]).append(key)
+            if not messagebox.askyesno("Post DOE",f"Post {len(by_currency)} DOE voucher(s) ({', '.join(sorted(by_currency))}) dated {state['date']}?",parent=page): return
+            posted=[]
             try:
-                latest={r["account"]:r for r in self.client.doe_candidates(state["date"])["items"] if r["currency"]==currency.get()}
-                for code in selected:
-                    row,difference,selected_rate=state["preview"][code]
-                    current=latest.get(code)
-                    if not current or current["balance"]!=row["balance"] or current["carrying_lbp"]!=row["carrying_lbp"]:
-                        raise ValueError(f"Account {code} changed since the preview. Reload the DOE balances.")
-                    amount=str(abs(difference)); account_side="D" if difference>0 else "C"
-                    offset="775100000" if difference>0 else "675100000"
-                    details=f"DOE {state['date']} {currency.get()} {code}; balance {row['balance']}; carrying LBP {row['carrying_lbp']}; date rate {selected_rate}"
-                    self.client.save_journal_voucher({"entry_date":state["date"],"description":details,"currency":"LBP","voucher_type":"07"},[
-                        {"account_code":code,"line_currency":"LBP","side":account_side,"amount":amount,"rate_lbp":1},
-                        {"account_code":offset,"line_currency":"LBP","side":"C" if difference>0 else "D","amount":amount,"rate_lbp":1}])
-                    posted+=1
-            except Exception as exc: return messagebox.showerror("DOE",f"Posted {posted} voucher(s). Remaining vouchers were not posted: {exc}",parent=page)
+                latest={f'{r["currency"]}|{r["account"]}':r for r in self.client.doe_candidates(state["date"])["items"]}
+                for code_currency in sorted(by_currency,key=lambda c:(c!="USD",c)):
+                    lines=[]; gains=Decimal("0"); losses=Decimal("0"); accounts=[]
+                    for key in by_currency[code_currency]:
+                        row,difference=state["preview"][key]; current=latest.get(key)
+                        if not current or current["balance"]!=row["balance"] or current["carrying_lbp"]!=row["carrying_lbp"]:
+                            raise ValueError(f"Account {row['account']} changed since the preview. Reload the DOE balances.")
+                        lines.append({"account_code":row["account"],"line_currency":"LBP","side":"D" if difference>0 else "C","amount":str(abs(difference)),"rate_lbp":1,
+                                      "description":f"DOE {code_currency} {row['account']}: balance {row['balance']}, carrying LBP {row['carrying_lbp']}"})
+                        if difference>0: gains+=difference
+                        else: losses+=-difference
+                        accounts.append(row["account"])
+                    if gains: lines.append({"account_code":"775100000","line_currency":"LBP","side":"C","amount":str(gains),"rate_lbp":1,"description":f"DOE gain {code_currency}"})
+                    if losses: lines.append({"account_code":"675100000","line_currency":"LBP","side":"D","amount":str(losses),"rate_lbp":1,"description":f"DOE loss {code_currency}"})
+                    details=f"DOE {state['date']} {code_currency} at {state['rates'][code_currency]} LBP; accounts {', '.join(accounts)}"
+                    self.client.save_journal_voucher({"entry_date":state["date"],"description":details,"currency":"LBP","voucher_type":"07"},lines)
+                    posted.append(code_currency)
+            except Exception as exc:
+                self.load_journal(); self.load_trial(); load()
+                return messagebox.showerror("DOE",f"Posted: {', '.join(posted) or 'none'}. Not posted: {exc}",parent=page)
             self.load_journal(); self.load_trial(); load()
-            messagebox.showinfo("DOE",f"Posted {posted} DOE voucher(s) on {state['date']}.",parent=page)
+            messagebox.showinfo("DOE",f"Posted {len(posted)} DOE voucher(s) on {state['date']}: {', '.join(posted)}.",parent=page)
 
-        self.action_button(bar,"Load class 4/5",load).pack(side="left",padx=3)
+        self.action_button(bar,"Load balances",load).pack(side="left",padx=3)
         self.action_button(bar,"Preview",preview).pack(side="left",padx=3)
-        self.action_button(bar,"Post selected DOE",post).pack(side="left",padx=3)
+        self.action_button(bar,"Post DOE vouchers",post).pack(side="left",padx=3)
         load()
-
-    def prepare_doe(self):
-        """Prepare a reviewable LBP revaluation voucher for one class 4/5 balance."""
-        try: date=datetime.strptime(self.manual_date.get().strip(),"%d-%m-%Y").strftime("%d-%m-%Y")
-        except ValueError: return messagebox.showwarning("DOE","Choose the DOE posting date first (DD-MM-YYYY)")
-        account=simpledialog.askstring("DOE","Class 4 or 5 account number:",parent=self)
-        if account is None: return
-        account=account.split(" - ",1)[0].strip()
-        if not account.startswith(("4","5")) or not self.account_by_code(account):
-            return messagebox.showerror("DOE","Choose an existing class 4 or 5 account")
-        side=simpledialog.askstring("DOE","Balance side: D for debit, C for credit:",parent=self)
-        if side is None: return
-        side=side.strip().upper()
-        if side not in ("D","C"): return messagebox.showerror("DOE","Balance side must be D or C")
-        answers=[]
-        for prompt in ("Open foreign currency balance (positive amount):","Carrying rate in LBP per currency unit:","DOE date rate in LBP per currency unit:"):
-            raw=simpledialog.askstring("DOE",prompt,parent=self)
-            if raw is None: return
-            try: value=Decimal(raw.replace(",", "").strip())
-            except InvalidOperation: return messagebox.showerror("DOE","Enter valid numbers for balance and rates")
-            if not value.is_finite() or value<=0: return messagebox.showerror("DOE","Balance and rates must be above zero")
-            answers.append(value)
-        balance,old_rate,new_rate=answers
-        change=(balance*(new_rate-old_rate)).quantize(Decimal("0.01"))
-        if not change: return messagebox.showinfo("DOE","No exchange difference at these rates")
-        gain=(change>0 and side=="D") or (change<0 and side=="C")
-        account_side="D" if change>0 else "C"
-        if side=="C": account_side="C" if change>0 else "D"
-        offset="775100000" if gain else "675100000"
-        offset_side="C" if gain else "D"
-        if self.editing_voucher_id or self.voucher_lines():
-            if not messagebox.askyesno("DOE","Replace the current unsaved voucher lines with this DOE entry?"): return
-        self.editing_voucher_id=None; self.manual_type.set(VOUCHER_TYPES[-1]); self.manual_currency.set("LBP")
-        self.manual_details.delete("1.0","end")
-        self.manual_details.insert("1.0",f"DOE {date}: {account}; foreign balance {balance}; carrying rate {old_rate}; DOE rate {new_rate}")
-        self.voucher_sheet.clear()
-        for code,direction in ((account,account_side),(offset,offset_side)):
-            row=self.new_voucher_line(code); row.update(side=direction,amount=str(abs(change)),line_currency="LBP",rate_lbp=1)
-            self.voucher_sheet.insert(self.recalculate_voucher_line(row))
-        self.set_next_manual_voucher_number(); self.update_manual_totals()
-        self.manual_line_info.config(text=f"DOE prepared for {date}: {abs(change):,.2f} LBP. Review and press Save.")
 
     def save_manual_invoice(self):
         lines = self.voucher_lines(); debit, credit = self.update_manual_totals()

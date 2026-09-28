@@ -1,5 +1,5 @@
 #define MyAppName "Saber Accounting"
-#define MyAppVersion "2.9.16"
+#define MyAppVersion "2.9.18"
 #define MyAppPublisher "Saber for Audit"
 
 [Setup]
@@ -37,8 +37,8 @@ Name: "autobackup"; Description: "Start automatic daily backups with Windows (al
 ; Package the whole folder; SaberAccounting.exe lands at {app}\SaberAccounting.exe.
 Source: "dist\SaberAccounting\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "dist\SaberAccountingBackup.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "assets\Saber_for_Audit_logo.png"; DestDir: "{app}\assets"; Flags: ignoreversion
-Source: "assets\Fonts\Amiri-OFL.txt"; DestDir: "{app}\assets\fonts"; Flags: ignoreversion
+Source: "Assets\Saber_for_Audit_logo.png"; DestDir: "{app}\assets"; Flags: ignoreversion
+Source: "Assets\fonts\Amiri-OFL.txt"; DestDir: "{app}\assets\fonts"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Saber Accounting"; Filename: "{app}\SaberAccounting.exe"

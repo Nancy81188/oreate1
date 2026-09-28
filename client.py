@@ -2,12 +2,25 @@ from __future__ import annotations
 
 import json
 import base64
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+import http.client
+import socket
+import ssl
+import threading
+import time
+from urllib.error import URLError
+from urllib.parse import urlencode, urlsplit
 
 class SessionExpired(RuntimeError):
     """Raised when the server no longer accepts the saved sign-in."""
+
+
+# Reference lists the screens ask for again and again while they are built (the chart of accounts
+# alone was requested ~40 times when a company opened). Their answers are kept for a few seconds
+# and dropped immediately after ANY change the program sends, so what you see is always current.
+CACHED_PATHS = ("/api/accounts", "/api/branches", "/api/currencies", "/api/exchange-rates", "/api/parties",
+                "/api/projects", "/api/departments", "/api/settings", "/api/dimension-settings", "/api/inventory/items",
+                "/api/inventory/warehouses", "/api/inventory/categories", "/api/me")
+CACHE_SECONDS = 10.0
 
 
 class ApiClient:
@@ -17,33 +30,96 @@ class ApiClient:
         self.company_id = None
         self.fiscal_year = None
         self.on_unauthorized = on_unauthorized
+        self._local = threading.local()      # one kept-open connection per thread
+        self._cache = {}; self._cache_lock = threading.Lock()
+
+    # ------------------------------------------------------------ connection handling
+    def _connection(self):
+        connection = getattr(self._local, "connection", None)
+        if connection is None:
+            parts = urlsplit(self.base_url)
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise URLError(f"invalid server address {self.base_url}")
+            if parts.scheme == "https":
+                connection = http.client.HTTPSConnection(parts.hostname, parts.port or 443, timeout=60, context=ssl.create_default_context())
+            else:
+                connection = http.client.HTTPConnection(parts.hostname, parts.port or 80, timeout=60)
+            connection.connect()
+            try: connection.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except (OSError, AttributeError): pass
+            self._local.connection = connection; self._local.prefix = parts.path.rstrip("/")
+        return connection
+
+    def _drop_connection(self):
+        connection = getattr(self._local, "connection", None); self._local.connection = None
+        if connection is not None:
+            try: connection.close()
+            except Exception: pass
+
+    def _send(self, method, path, data, headers):
+        """One HTTP exchange on the kept-open connection. A connection the server already closed is
+        reopened once; only a GET is ever repeated after it may have reached the server."""
+        for attempt in (1, 2):
+            sent = False
+            try:
+                connection = self._connection()
+                connection.request(method, self._local.prefix + path, body=data, headers=headers); sent = True
+                response = connection.getresponse(); payload = response.read()
+                if response.getheader("Connection", "").lower() == "close" or response.version == 10: self._drop_connection()
+                return response.status, payload
+            except (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError, BrokenPipeError, http.client.CannotSendRequest, http.client.BadStatusLine) as exc:
+                self._drop_connection()
+                if attempt == 2 or (sent and method != "GET"): raise URLError(exc) from exc
+            except socket.timeout as exc:
+                self._drop_connection(); raise TimeoutError(str(exc)) from exc
+            except OSError as exc:
+                self._drop_connection(); raise URLError(exc) from exc
+
+    def close(self):
+        self._drop_connection()
+
+    def __del__(self):
+        try: self._drop_connection()
+        except Exception: pass
+
+    def clear_cache(self):
+        with self._cache_lock: self._cache.clear()
 
     def request(self, method, path, body=None):
+        cacheable = method == "GET" and path.split("?", 1)[0] in CACHED_PATHS
+        key = (self.token, self.company_id, self.fiscal_year, path)
+        if cacheable:
+            with self._cache_lock: hit = self._cache.get(key)
+            if hit and time.monotonic() - hit[0] < CACHE_SECONDS: return json.loads(hit[1])
+        elif method != "GET":
+            self.clear_cache()  # anything may have changed
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         if self.company_id: headers["X-Company-ID"]=str(self.company_id)
         if self.fiscal_year: headers["X-Fiscal-Year"]=str(self.fiscal_year)
-        request = Request(self.base_url + path, data=data, headers=headers, method=method)
         try:
-            with urlopen(request, timeout=60) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            try: message = json.loads(exc.read().decode("utf-8")).get("error", str(exc))
-            except Exception: message = f"The server returned an error ({exc.code}). Please try again."
-            if exc.code == 401 and path != "/api/login" and self.token:
-                self.token = None
-                if self.on_unauthorized:
-                    try: self.on_unauthorized()
-                    except Exception: pass
-                raise SessionExpired("Your session has ended. Please sign in again.") from exc
-            raise RuntimeError(message) from exc
+            status, payload = self._send(method, path, data, headers)
         except URLError as exc:
             raise RuntimeError(f"Cannot reach the Saber Accounting data service at {self.base_url}. "
                                "Check that the server computer is on and the address is correct.") from exc
         except TimeoutError as exc:
             raise RuntimeError("The data service took too long to answer. Please try again.") from exc
+        if status >= 400:
+            try: message = json.loads(payload.decode("utf-8")).get("error", f"HTTP Error {status}")
+            except Exception: message = f"The server returned an error ({status}). Please try again."
+            if status == 401 and path != "/api/login" and self.token:
+                self.token = None; self.clear_cache()
+                if self.on_unauthorized:
+                    try: self.on_unauthorized()
+                    except Exception: pass
+                raise SessionExpired("Your session has ended. Please sign in again.")
+            raise RuntimeError(message)
+        result = json.loads(payload.decode("utf-8"))
+        if cacheable:
+            with self._cache_lock: self._cache[key] = (time.monotonic(), payload)
+        return result
 
     def login(self, username, password):
         result = self.request("POST", "/api/login", {"username": username, "password": password})
@@ -119,8 +195,10 @@ class ApiClient:
     def download_case_attachment(self,attachment_id):
         result=self.request("GET",f"/api/case-attachments/{attachment_id}"); result["content"]=base64.b64decode(result["content"]); return result
     def party_documents(self,party_id): return self.request("GET",f"/api/parties/{party_id}/documents")["items"]
-    def upload_party_document(self,party_id,item,content):
-        return self.request("POST",f"/api/parties/{party_id}/documents",{**item,"content":base64.b64encode(content).decode("ascii")})
+    def upload_party_document(self,party_id,item,content=b""):
+        return self.request("POST",f"/api/parties/{party_id}/documents",{**item,"content":base64.b64encode(content or b"").decode("ascii")})
+    def update_party_document(self,document_id,item,content=b""):
+        return self.request("PUT",f"/api/party-documents/{document_id}",{**item,"content":base64.b64encode(content or b"").decode("ascii")})
     def download_party_document(self,document_id):
         result=self.request("GET",f"/api/party-documents/{document_id}"); result["content"]=base64.b64decode(result["content"]); return result
     def profit_loss(self, from_date=None, to_date=None, currency=None):

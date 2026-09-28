@@ -128,15 +128,6 @@ class InventoryMixin:
         item = next(i for i in self.inventory_rows if str(i["id"]) == selected[0])
         self.ir_report.set("Stock Card"); self.ir_item.set(f'{item["sku"]} - {item["name"]}'); self.ir_item_to.set("")
         self.inventory_report_selected()
-        analysis_bar = tk.Frame(page, bg=LIGHT); self.ir_analysis_bar = analysis_bar
-        self.ir_3d_rows = tk.StringVar(value="Item"); self.ir_3d_columns = tk.StringVar(value="Warehouse"); self.ir_3d_measure = tk.StringVar(value="Quantity")
-        tk.Label(analysis_bar, text="3D rows", bg=LIGHT).pack(side="left")
-        ttk.Combobox(analysis_bar, textvariable=self.ir_3d_rows, values=["Item", "Category", "Supplier"], state="readonly", width=13).pack(side="left", padx=(4, 12))
-        tk.Label(analysis_bar, text="columns", bg=LIGHT).pack(side="left")
-        ttk.Combobox(analysis_bar, textvariable=self.ir_3d_columns, values=["Warehouse", "Month"], state="readonly", width=13).pack(side="left", padx=(4, 12))
-        tk.Label(analysis_bar, text="measure", bg=LIGHT).pack(side="left")
-        ttk.Combobox(analysis_bar, textvariable=self.ir_3d_measure, values=["Quantity", "Value"], state="readonly", width=12).pack(side="left", padx=(4, 12))
-        tk.Label(analysis_bar, text="Warehouse: stock at To date  |  Month: net movement during From / To", bg=LIGHT, fg=MUTED).pack(side="left")
         self.inventory_notebook_select("Inventory Reports"); self.run_inventory_report()
 
     def inventory_notebook_select(self, name):
@@ -339,6 +330,17 @@ class InventoryMixin:
         tk.Button(bar2, text="Show", command=self.run_inventory_report, bg=GOLD, fg=NAVY, border=0, padx=18, pady=6, font=("Segoe UI", 9, "bold")).pack(side="left", padx=6)
         for text, fmt in (("Print", "print"), ("Excel", "xlsx"), ("PDF", "pdf")): self.action_button(bar2, text, lambda f=fmt: self.export_inventory_report(f)).pack(side="left", padx=2)
         self.ir_info = tk.Label(page, text="", bg=LIGHT, fg=NAVY, anchor="w"); self.ir_info.pack(fill="x", padx=10)
+        # Inventory Analysis (3D) options: shown only when that report is selected.
+        analysis_bar = tk.Frame(page, bg=LIGHT); self.ir_analysis_bar = analysis_bar
+        self.ir_3d_rows = tk.StringVar(value="Item"); self.ir_3d_columns = tk.StringVar(value="Warehouse"); self.ir_3d_measure = tk.StringVar(value="Quantity")
+        tk.Label(analysis_bar, text="3D rows", bg=LIGHT).pack(side="left")
+        ttk.Combobox(analysis_bar, textvariable=self.ir_3d_rows, values=["Item", "Category", "Supplier"], state="readonly", width=13).pack(side="left", padx=(4, 12))
+        tk.Label(analysis_bar, text="columns", bg=LIGHT).pack(side="left")
+        ttk.Combobox(analysis_bar, textvariable=self.ir_3d_columns, values=["Warehouse", "Month"], state="readonly", width=13).pack(side="left", padx=(4, 12))
+        tk.Label(analysis_bar, text="measure", bg=LIGHT).pack(side="left")
+        ttk.Combobox(analysis_bar, textvariable=self.ir_3d_measure, values=["Quantity", "Value"], state="readonly", width=12).pack(side="left", padx=(4, 12))
+        tk.Label(analysis_bar, text="Warehouse: stock at To date  |  Month: net movement during From / To", bg=LIGHT, fg=MUTED).pack(side="left")
+        self.inventory_report_selected()
         self.ir_viewer = self.report_viewer(page)
 
     def filter_report_items(self, event=None, box=None, variable=None):

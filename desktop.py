@@ -14,7 +14,6 @@ from tkinter import filedialog, messagebox, ttk
 
 from client import ApiClient
 from i18n import tr
-from importer import read_invoices
 from report_export import export_excel, export_invoice_pdf, export_pdf, print_rows
 from desktop_final import FinalFeaturesMixin
 from desktop_brains import BrainsScreensMixin
@@ -84,7 +83,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.16")
+        self.title("Saber Accounting 2.9.18")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -133,6 +132,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.active_account_variable=None
         self._style()
         self.bind_all("<F2>",self.open_active_account_lookup)
+        self.install_mouse_wheel(); self.install_field_right_click()
         self.bind_all("<Control-f>",self.focus_page_search); self.bind_all("<Control-F>",self.focus_page_search)
         self.login_screen()
 
@@ -171,6 +171,128 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
                     widget.configure(background=widget._saber_bg)  # only undo our own highlight
             except Exception: pass
         self.bind_class("Button", "<Enter>", lambda e: hover(e, True), add="+"); self.bind_class("Button", "<Leave>", lambda e: hover(e, False), add="+")
+
+    # ------------------------------------------------------------ mouse wheel scrolling
+    def install_mouse_wheel(self):
+        """One wheel handler for the whole program: it scrolls whatever is under the mouse pointer.
+        Tables, lists and text boxes scroll themselves; everywhere else the page scrolls. A drop-down
+        list under the pointer no longer changes its value by accident, the page scrolls instead."""
+        def steps(event):
+            if getattr(event, "num", None) == 4: return -1
+            if getattr(event, "num", None) == 5: return 1
+            delta = getattr(event, "delta", 0) or 0
+            if not delta: return 0
+            return -int(delta / 120) if abs(delta) >= 120 else (-1 if delta > 0 else 1)
+        def scrolls_itself(widget, horizontal):
+            try:
+                if widget.winfo_class() not in ("Treeview", "Text", "Listbox"): return False
+                first, last = (widget.xview() if horizontal else widget.yview())
+                return float(first) > 0.0 or float(last) < 1.0
+            except Exception: return False
+        def scroll_page(event, skip_self_scrolling=True):
+            amount = steps(event)
+            if not amount: return
+            horizontal = bool(getattr(event, "state", 0) & 0x0001)  # Shift + wheel scrolls sideways
+            try: widget = self.winfo_containing(event.x_root, event.y_root)
+            except Exception: widget = None
+            while widget is not None:
+                if skip_self_scrolling and scrolls_itself(widget, horizontal): return  # its own binding scrolled it
+                if getattr(widget, "_saber_scroll_page", False):
+                    try:
+                        view = widget.xview() if horizontal else widget.yview()
+                        if float(view[0]) > 0.0 or float(view[1]) < 1.0:
+                            (widget.xview_scroll if horizontal else widget.yview_scroll)(amount, "units")
+                    except tk.TclError: pass
+                    return "break"
+                widget = getattr(widget, "master", None)
+        self._scroll_page_under_pointer = scroll_page
+        for sequence in ("<MouseWheel>", "<Shift-MouseWheel>", "<Button-4>", "<Button-5>", "<Shift-Button-4>", "<Shift-Button-5>"):
+            self.bind_all(sequence, scroll_page, add="+")
+            self.bind_class("TCombobox", sequence, lambda event: (scroll_page(event, False), "break")[1])
+
+    def register_scroll_page(self, canvas):
+        canvas._saber_scroll_page = True; return canvas
+
+    # ------------------------------------------------------------ right-click search in any field
+    def install_field_right_click(self):
+        """Right-click inside a field opens the search that belongs to it (F2 does the same):
+        account fields list the saved accounts, customer / supplier fields the saved parties, item
+        cells the saved items. Other fields get a small menu to search accounts, parties or items
+        and put the choice in the field, plus Cut / Copy / Paste."""
+        for widget_class in ("Entry", "TEntry", "TCombobox", "Spinbox"):
+            for sequence in (("<Button-3>", "<Button-2>") if sys.platform == "darwin" else ("<Button-3>",)):
+                self.bind_class(widget_class, sequence, self.field_right_click, add="+")
+
+    def field_right_click(self, event):
+        widget = event.widget
+        try: widget.focus_set()
+        except Exception: pass
+        self.active_account_variable = getattr(widget, "_account_var", self.active_account_variable)
+        # 1) a field that knows its own list (customers / suppliers, items, accounts)
+        node = widget
+        while node is not None:
+            action = getattr(node, "_f2", None)
+            if action: self.after_idle(action); return "break"
+            if getattr(node, "_account_var", None) is not None:
+                variable = node._account_var; self.after_idle(lambda: self.open_account_lookup(variable)); return "break"
+            node = getattr(node, "master", None)
+        # 2) a cell editor or field with its own F2 search (Journal Voucher account cell, ...)
+        try: own_f2 = widget.bind("<F2>")
+        except Exception: own_f2 = ""
+        if own_f2: self.after_idle(lambda: widget.event_generate("<F2>")); return "break"
+        # 3) any other field: offer the searches and the usual editing commands
+        self.field_search_menu(widget, event)
+        return "break"
+
+    def field_search_menu(self, widget, event):
+        try: state = str(widget.cget("state"))
+        except Exception: state = "normal"
+        editable = state not in ("disabled", "readonly")
+        class _FieldValue:
+            def __init__(self, target): self.target = target
+            def get(self):
+                try: return self.target.get()
+                except Exception: return ""
+            def set(self, value):
+                try:
+                    if isinstance(self.target, ttk.Combobox): self.target.set(value); self.target.event_generate("<<ComboboxSelected>>")
+                    else: self.target.delete(0, "end"); self.target.insert(0, value)
+                except Exception: pass
+        target = _FieldValue(widget)
+        menu = tk.Menu(widget, tearoff=0)
+        state_for = lambda allowed: "normal" if allowed else "disabled"
+        menu.add_command(label="Search accounts…  (F2)", state=state_for(editable), command=lambda: self.open_account_lookup(target))
+        menu.add_command(label="Search customers / suppliers…", state=state_for(editable), command=lambda: self.party_search_into(target))
+        if hasattr(self, "item_picker"):
+            menu.add_command(label="Search items…", state=state_for(editable), command=lambda: self.item_picker(lambda sku: target.set(sku)))
+        menu.add_separator()
+        for label, virtual, allowed in (("Cut", "<<Cut>>", editable), ("Copy", "<<Copy>>", True), ("Paste", "<<Paste>>", editable)):
+            menu.add_command(label=label, state=state_for(allowed), command=lambda v=virtual: widget.event_generate(v))
+        def select_all():
+            try: widget.select_range(0, "end"); widget.icursor("end")
+            except Exception: pass
+        menu.add_command(label="Select all", command=select_all)
+        try: menu.tk_popup(event.x_root, event.y_root)
+        finally: menu.grab_release()
+
+    def party_search_into(self, target):
+        """Customers / suppliers search whose choice is written into any field."""
+        try: parties = self.client.parties()
+        except Exception as exc: return messagebox.showerror("Customers / Suppliers", str(exc))
+        window = tk.Toplevel(self); window.title("Customers / Suppliers - Search"); window.geometry("700x420"); window.configure(bg=LIGHT); window.transient(self); window.grab_set()
+        search = tk.StringVar(); entry = tk.Entry(window, textvariable=search, width=40); entry.pack(padx=10, pady=8); entry.focus_set()
+        tree = ttk.Treeview(window, columns=("name", "account", "kind", "currency"), show="headings"); tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        for key, label, width in (("name", "Name", 300), ("account", "Account", 110), ("kind", "Type", 90), ("currency", "Currency", 70)): tree.heading(key, text=label); tree.column(key, width=width)
+        def fill(*_args):
+            tree.delete(*tree.get_children()); text = search.get().casefold()
+            for party in parties:
+                if not text or text in f'{party["name"]} {party.get("account_number") or ""} {party.get("tax_number") or ""}'.casefold():
+                    tree.insert("", "end", iid=str(party["id"]), values=(party["name"], party.get("account_number") or "", party["kind"], party.get("currency") or ""))
+        def choose(_event=None):
+            if not tree.selection(): return
+            party = next(p for p in parties if str(p["id"]) == tree.selection()[0]); window.destroy(); target.set(party["name"])
+        search.trace_add("write", fill); tree.bind("<Double-1>", choose); tree.bind("<Return>", choose)
+        entry.bind("<Return>", lambda _event: (tree.selection_set(tree.get_children()[0]), choose()) if tree.get_children() else None); fill()
 
     def clear(self):
         for child in self.winfo_children(): child.destroy()
@@ -373,7 +495,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
             container=tk.Frame(notebook,bg=LIGHT)
             container.grid_rowconfigure(0,weight=1)
             container.grid_columnconfigure(0,weight=1)
-            canvas=tk.Canvas(container,bg=LIGHT,highlightthickness=0)
+            canvas=tk.Canvas(container,bg=LIGHT,highlightthickness=0); canvas._saber_scroll_page=True  # scrolled by the mouse wheel
             vertical=ttk.Scrollbar(container,orient="vertical",command=canvas.yview)
             horizontal=ttk.Scrollbar(container,orient="horizontal",command=canvas.xview)
             canvas.configure(yscrollcommand=vertical.set,xscrollcommand=horizontal.set)
@@ -1681,39 +1803,88 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.run_business_report()
 
     def party_documents_dialog(self):
+        """Legal documents of a customer / supplier. Tick "Applies" for the documents this party must have,
+        enter the issue / expiry dates and Save: the scanned file is optional and can be attached later.
+        Expiry alerts cover only the documents that apply."""
         selected=self.parties_tree.selection()
         if not selected: return messagebox.showwarning("Legal Documents","Select a customer or supplier first")
         party_id=int(self.parties_tree.item(selected[0],"values")[0]); party_name=self.parties_tree.item(selected[0],"values")[2]
-        window=tk.Toplevel(self); window.title(f"Legal Documents - {party_name}"); window.configure(bg=LIGHT); window.geometry("820x470"); window.transient(self)
-        controls=tk.Frame(window,bg=LIGHT); controls.pack(fill="x",padx=8,pady=8)
-        doc_type=tk.StringVar(value="MOF / VAT Certificate"); issue=tk.StringVar(); expiry=tk.StringVar(); notes=tk.StringVar(); file_path=tk.StringVar()
-        ttk.Combobox(controls,textvariable=doc_type,values=["MOF / VAT Certificate","Commercial Registration","ID / Passport","NSSF Document","Contract","Other"],state="readonly",width=24).pack(side="left",padx=3)
+        window=tk.Toplevel(self); window.title(f"Legal Documents - {party_name}"); window.configure(bg=LIGHT); window.geometry("980x500"); window.transient(self)
+        controls=tk.Frame(window,bg=LIGHT); controls.pack(fill="x",padx=8,pady=(8,2))
+        doc_type=tk.StringVar(value="MOF / VAT Certificate"); issue=tk.StringVar(); expiry=tk.StringVar(); notes=tk.StringVar(); active=tk.BooleanVar(value=True)
+        editing={"id":None}; pending_file={"path":None}
+        tk.Label(controls,text="Document",bg=LIGHT).pack(side="left")
+        ttk.Combobox(controls,textvariable=doc_type,values=["MOF / VAT Certificate","Commercial Registration","ID / Passport","NSSF Document","Contract","Other"],width=24).pack(side="left",padx=3)
+        tk.Checkbutton(controls,text="Applies",variable=active,bg=LIGHT).pack(side="left",padx=(6,6))
         tk.Label(controls,text="Issue",bg=LIGHT).pack(side="left"); self.date_entry(controls,issue,11).pack(side="left",padx=3)
         tk.Label(controls,text="Expiry",bg=LIGHT).pack(side="left"); self.date_entry(controls,expiry,11).pack(side="left",padx=3)
-        tk.Entry(controls,textvariable=notes,width=20).pack(side="left",padx=3)
-        tree=self.table(window,[("type","Document Type",180),("file","File Name",250),("issue","Issue Date",95),("expiry","Expiry Date",95),("size","Size",80),("uploaded","Uploaded",150)])
+        tk.Label(controls,text="Notes",bg=LIGHT).pack(side="left"); tk.Entry(controls,textvariable=notes,width=22).pack(side="left",padx=3)
+        status=tk.Label(window,text="New document: fill in the fields and press Save (attaching a file is optional).",bg=LIGHT,fg=NAVY,anchor="w"); status.pack(fill="x",padx=10)
+        tree=self.table(window,[("type","Document Type",170),("applies","Applies",70),("state","Status",130),("issue","Issue Date",95),("expiry","Expiry Date",95),("file","File",200),("notes","Notes",160)])
         records={}
-        def refresh():
+        def document_state(row):
+            if not row.get("active",1): return "Not applicable"
+            text=str(row.get("expiry_date") or "").strip()
+            if not text: return "Valid (no expiry)"
+            try: remaining=(datetime.strptime(formatted_user_date(text),"%d-%m-%Y").date()-datetime.now().date()).days
+            except ValueError: return "Check expiry date"
+            return "EXPIRED" if remaining<0 else "Expires today" if remaining==0 else f"Expires in {remaining} days" if remaining<=30 else "Valid"
+        def refresh(select_id=None):
             nonlocal records
             try: rows=self.client.party_documents(party_id)
             except Exception as exc: return messagebox.showerror("Legal Documents",str(exc),parent=window)
             records={str(row["id"]):row for row in rows}; tree.delete(*tree.get_children())
-            for row in rows: tree.insert("","end",iid=str(row["id"]),values=(row["document_type"],row["file_name"],row.get("issue_date") or "",row.get("expiry_date") or "",row["size"],row["uploaded_at"]))
-        def upload():
-            path=filedialog.askopenfilename(filetypes=[("Documents","*.pdf *.png *.jpg *.jpeg"),("All files","*.*")])
-            if not path: return
+            for row in rows:
+                tree.insert("","end",iid=str(row["id"]),values=(row["document_type"],"Yes" if row.get("active",1) else "No",document_state(row),row.get("issue_date") or "",
+                    row.get("expiry_date") or "",row["file_name"] or "(no file yet)",row.get("notes") or ""))
+            if select_id and tree.exists(str(select_id)): tree.selection_set(str(select_id))
+        def new_document():
+            editing["id"]=None; pending_file["path"]=None; doc_type.set("MOF / VAT Certificate"); active.set(True); issue.set(""); expiry.set(""); notes.set("")
+            tree.selection_remove(tree.selection()); status.config(text="New document: fill in the fields and press Save (attaching a file is optional).")
+        def selected_changed(_event=None):
+            chosen=tree.selection()
+            if not chosen: return
+            row=records.get(chosen[0])
+            if not row: return
+            editing["id"]=row["id"]; pending_file["path"]=None
+            doc_type.set(row["document_type"]); active.set(bool(row.get("active",1))); issue.set(row.get("issue_date") or ""); expiry.set(row.get("expiry_date") or ""); notes.set(row.get("notes") or "")
+            status.config(text=f'Editing: {row["document_type"]}. Change the tick or dates and press Save.')
+        tree.bind("<<TreeviewSelect>>",selected_changed,add="+")
+        def fields():
+            values={"document_type":doc_type.get().strip() or "Other","active":active.get(),"notes":notes.get().strip()}
+            for key,variable,label in (("issue_date",issue,"Issue date"),("expiry_date",expiry,"Expiry date")):
+                text=variable.get().strip()
+                try: values[key]=formatted_user_date(text) if text else ""
+                except ValueError: raise ValueError(f"{label} must be DD-MM-YYYY")
+            return values
+        def file_payload():
+            path=pending_file["path"]
+            if not path: return {},b""
+            return {"file_name":Path(path).name,"mime_type":mimetypes.guess_type(path)[0] or "application/octet-stream"},Path(path).read_bytes()
+        def save():
             try:
-                issue_date=formatted_user_date(issue.get()) if issue.get().strip() else ""; expiry_date=formatted_user_date(expiry.get()) if expiry.get().strip() else ""
-                self.client.upload_party_document(party_id,{"document_type":doc_type.get(),"issue_date":issue_date,"expiry_date":expiry_date,"notes":notes.get(),"file_name":Path(path).name,"mime_type":mimetypes.guess_type(path)[0] or "application/octet-stream"},Path(path).read_bytes())
+                values=fields(); extra,content=file_payload(); values.update(extra)
+                if editing["id"]: document_id=self.client.update_party_document(editing["id"],values,content)["document_id"]
+                else: document_id=self.client.upload_party_document(party_id,values,content)["document_id"]
             except Exception as exc: return messagebox.showerror("Legal Documents",str(exc),parent=window)
-            refresh()
+            editing["id"]=document_id; pending_file["path"]=None; refresh(document_id)
+            status.config(text=f"Saved: {values['document_type']}"+("" if values["active"] else " (not applicable)")+".")
+        def attach():
+            path=filedialog.askopenfilename(parent=window,filetypes=[("Documents","*.pdf *.png *.jpg *.jpeg"),("All files","*.*")])
+            if not path: return
+            pending_file["path"]=path; save()
         def download():
             selected_doc=tree.selection()
             if not selected_doc: return
-            record=records[selected_doc[0]]; path=filedialog.asksaveasfilename(initialfile=record["file_name"])
+            record=records[selected_doc[0]]
+            if not record.get("file_name"): return messagebox.showinfo("Legal Documents","No file is attached to this document yet. Use Attach File.",parent=window)
+            path=filedialog.asksaveasfilename(parent=window,initialfile=record["file_name"])
             if path: Path(path).write_bytes(self.client.download_party_document(record["id"])["content"])
         buttons=tk.Frame(window,bg=LIGHT); buttons.pack(pady=8)
-        self.action_button(buttons,"Upload Legal Document",upload).pack(side="left",padx=4); self.action_button(buttons,"Download Selected",download).pack(side="left",padx=4)
+        self.action_button(buttons,"New",new_document).pack(side="left",padx=4)
+        self.action_button(buttons,"Save",save).pack(side="left",padx=4)
+        self.action_button(buttons,"Attach / Replace File…",attach).pack(side="left",padx=4)
+        self.action_button(buttons,"Download File",download).pack(side="left",padx=4)
         refresh()
 
     def build_payroll(self):
@@ -2751,6 +2922,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         box.bind("<KeyRelease>",search); box.bind("<<ComboboxSelected>>",choose); box.bind("<FocusOut>",choose)
         box.bind("<Button-1>",lambda _event: box.after_idle(lambda: box.event_generate("<Down>")))
         box.bind("<FocusIn>",lambda _event:setattr(self,"active_account_variable",variable))
+        box._account_var=variable  # right-click opens the account search for this field
         return box
 
     def open_active_account_lookup(self,event=None):
