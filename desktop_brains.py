@@ -49,6 +49,9 @@ class EditableSheet:
         frame = tk.Frame(parent, bg=LIGHT); frame.pack(fill="both", expand=True, padx=10, pady=4)
         self.tree = ttk.Treeview(frame, columns=[c[0] for c in columns], show="headings", height=height, selectmode="browse")
         for key, label, width, anchor in columns: self.tree.heading(key, text=label); self.tree.column(key, width=width, anchor=anchor, stretch=key == "account")
+        if any(key in ("department", "project") for key, *_ in columns):
+            app._dimension_sheets.append(self)
+            self.set_dimension_visibility(app.show_dimensions.get())
         yscroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview); xscroll = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
         self.tree.grid(row=0, column=0, sticky="nsew"); yscroll.grid(row=0, column=1, sticky="ns"); xscroll.grid(row=1, column=0, sticky="ew")
@@ -88,13 +91,21 @@ class EditableSheet:
     def _clicked(self, event):
         iid = self.tree.identify_row(event.y); column = self.tree.identify_column(event.x)
         if not iid or not column: return
-        key = self.columns[int(column.lstrip("#")) - 1][0]
+        visible = self.tree["displaycolumns"]
+        keys = [c[0] for c in self.columns] if visible == ("#all",) else list(visible)
+        key = keys[int(column.lstrip("#")) - 1]
         self.edit(iid, key if key in self.editable else self.editable[0])
+
+    def set_dimension_visibility(self, visible):
+        keys = [column[0] for column in self.columns]
+        self.tree.configure(displaycolumns=keys if visible else [key for key in keys if key not in ("department", "project")])
 
     def edit(self, iid, key):
         if not iid or not self.tree.exists(iid) or not self.tree.winfo_ismapped(): return
         index = [c[0] for c in self.columns].index(key); self.tree.see(iid)
-        bbox = self.tree.bbox(iid, f"#{index + 1}")
+        displayed = list(self.tree["displaycolumns"])
+        if key not in displayed: return
+        bbox = self.tree.bbox(iid, f"#{displayed.index(key) + 1}")
         if not bbox: return
         row = self.rows[iid]; value = row.get(key, "")
         editor = tk.Entry(self.tree, justify={"w": "left", "e": "right"}.get(self.columns[index][3], "center"))
@@ -107,11 +118,12 @@ class EditableSheet:
             if self.on_change(iid, key, text) is False: return
             self.refresh(iid)
             if move:
-                position = self.editable.index(key)
-                if position + 1 < len(self.editable): self.app.after(10, lambda: self.edit(iid, self.editable[position + 1]))
+                available = [field for field in self.editable if field in self.tree["displaycolumns"]]
+                position = available.index(key)
+                if position + 1 < len(available): self.app.after(10, lambda: self.edit(iid, available[position + 1]))
                 else:
                     rows = self.tree.get_children(); at = rows.index(iid)
-                    if at + 1 < len(rows): self.app.after(10, lambda: self.edit(rows[at + 1], self.editable[0]))
+                    if at + 1 < len(rows): self.app.after(10, lambda: self.edit(rows[at + 1], available[0]))
         editor.bind("<Return>", lambda _e: commit(True)); editor.bind("<Tab>", lambda _e: (commit(True), "break")[1])
         editor.bind("<FocusOut>", lambda _e: commit(False)); editor.bind("<Escape>", lambda _e: (done.__setitem__("flag", True), editor.destroy()))
         if key == "line_currency":
