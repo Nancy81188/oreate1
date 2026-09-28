@@ -2781,6 +2781,8 @@ class Database:
         worked_days=max(0,(datetime.strptime(active_end,"%Y-%m-%d")-datetime.strptime(active_start,"%Y-%m-%d")).days+1)
         if not worked_days: raise ValueError("Employee did not work in the selected payroll month")
         work_fraction=D(worked_days)/D(month_days)
+        tax_days=max(0,min(int(active_end[-2:]),30)-min(int(active_start[-2:]),30)+1)
+        tax_fraction=D(tax_days)/D(30)
         base_salary=D(str(employee["base_salary"] or 0))
         if worked_days<month_days and money["salary"]==base_salary:
             money["salary"]=(base_salary*work_fraction).quantize(D("0.01"))
@@ -2794,7 +2796,7 @@ class Database:
         if days<0 or days>31: raise ValueError("Transport days must be between 0 and 31")
         exempt_transport_lbp=min(to_lbp(money["transport"]),setting("transport_daily_exempt")*days)
         children=int(employee["children"] or 0)
-        schooling_limit=setting("schooling_annual_exempt")/12 if min(children,int(setting("schooling_max_children","3")))>0 else D("0")
+        schooling_limit=setting("schooling_annual_exempt") if min(children,int(setting("schooling_max_children","3")))>0 else D("0")
         exempt_schooling_lbp=min(to_lbp(money["schooling"]),schooling_limit)
         taxable_transport_lbp=to_lbp(money["transport"])-exempt_transport_lbp; taxable_schooling_lbp=to_lbp(money["schooling"])-exempt_schooling_lbp
         if taxable_transport_lbp>0: notes.append(f"Transport above the exempt {int(setting('transport_daily_exempt')):,} LBP x {days} days is taxed")
@@ -2812,10 +2814,10 @@ class Database:
         if children>int(setting("max_children_deduction","5")): notes.append(f"Family deduction limited to {int(setting('max_children_deduction','5'))} children")
         regular_lbp=to_lbp(money["salary"]+money["overtime"]+money["commission"])+taxable_transport_lbp+taxable_schooling_lbp
         tax=lambda annual: self._progressive_tax(max(D("0"),annual-allowance),brackets)
-        annual_regular=regular_lbp*12/work_fraction
-        regular_tax=tax(annual_regular)*work_fraction/12
+        annual_regular=regular_lbp*12/tax_fraction
+        regular_tax=tax(annual_regular)*tax_fraction/12
         one_off_lbp=to_lbp(money["bonus"]+money["thirteenth_month"])
-        one_off_tax=(tax(annual_regular+one_off_lbp/work_fraction)-tax(annual_regular))*work_fraction
+        one_off_tax=(tax(annual_regular+one_off_lbp/tax_fraction)-tax(annual_regular))*tax_fraction
         retro_tax=D("0"); retro_months=[]
         if money["retro_salary"]:
             start=iso_date(item.get("retro_from") or period,"Retro From"); end=iso_date(item.get("retro_to") or period,"Retro To")
@@ -2843,7 +2845,7 @@ class Database:
         income_tax_lbp=rounded(regular_tax+one_off_tax+retro_tax)
         retro_tax_lbp=min(income_tax_lbp,max(D("0"),retro_tax).quantize(D("0.01")))
         income_tax=from_lbp(income_tax_lbp).quantize(D("0.01")); retro_tax_value=from_lbp(retro_tax_lbp).quantize(D("0.01"))
-        taxable_lbp=max(D("0"),annual_regular-allowance)*work_fraction/12+one_off_lbp
+        taxable_lbp=max(D("0"),annual_regular-allowance)*tax_fraction/12+one_off_lbp
         # NSSF: salary, overtime, commission, bonus and 13th this month; retroactive salary in its own months.
         base_lbp=to_lbp(money["salary"]+money["overtime"]+money["commission"]+money["bonus"]+money["thirteenth_month"])
         def contribution(ceiling_name,rate_name,base,month_settings):
