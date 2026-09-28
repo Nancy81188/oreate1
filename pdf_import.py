@@ -43,7 +43,7 @@ def read_invoice_pdf(path):
             import fitz
             from ai_service import _ocr_page
             with fitz.open(str(path)) as document: text = _ocr_page(document[0])
-    except Exception as exc: return {"file": path.name, "path": str(path), "text": "", "notes": f"The PDF could not be read ({exc}). Enter the details manually."}
+    except Exception as exc: return {"file": path.name, "path": str(path), "text": "", "notes": f"The scanned PDF could not be read ({exc}). Enter the details manually."}
     return _parse_invoice_text(path, text)
 
 
