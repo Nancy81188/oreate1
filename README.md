@@ -1,5 +1,10 @@
 # Saber Accounting MVP
 
+## Version 2.9.6 (Department and Project visibility)
+
+- Security / Backup & Restore has a Show Department / Project checkbox for entry forms, budget and report filters, and the Journal Voucher sheet. Departments and Projects remain available as data sheets in Security for creating and editing their lists.
+- Hiding fields only changes the display; saved department and project data remains intact. Report filters return to All when hidden so an unseen filter cannot narrow the report.
+
 ## Version 2.9.5 (Journal entry and shared-server login protection)
 
 - In Journal Voucher, the first letter selects a currency in the voucher header and the line currency cell. The line detail copies into the next line; editing the next line leaves the first unchanged.
