@@ -2059,6 +2059,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.payroll_result=tk.StringVar(value="Gross: 0 | Tax: 0 | Employee NSSF: 0 | Net: 0")
         tk.Label(form,textvariable=self.payroll_result,bg=LIGHT,fg=NAVY,font=("Segoe UI",10,"bold"),wraplength=1000,justify="left").grid(row=5,column=0,columnspan=8,padx=6,pady=6,sticky="w")
         buttons=tk.Frame(form,bg=LIGHT); buttons.grid(row=0,column=4,columnspan=4,sticky="w",padx=6)
+        self.action_button(buttons,"Schooling Law",self.schooling_law_dialog).pack(side="left",padx=3)
         self.action_button(buttons,"Calculate",self.calculate_payroll).pack(side="left",padx=3)
         tk.Button(buttons,text="Save Payroll",command=self.save_payroll,bg=GOLD,fg=NAVY,border=0,padx=15,pady=7,font=("Segoe UI",9,"bold")).pack(side="left",padx=3)
         payroll_actions=tk.Frame(run,bg=LIGHT); payroll_actions.pack(fill="x",padx=10)
@@ -2066,9 +2067,11 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.payroll_tree=self.table(run,[("number","Payroll No.",135),("period","Period",95),("employee","Employee",190),("currency","Currency",65),
             ("gross","Gross",105),("tax","Tax",95),("nssf","Employee NSSF",110),("net","Net Salary",110),("status","Status",75)])
         self.payroll_setting_vars={key:tk.StringVar() for key in ("date_from","date_to","single_allowance","spouse_allowance","child_allowance","employee_nssf_rate","medical_rate","end_service_rate","family_rate","employee_ceiling","medical_ceiling","family_ceiling","end_service_ceiling","salary_account","salary_payable_account","payroll_tax_account","nssf_payable_account",
-            "max_children_deduction","transport_daily_exempt","default_transport_days","schooling_annual_exempt","schooling_max_children","tax_rounding","minimum_wage","family_allowance_spouse","family_allowance_child","family_allowance_cap","family_allowance_max_children")}
+            "max_children_deduction","transport_daily_exempt","default_transport_days","schooling_annual_exempt","schooling_max_children","schooling_public_child","schooling_public_cap","schooling_private_child","schooling_private_cap","tax_rounding","minimum_wage","family_allowance_spouse","family_allowance_child","family_allowance_cap","family_allowance_max_children")}
         setting_labels=(("date_from","Date From"),("date_to","Date To"),("single_allowance","Single Allowance"),("spouse_allowance","Spouse Allowance"),("child_allowance","Child Allowance"),("employee_nssf_rate","Employee NSSF Rate"),("medical_rate","Employer Medical Rate"),("end_service_rate","End Service Rate"),("family_rate","Family Rate"),("employee_ceiling","Employee NSSF Ceiling"),("medical_ceiling","Medical Ceiling"),("family_ceiling","Family Ceiling"),("end_service_ceiling","End Service Ceiling"),("salary_account","Salary Expense Account"),("salary_payable_account","Salary Payable Account"),("payroll_tax_account","Payroll Tax Account"),("nssf_payable_account","NSSF Payable Account"),
-            ("max_children_deduction","Tax Deduction Children"),("transport_daily_exempt","Transport Exempt / Day"),("default_transport_days","Default Transport Days"),("schooling_annual_exempt","Schooling Exempt / Year"),("schooling_max_children","Schooling Children"),
+            ("max_children_deduction","Tax Deduction Children"),("transport_daily_exempt","Transport Exempt / Day"),("default_transport_days","Default Transport Days"),("schooling_annual_exempt","Schooling Tax Exempt / Year"),("schooling_max_children","Schooling Children"),
+            ("schooling_public_child","Public School / Child"),("schooling_public_cap","Public School Cap"),
+            ("schooling_private_child","Private School / Child"),("schooling_private_cap","Private School Cap"),
             ("tax_rounding","Round Tax Up To"),("minimum_wage","Minimum Wage"),("family_allowance_spouse","Allowance Spouse"),("family_allowance_child","Allowance per Child"),("family_allowance_cap","Allowance Maximum"),("family_allowance_max_children","Allowance Children"))
         for index,(key,label) in enumerate(setting_labels):
             column=(index//10)*2; row=index%10
@@ -2254,6 +2257,47 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         if not self.payroll_employee.get() and self.payroll_employee_map: self.payroll_employee.set(next(iter(self.payroll_employee_map))); self.payroll_employee_chosen()
         self.payroll_tree.delete(*self.payroll_tree.get_children())
         for row in payroll: self.payroll_tree.insert("","end",iid=str(row["id"]),values=(row["payroll_number"],safe_display_date(row["period_date"]),row["full_name"],row["currency"],f'{float(row["gross_salary"]):,.2f}',f'{float(row["income_tax"]):,.2f}',f'{float(row["employee_nssf"]):,.2f}',f'{float(row["net_salary"]):,.2f}',row["status"]))
+
+    def schooling_law_dialog(self):
+        """Calculate the annual schooling grant under the dated public/private rules."""
+        employee=getattr(self,"payroll_employee_map",{}).get(self.payroll_employee.get())
+        if not employee: return messagebox.showwarning("Schooling","Select an employee first")
+        try:
+            period=formatted_user_date(self.payroll_period.get())
+            rules=self.client.payroll_settings(period)
+        except Exception as exc: return messagebox.showerror("Schooling",str(exc))
+        public=tk.StringVar(value="0"); private=tk.StringVar(value="0")
+        window=tk.Toplevel(self); window.title("Annual Schooling Grant"); window.transient(self)
+        window.configure(bg=LIGHT); window.geometry("500x280")
+        tk.Label(window,text=f"Rules from {safe_display_date(rules.get('date_from'))}  |  {employee['full_name']}",
+            bg=LIGHT,fg=NAVY,font=("Segoe UI",10,"bold")).pack(anchor="w",padx=12,pady=10)
+        for label,var in (("Public / free school or Lebanese University children",public),
+                          ("Private school / university children",private)):
+            line=tk.Frame(window,bg=LIGHT); line.pack(fill="x",padx=12,pady=4)
+            tk.Label(line,text=label,bg=LIGHT,width=43,anchor="w").pack(side="left")
+            tk.Entry(line,textvariable=var,width=5).pack(side="left")
+        rates=(Decimal(str(rules.get("schooling_public_child") or 0)),Decimal(str(rules.get("schooling_public_cap") or 0)),
+               Decimal(str(rules.get("schooling_private_child") or 0)),Decimal(str(rules.get("schooling_private_cap") or 0)))
+        tk.Label(window,text=f"Public: {rates[0]:,.0f} / child (cap {rates[1]:,.0f})  |  Private: {rates[2]:,.0f} / child (cap {rates[3]:,.0f}) LBP",
+            bg=LIGHT,fg=NAVY,wraplength=470).pack(anchor="w",padx=12,pady=8)
+        tk.Label(window,text="Annual grant, paid once for the school year. Check supporting documents and prior payments. Tax-exempt amount is a separate setting.",
+            bg=LIGHT,fg="#8B1E1E",wraplength=470,justify="left").pack(anchor="w",padx=12,pady=5)
+        def apply():
+            try:
+                counts=[int(public.get()),int(private.get())]
+                if any(value<0 for value in counts) or sum(counts)>min(3,int(employee.get("children") or 0)):
+                    raise ValueError("Enter up to 3 eligible children, within the employee's recorded child count")
+                if not any(rates): raise ValueError("No schooling grant rule is loaded for this period")
+                amount=min(Decimal(counts[0])*rates[0],rates[1])+min(Decimal(counts[1])*rates[2],rates[3])
+                currency=employee.get("currency") or "LBP"
+                if currency!="LBP":
+                    rate=Decimal(str(self.client.suggested_rates(currency,period)["rate_lbp"]))
+                    if rate<=0: raise ValueError("Set the currency exchange rate first")
+                    amount=(amount/rate).quantize(Decimal("0.01"))
+                self.payroll_vars["schooling"].set(str(amount))
+                window.destroy()
+            except Exception as exc: messagebox.showerror("Schooling",str(exc),parent=window)
+        self.action_button(window,"Use Amount in Payroll",apply).pack(anchor="w",padx=12,pady=8)
 
     def payroll_employee_chosen(self):
         employee=getattr(self,"payroll_employee_map",{}).get(self.payroll_employee.get())
