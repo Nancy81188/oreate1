@@ -1984,8 +1984,8 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.action_button(employee_actions,"New Employee",lambda:self.employee_dialog()).pack(side="left",padx=4)
         self.action_button(employee_actions,"Edit Selected",self.edit_selected_employee).pack(side="left",padx=4)
         self.action_button(employee_actions,"R3 Registration Worksheet",lambda:self.employee_r3_worksheet("preview")).pack(side="left",padx=4)
-        self.action_button(employee_actions,"R3 PDF",lambda:self.employee_r3_worksheet("pdf")).pack(side="left",padx=4)
-        self.action_button(employee_actions,"R3 Excel",lambda:self.employee_r3_worksheet("xlsx")).pack(side="left",padx=4)
+        self.action_button(employee_actions,"R3-1 Worksheet",lambda:self.employee_r3_worksheet("preview","R3-1")).pack(side="left",padx=4)
+        
         self.action_button(employee_actions,"Official R3 Form",lambda:self.download_payroll_form("R3")).pack(side="left",padx=4)
         self.action_button(employee_actions,"Official R3-1 Form",lambda:self.download_payroll_form("R3-1")).pack(side="left",padx=4)
         nssf_forms=tk.Frame(employees,bg=LIGHT); nssf_forms.pack(fill="x",padx=10,pady=(0,5))
@@ -2099,7 +2099,44 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         employee=next((row for row in getattr(self,"employee_rows",[]) if str(row["id"])==str(selected[0])),None)
         if employee: self.employee_dialog(employee)
 
-    def employee_r3_worksheet(self,format_name):
+    def edit_employee_form(self,title,meta,sections,filename):
+        """Review company/employee values and edit the prepared form before export."""
+        dialog=tk.Toplevel(self)
+        dialog.title(title); dialog.geometry("780x680"); dialog.transient(self)
+        canvas=tk.Canvas(dialog,bg=LIGHT,highlightthickness=0)
+        scrollbar=ttk.Scrollbar(dialog,orient="vertical",command=canvas.yview)
+        body=tk.Frame(canvas,bg=LIGHT)
+        body.bind("<Configure>",lambda _event:canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0,0),window=body,anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left",fill="both",expand=True)
+        scrollbar.pack(side="right",fill="y")
+        variables=[]
+        for section in sections:
+            tk.Label(body,text=section["heading"],bg=LIGHT,fg=NAVY,
+                     font=("Segoe UI",11,"bold")).pack(anchor="w",padx=12,pady=(12,5))
+            for label,value in section["rows"]:
+                line=tk.Frame(body,bg=LIGHT); line.pack(fill="x",padx=12,pady=2)
+                tk.Label(line,text=label,bg=LIGHT,width=27,anchor="w").pack(side="left")
+                variable=tk.StringVar(value="" if value=="MISSING" else str(value or ""))
+                tk.Entry(line,textvariable=variable,width=58).pack(side="left",fill="x",expand=True)
+                variables.append((section["heading"],label,variable))
+        actions=tk.Frame(body,bg=LIGHT); actions.pack(fill="x",padx=12,pady=15)
+        def export(kind):
+            prepared=[]
+            for section in sections:
+                rows=[[label,(var.get().strip() or "MISSING")]
+                      for heading,label,var in variables if heading==section["heading"]]
+                prepared.append({**section,"rows":rows})
+            missing=[label for _,label,var in variables if not var.get().strip()]
+            notes=[line for line in meta if not line.startswith("Missing in the company or employee file:")]
+            if missing: notes.append("Missing fields: "+", ".join(missing))
+            self.output_sections(title,notes,prepared,filename,kind)
+        for label,kind in (("Preview","preview"),("Save PDF","pdf"),("Save Excel","xlsx")):
+            self.action_button(actions,label,lambda value=kind:export(value)).pack(side="left",padx=4)
+        self.action_button(actions,"Close",dialog.destroy).pack(side="left",padx=4)
+
+    def employee_r3_worksheet(self,format_name,form="R3"):
         selected=self.employee_tree.selection()
         if not selected: return messagebox.showwarning("R3 Registration","Select an employee first")
         employee=next((row for row in getattr(self,"employee_rows",[]) if str(row["id"])==str(selected[0])),None)
@@ -2118,14 +2155,14 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         missing=[label for (label,key),row in zip(fields,rows) if row[1]=="MISSING"]
         missing+=[label for label,row in zip(("Employer / company","Employer address","Employer phone","MOF / VAT number","NSSF employer number"),employer_rows) if row[1]=="MISSING"]
         meta=[f'Employee ID: {employee["employee_number"]}',
-              "Preparation worksheet only. Complete and submit the Ministry of Finance R3 / R3-1 form separately.",
-              "Official form: https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf",
+              f"Preparation worksheet only. Complete and submit the Ministry of Finance {form} form separately.",
+              "Official form: " + ("https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf" if form=="R3" else "https://www.finance.gov.lb/en-us/Taxation/Na/DASS1/%D8%B13-1.pdf"),
               "Check the official form for other details and supporting documents."]
         if missing: meta.append("Missing in the company or employee file: " + ", ".join(missing))
-        self.output_sections("R3 Employee Registration Worksheet",meta,
+        self.edit_employee_form(f"{form} Employee Registration Worksheet",meta,
             [{"heading":"Employer information","headers":["Field","Value"],"rows":employer_rows,"total_rows":[]},
              {"heading":"Employee information","headers":["Field","Value"],"rows":rows,"total_rows":[]}],
-            f'R3_Worksheet_{employee["employee_number"]}',format_name)
+            f'{form}_Worksheet_{employee["employee_number"]}')
 
     def employee_nssf_declaration(self,kind,format_name):
         titles={"hire":("NSSF Employment Declaration","NSSF Employment Declaration (Estekhdam Ajir) Worksheet | \u0625\u0639\u0644\u0627\u0645 \u0627\u0633\u062a\u062e\u062f\u0627\u0645 \u0623\u062c\u064a\u0631","NSSF-HIRE-NEW","hire_date","Start date"),
@@ -2153,10 +2190,10 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
               "Download the official blank form from the NSSF employee forms buttons."]
         if kind=="leave" and (employee.get("leave_date") in (None,"")): meta.append("No leaving date on file - set it in the employee file before you file the termination.")
         if missing: meta.append("Missing in the company or employee file: " + ", ".join(missing))
-        self.output_sections(title,meta,
+        self.edit_employee_form(title,meta,
             [{"heading":"Employer information","headers":["Field","Value"],"rows":employer_rows,"total_rows":[]},
              {"heading":"Employee information","headers":["Field","Value"],"rows":rows,"total_rows":[]}],
-            f'NSSF_{kind}_Worksheet_{employee["employee_number"]}',format_name)
+            f'NSSF_{kind}_Worksheet_{employee["employee_number"]}')
 
     def download_payroll_form(self,form):
         official={"R3":"https://eservices.finance.gov.lb/Resources/Namazej/DASS1/%D8%B13.pdf",
