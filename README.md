@@ -1,5 +1,9 @@
 # Saber Accounting MVP
 
+## Version 2.9.8 (Employee dates in Payroll)
+
+- Payroll > Employees shows Starting Date and Leaving Date in the employee list, using the dates saved in each employee file. Double-click an employee or use Edit Selected to change them.
+
 ## Version 2.9.7 (Independent Department and Project controls)
 
 - Departments and Projects now each have their own visibility checkbox in their respective Security data sheets. Either field can be hidden independently in entry forms, report filters, and Journal Voucher without deleting saved values. The application title matches the installer version.
