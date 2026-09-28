@@ -51,7 +51,7 @@ class EditableSheet:
         for key, label, width, anchor in columns: self.tree.heading(key, text=label); self.tree.column(key, width=width, anchor=anchor, stretch=key == "account")
         if any(key in ("department", "project") for key, *_ in columns):
             app._dimension_sheets.append(self)
-            self.set_dimension_visibility(app.show_dimensions.get())
+            self.set_dimension_visibility(app.show_department.get(), app.show_project.get())
         yscroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview); xscroll = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
         self.tree.grid(row=0, column=0, sticky="nsew"); yscroll.grid(row=0, column=1, sticky="ns"); xscroll.grid(row=1, column=0, sticky="ew")
@@ -96,9 +96,10 @@ class EditableSheet:
         key = keys[int(column.lstrip("#")) - 1]
         self.edit(iid, key if key in self.editable else self.editable[0])
 
-    def set_dimension_visibility(self, visible):
+    def set_dimension_visibility(self, show_department, show_project):
         keys = [column[0] for column in self.columns]
-        self.tree.configure(displaycolumns=keys if visible else [key for key in keys if key not in ("department", "project")])
+        self.tree.configure(displaycolumns=[key for key in keys if (key != "department" or show_department)
+                             and (key != "project" or show_project)])
 
     def edit(self, iid, key):
         if not iid or not self.tree.exists(iid) or not self.tree.winfo_ismapped(): return
