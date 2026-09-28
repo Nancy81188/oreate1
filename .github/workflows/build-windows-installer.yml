@@ -40,6 +40,15 @@ jobs:
             --hidden-import payroll_reports --hidden-import vat_return --hidden-import desktop_final --hidden-import desktop_brains --hidden-import ledger_reports --hidden-import desktop_dimensions --hidden-import desktop_stage3 --hidden-import ai_mapper --hidden-import ai_service --hidden-import pdf_import --hidden-import pypdf --hidden-import year_end --hidden-import lebanese_payroll --hidden-import inventory --hidden-import fixed_assets --hidden-import desktop_inventory --hidden-import desktop_v22 --hidden-import chart_extra --hidden-import invoice_calc --hidden-import tafqeet --hidden-import business_reports --hidden-import financial_projection --hidden-import financial_statements `
             --name SaberAccounting run_desktop.py
 
+      - name: Verify the application was built
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist\SaberAccounting\SaberAccounting.exe")) {
+            Write-Error "PyInstaller did not produce dist\SaberAccounting\SaberAccounting.exe - check the build step above."
+            exit 1
+          }
+          Write-Host "OK: dist\SaberAccounting\SaberAccounting.exe was produced."
+
       - name: Build background backup service
         continue-on-error: true
         run: |
