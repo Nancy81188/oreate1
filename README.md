@@ -1,5 +1,12 @@
 # Saber Accounting MVP
 
+## Version 2.9.16 (Fix Windows installer build)
+
+- Fixed the Windows installer build failure `Source file "dist\SaberAccounting.exe" does not exist`. The application is now built with PyInstaller `--onedir`, which produces `dist\SaberAccounting\SaberAccounting.exe` inside a folder (not a single `dist\SaberAccounting.exe`). `installer.iss` was still packaging the old single-file path, so Inno Setup could not find the program. The `[Files]` section now packages the whole `dist\SaberAccounting\` folder (recurses subdirectories); `SaberAccounting.exe` still installs to `{app}\SaberAccounting.exe`, so all shortcuts, the uninstaller icon and the post-install "Open" action keep working.
+- Added a "Verify the application was built" CI step so that if PyInstaller ever fails to produce the executable, the build now fails immediately with a clear message at the build step instead of a confusing error later in the Inno Setup step.
+- No application feature or test was changed; this is a packaging/CI fix only.
+- Changed files: `installer.iss`, `.github/workflows/build-windows-installer.yml`, `desktop.py` and this README.
+
 ## Version 2.9.15 (Speed / performance tuning)
 
 - Database performance indexes added on the columns used for filtering and joins (invoices by party/kind/date/branch, invoice items, journal entries by source/date and journal lines by entry/account/party, stock movements, payments and allocations, expenses, payroll records, audit log, budgets and more). Previously only one index existed, so these lookups did full-table scans that got slow as data grew; now they use indexes. This applies automatically to every company database on next start.
