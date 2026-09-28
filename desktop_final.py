@@ -356,14 +356,11 @@ class FinalFeaturesMixin:
     def save_payroll_periods(self):
         rows = sorted(self.periods_sheet.ordered(), key=lambda r: r["date_from"] or "")
         if len({r["date_from"] for r in rows}) != len(rows): return messagebox.showwarning("NSSF periods", "Two periods start on the same date")
+        # All periods are saved together, so Date From / Date To can be changed freely (for example split a period
+        # into 01-05-2025 - 30-06-2025): the whole list is checked for overlaps and gaps before anything is saved.
         try:
-            for row in rows:
-                base = self.client.payroll_settings(_display(row["original_from"] or row["date_from"]))
-                if row.get("original_from") and row["original_from"] != row["date_from"]: self.client.delete_payroll_period(row["original_from"])
-                payload = {**base, **{k: row.get(k) for k, _l, _w in self.PERIOD_FIELDS}}
-                payload["date_from"] = _display(row["date_from"]); payload["date_to"] = _display(row["date_to"]) if row.get("date_to") else ""
-                self.client.save_payroll_settings(payload)
-        except Exception as exc: self.load_payroll_periods(); return messagebox.showerror("NSSF periods", str(exc))
+            self.client.save_payroll_periods([{"original_from": row.get("original_from"), **{k: row.get(k) for k, _l, _w in self.PERIOD_FIELDS}} for row in rows])
+        except Exception as exc: return messagebox.showerror("NSSF periods", f"{exc}\n\nNothing was saved; correct the periods and press Save Periods again.")
         self.load_payroll_periods(); messagebox.showinfo("NSSF periods", f"{len(rows)} period(s) saved. Each payroll uses the ceilings of its own month.")
 
     def load_selected_payroll_period(self):

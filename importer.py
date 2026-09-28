@@ -5,7 +5,12 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import re
 
-from openpyxl import load_workbook
+
+
+def load_workbook(*args, **kwargs):
+    """openpyxl is loaded only when a spreadsheet is actually read (faster program start)."""
+    from openpyxl import load_workbook as _load_workbook
+    return _load_workbook(*args, **kwargs)
 
 VAT_RATE = Decimal("0.11")
 SUPPORTED_CURRENCIES = ("USD", "EUR", "LBP", "AED")

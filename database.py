@@ -420,7 +420,7 @@ class Database:
                                    ("family_allowance_cap","0"),("family_allowance_max_children","5")):
                 if column not in payroll_setting_columns: db.execute(f"ALTER TABLE payroll_settings ADD COLUMN {column} TEXT NOT NULL DEFAULT '{default}'")
             payroll_record_columns={row["name"] for row in db.execute("PRAGMA table_info(payroll_records)")}
-            for column in ("transport_days","exempt_transport","exempt_schooling","family_allowance","regular_tax","one_off_tax","compliance_notes"):
+            for column in ("transport_days","exempt_transport","exempt_schooling","family_allowance","regular_tax","one_off_tax","compliance_notes","director_remuneration"):
                 if column not in payroll_record_columns: db.execute(f"ALTER TABLE payroll_records ADD COLUMN {column} TEXT")
             if "employee_account_map" not in payroll_setting_columns: db.execute("ALTER TABLE payroll_settings ADD COLUMN employee_account_map TEXT NOT NULL DEFAULT '{}'")
             if "manager_account_map" not in payroll_setting_columns: db.execute("ALTER TABLE payroll_settings ADD COLUMN manager_account_map TEXT NOT NULL DEFAULT '{}'")
@@ -1184,7 +1184,9 @@ class Database:
         normalized=[]; total_debit=Decimal("0"); total_credit=Decimal("0")
         voucher_type=str(item.get("voucher_type") or "01").strip()[:2] or "01"
         for index,line in enumerate(lines,1):
-            code=str(line.get("account_code") or "").split(" - ",1)[0].strip(); extra=self._voucher_line_amounts(line,currency,date,index)
+            code=str(line.get("account_code") or "").split(" - ",1)[0].strip()
+            doe_basis=str(item.get("doe_basis") or "").upper() if voucher_type=="07" else ""
+            extra=self._doe_line_amounts(line,code,doe_basis,currency,index) if doe_basis else self._voucher_line_amounts(line,currency,date,index)
             if extra: debit,credit=extra["debit"],extra["credit"]
             else:
                 try: debit=Decimal(str(line.get("debit") or 0)); credit=Decimal(str(line.get("credit") or 0))
@@ -1242,7 +1244,45 @@ class Database:
         if currency=="USD": return {"currency":"USD","rate_lbp":usd_lbp,"rate_usd":Decimal("1")}
         return {"currency":currency,"rate_lbp":self._converted_amount(Decimal("1"),currency,"LBP",day),"rate_usd":self._converted_amount(Decimal("1"),currency,"USD",day)}
 
-    def doe_candidates(self, posting_date):
+    def doe_candidates_usd(self, posting_date):
+        """Class 4/5 balances kept in LBP or another non-USD currency, with their USD equivalent (carrying USD)
+        as of a date, for a DOE in the USD books. USD accounts need no USD DOE and are not listed."""
+        day=iso_date(posting_date)
+        normal="CASE WHEN e.entry_date GLOB '??-??-????' THEN substr(e.entry_date,7,4)||'-'||substr(e.entry_date,4,2)||'-'||substr(e.entry_date,1,2) ELSE e.entry_date END"
+        with self.connect() as db:
+            lines=[dict(row) for row in db.execute(f"""SELECT a.code,a.name_en,e.currency voucher_currency,e.voucher_type,e.source_type,
+                e.entry_date,COALESCE(j.line_currency,e.currency) line_currency,j.amount,j.amount_usd,j.debit,j.credit
+                FROM journal_lines j JOIN journal_entries e ON e.id=j.entry_id JOIN accounts a ON a.id=j.account_id
+                LEFT JOIN invoices i ON e.source_type='invoice' AND i.id=e.source_id
+                WHERE (a.code LIKE '4%' OR a.code LIKE '5%') AND {normal}<=?
+                AND (e.source_type!='invoice' OR i.status='posted') ORDER BY a.code,e.id,j.id""",(day,))]
+        accounts={}
+        for line in lines:
+            code=line["code"]; item=accounts.setdefault(code,{"name":line["name_en"],"currencies":set(),"balance":Decimal("0"),"carrying_usd":Decimal("0")})
+            signed=Decimal("1") if Decimal(str(line["debit"] or 0))>0 else Decimal("-1")
+            doe=line["source_type"]=="journal_voucher" and line["voucher_type"]=="07"
+            native=Decimal(str(line["amount"] or 0)) if line["amount"] not in (None,"") else abs(Decimal(str(line["debit"] or 0))-Decimal(str(line["credit"] or 0)))
+            if line["amount_usd"] not in (None,""): usd=Decimal(str(line["amount_usd"]))
+            elif line["voucher_currency"]=="USD": usd=abs(Decimal(str(line["debit"] or 0))-Decimal(str(line["credit"] or 0)))
+            else: usd=self._converted_amount(native,line["line_currency"],"USD",line["entry_date"]) if native else Decimal("0")
+            item["carrying_usd"]+=signed*usd
+            if doe: continue  # DOE lines only move equivalents, never the account's own balance
+            if native<=0: continue
+            item["currencies"].add(line["line_currency"]); item["balance"]+=signed*native
+        results=[]; skipped=[]; rates={}
+        for code,item in sorted(accounts.items()):
+            if len(item["currencies"])!=1:
+                if len(item["currencies"])>1: skipped.append(code)
+                continue
+            currency=next(iter(item["currencies"]))
+            if currency=="USD" or not item["balance"]: continue
+            if currency not in rates: rates[currency]=Decimal(str(self.suggested_rates(currency,posting_date)["rate_usd"]))
+            results.append({"account":code,"name":item["name"],"currency":currency,"balance":str(item["balance"]),"carrying_usd":str(item["carrying_usd"]),
+                            "suggested_rate":str(rates[currency])})
+        return {"items":results,"skipped_accounts":skipped,"basis":"USD"}
+
+    def doe_candidates(self, posting_date, basis="LBP"):
+        if str(basis or "LBP").upper()=="USD": return self.doe_candidates_usd(posting_date)
         """Foreign class 4/5 balances and their original LBP carrying amounts as of a date.
 
         Local-currency activity is ignored except prior DOE corrections. Accounts with
@@ -1263,7 +1303,7 @@ class Database:
             code=line["code"]; currency=line["line_currency"]
             signed=Decimal("1") if Decimal(str(line["debit"] or 0))>0 else Decimal("-1")
             if currency=="LBP":
-                if line["source_type"]=="journal_voucher" and line["voucher_type"]=="07":
+                if line["source_type"]=="journal_voucher" and line["voucher_type"]=="07" and line["voucher_currency"]=="LBP":
                     doe_corrections[code]=doe_corrections.get(code,Decimal("0"))+Decimal(str(line["debit"] or 0))-Decimal(str(line["credit"] or 0))
                 continue
             native=Decimal(str(line["amount"] or 0)) if line["amount"] not in (None,"") else abs(Decimal(str(line["debit"] or 0))-Decimal(str(line["credit"] or 0)))
@@ -1285,6 +1325,27 @@ class Database:
             if currency not in rates: rates[currency]=Decimal(str(self.suggested_rates(currency,posting_date)["rate_lbp"]))
             results.append({**item,"balance":str(item["balance"]),"carrying_lbp":str(item["carrying_lbp"]),"suggested_rate":str(rates[currency])})
         return {"items":results,"skipped_accounts":skipped}
+
+    def _doe_line_amounts(self,line,code,basis,voucher_currency,index):
+        """DOE line that changes ONLY the equivalent of the revaluation currency (LBP or USD books).
+
+        - LBP DOE: the class 4/5 line is an LBP correction (as before) and the USD equivalent is left alone.
+        - USD DOE: the class 4/5 line keeps its own currency with amount 0 (the foreign / LBP balance does
+          not change) and only its USD equivalent moves.
+        - The gain 7751 / loss 6751 line is in the revaluation currency only."""
+        from chart_extra import EXCHANGE_GAIN_ACCOUNT, EXCHANGE_LOSS_ACCOUNT
+        if basis not in ("LBP","USD"): raise ValueError("DOE can be revalued in LBP or USD")
+        if voucher_currency!=basis: raise ValueError(f"A {basis} DOE voucher must be in {basis}")
+        try: debit=Decimal(str(line.get("debit") or 0)); credit=Decimal(str(line.get("credit") or 0))
+        except Exception as exc: raise ValueError(f"Line {index}: Debit and Credit must be numbers") from exc
+        value=(debit or credit).quantize(Decimal("0.01"))
+        zero=Decimal("0"); offset=code in (EXCHANGE_GAIN_ACCOUNT,EXCHANGE_LOSS_ACCOUNT)
+        native=str(line.get("native_currency") or basis).upper()
+        if offset or basis=="LBP": line_currency=basis if offset else "LBP"; amount=value
+        else: line_currency=native; amount=zero
+        return {"debit":value if debit else zero,"credit":value if credit else zero,"line_currency":line_currency,"amount":amount,
+                "amount_lbp":value if basis=="LBP" else zero,"amount_usd":value if basis=="USD" else zero,"rate_lbp":zero,"rate_usd":zero,
+                "due_date":None,"reference":str(line.get("reference") or "").strip() or None}
 
     def _voucher_line_amounts(self,line,voucher_currency,date,index):
         """Lines entered like BRAINS: currency, D/C, amount in the account currency and LBP / USD rates."""
@@ -2693,7 +2754,9 @@ class Database:
             try: return D(str(settings.get(name) if settings.get(name) not in (None,"") else default))
             except Exception: return D(default)
         money={}
-        for name in ("salary","transport","overtime","commission","retro_salary","schooling","bonus","thirteenth_month"):
+        # Director remuneration is paid with the payroll but is NOT subject to salary tax (and not to NSSF);
+        # it is part of gross and net pay and is posted to its own account.
+        for name in ("salary","transport","overtime","commission","retro_salary","schooling","bonus","thirteenth_month","director_remuneration"):
             raw=item.get(name) if item.get(name) not in (None,"") else (employee["base_salary"] if name=="salary" else 0)
             try: money[name]=D(str(raw).replace(",",""))
             except Exception as exc: raise ValueError(f"{name.replace('_',' ').title()} must be a number") from exc
@@ -2784,6 +2847,13 @@ class Database:
             allowance_lbp+=setting("family_allowance_child")*min(children,int(setting("family_allowance_max_children","5")))
             if setting("family_allowance_cap")>0: allowance_lbp=min(allowance_lbp,setting("family_allowance_cap"))
         family_allowance=from_lbp(allowance_lbp).quantize(D("0.01"))
+        override=str(item.get("family_allowance_override") if item.get("family_allowance_override") is not None else "").replace(",","").strip()
+        if override:
+            try: family_allowance=D(override).quantize(D("0.01"))
+            except Exception as exc: raise ValueError("Family Allocation must be a number") from exc
+            if family_allowance<0: raise ValueError("Family Allocation cannot be negative")
+            notes.append("Family allocation entered manually for this payroll")
+        if money["director_remuneration"]: notes.append("Director remuneration is not subject to salary tax or NSSF (as configured); confirm with your accountant")
         minimum=setting("minimum_wage")
         if minimum>0 and to_lbp(money["salary"])<minimum: notes.append(f"Salary is below the minimum wage of {int(minimum):,} LBP for this period")
         if not str(employee["nssf_number"] or "").strip(): notes.append("NSSF number missing in the employee file")
@@ -2822,7 +2892,7 @@ class Database:
             if not number:
                 prefix=f"PAY-{period[:7].replace('-','')}-"; row=db.execute("SELECT payroll_number FROM payroll_records WHERE payroll_number LIKE ? ORDER BY payroll_number DESC LIMIT 1",(prefix+"%",)).fetchone()
                 number=f"{prefix}{(int(row['payroll_number'].rsplit('-',1)[-1])+1 if row else 1):06d}"
-            fields=("salary","transport","overtime","commission","retro_salary","schooling","bonus","thirteenth_month","gross_salary","taxable_salary","income_tax","income_tax_lbp",
+            fields=("salary","transport","overtime","commission","retro_salary","schooling","bonus","thirteenth_month","director_remuneration","gross_salary","taxable_salary","income_tax","income_tax_lbp",
                 "nssf_base","employee_nssf","employer_medical","employer_end_service","employer_family","net_salary","retro_tax",
                 "transport_days","exempt_transport","exempt_schooling","family_allowance","regular_tax","one_off_tax","compliance_notes")
             values=[json.dumps(calc[field]) if field=="compliance_notes" else str(calc[field]) for field in fields]
@@ -2854,7 +2924,7 @@ class Database:
             mapping["salary"]=salary_account; mapping["payable"]=payable_account
             tax_account=mapping["tax"]; nssf_account=mapping["nssf"]
             employer_expense="621100002"
-            component_names={"salary":"Salaries and Wages","transport":"Transportation","overtime":"Overtime","commission":"Commission","retro_salary":"Retroactive Salary","schooling":"Schooling Allowance","bonus":"Bonus","thirteenth_month":"13th Salary"}
+            component_names={"salary":"Salaries and Wages","transport":"Transportation","overtime":"Overtime","commission":"Commission","retro_salary":"Retroactive Salary","schooling":"Schooling Allowance","bonus":"Bonus","thirteenth_month":"13th Salary","director_remuneration":"Director Remuneration"}
             required=[(mapping[key],name,"expense") for key,name in component_names.items()]
             required+=((salary_account,"Salaries and Wages","expense"),(employer_expense,"Employer NSSF Contributions","expense"),
                 (payable_account,"Salaries Payable","liability"),(tax_account,"Payroll Tax Payable","liability"),(nssf_account,"NSSF Payable","liability"))
@@ -2866,9 +2936,12 @@ class Database:
             number=f'PAYJV-{record["payroll_number"]}'
             entry_id=db.execute("""INSERT INTO journal_entries(entry_number,entry_date,description,source_type,source_id,currency,branch_id,created_by,created_at)
                 VALUES(?,?,?,?,?,?,?,?,?)""",(number,display_date(record["period_date"]),f'Payroll - {record["full_name"]}',"payroll",record["id"],record["currency"],record["branch_id"],user_id,utcnow())).lastrowid
-            lines=[(mapping[key],Decimal(record[key]),Decimal("0")) for key in component_names]
+            lines=[(mapping[key],Decimal(str(record[key] or 0)),Decimal("0")) for key in component_names]
             family_allowance=Decimal(str(record["family_allowance"] or 0)) if "family_allowance" in record.keys() else Decimal("0")
-            lines+=((employer_expense,employer_nssf,Decimal("0")),(payable_account,Decimal("0"),net),(tax_account,Decimal("0"),tax),(nssf_account,family_allowance,employee_nssf+employer_nssf))
+            # Family allocation: its own posting account when one is set; otherwise offset on the NSSF account (as before).
+            family_account=str(mapping.get("family_allowance") or "").strip() or nssf_account
+            if family_account!=nssf_account: db.execute("INSERT OR IGNORE INTO accounts(code,name_en,type) VALUES(?,?,?)",(family_account,"Family Allocation","asset"))
+            lines+=((employer_expense,employer_nssf,Decimal("0")),(payable_account,Decimal("0"),net),(tax_account,Decimal("0"),tax),(nssf_account,Decimal("0"),employee_nssf+employer_nssf),(family_account,family_allowance,Decimal("0")))
             for code,debit,credit in lines:
                 if not debit and not credit: continue
                 db.execute("INSERT INTO journal_lines(entry_id,account_id,description,debit,credit) VALUES(?,?,?,?,?)",
@@ -3378,6 +3451,61 @@ class Database:
         with self.connect() as db:
             return [dict(r) for r in db.execute("""SELECT a.invoice_id,i.invoice_number,i.invoice_date,CAST(a.amount AS REAL) amount FROM payment_allocations a
                 JOIN invoices i ON i.id=a.invoice_id WHERE a.payment_id=? ORDER BY a.id""", (int(payment_id),))]
+
+    PERIOD_VALUE_FIELDS=("employee_ceiling","medical_ceiling","family_ceiling","end_service_ceiling","employee_nssf_rate","medical_rate","family_rate","end_service_rate")
+
+    def save_payroll_periods(self, periods, user_id):
+        """Save the whole list of Tax & NSSF periods at once (edit Date From / Date To, ceilings and rates).
+
+        Periods are checked together: sorted by Date From, no two on the same date, no overlap and no gap
+        (an empty Date To closes the day before the next period; the last period may stay open). Every
+        other setting of a period (tax brackets, allowances, posting accounts) is kept from the period it
+        was edited from, or copied from the period that covered its new Date From."""
+        if not isinstance(periods,list) or not periods: raise ValueError("At least one period is required")
+        with self.connect() as db:
+            existing={row["date_from"]:dict(row) for row in db.execute("SELECT * FROM payroll_settings ORDER BY date_from")}
+        if not existing: raise ValueError("Load the payroll settings first")
+        def covering(day):
+            best=None
+            for start,row in sorted(existing.items()):
+                if start<=day: best=row
+            return best or next(iter(sorted(existing.items())))[1]
+        cleaned=[]
+        for index,period in enumerate(periods,1):
+            if not str(period.get("date_from") or "").strip(): raise ValueError(f"Period {index}: Date From is required")
+            date_from=iso_date(period.get("date_from"),f"Period {index} Date From")
+            text_to=str(period.get("date_to") or "").strip()
+            date_to=iso_date(text_to,f"Period {index} Date To") if text_to and text_to.lower()!="open" else None
+            base=dict(existing.get(str(period.get("original_from") or ""),None) or covering(date_from))
+            for field in self.PERIOD_VALUE_FIELDS:
+                if period.get(field) in (None,""): continue
+                try: value=Decimal(str(period[field]).replace(",","").replace("%",""))
+                except Exception as exc: raise ValueError(f"Period {index}: {field.replace('_',' ')} must be a number") from exc
+                if value<0: raise ValueError(f"Period {index}: {field.replace('_',' ')} cannot be negative")
+                if field.endswith("rate") and value>=1: raise ValueError(f"Period {index}: {field.replace('_',' ')} must be a decimal rate (3% = 0.03)")
+                base[field]=str(value)
+            base["date_from"]=date_from; base["date_to"]=date_to; cleaned.append(base)
+        cleaned.sort(key=lambda row:row["date_from"])
+        for current,following in zip(cleaned,cleaned[1:]):
+            if current["date_from"]==following["date_from"]: raise ValueError(f"Two periods start on {display_date(current['date_from'])}")
+            day_before=(datetime.strptime(following["date_from"],"%Y-%m-%d")-timedelta(days=1)).strftime("%Y-%m-%d")
+            if not current["date_to"]: current["date_to"]=day_before
+            if current["date_to"]<current["date_from"]: raise ValueError(f"The period from {display_date(current['date_from'])} ends before it starts")
+            if current["date_to"]>=following["date_from"]:
+                raise ValueError(f"The period {display_date(current['date_from'])} - {display_date(current['date_to'])} overlaps the period starting {display_date(following['date_from'])}")
+            if current["date_to"]<day_before:
+                raise ValueError(f"Nothing covers {display_date((datetime.strptime(current['date_to'],'%Y-%m-%d')+timedelta(days=1)).strftime('%Y-%m-%d'))} to {display_date(day_before)}: "
+                                 "change a Date From / Date To or add a period for those days")
+        if cleaned[-1]["date_to"] and cleaned[-1]["date_to"]<cleaned[-1]["date_from"]: raise ValueError("The last period ends before it starts")
+        with self.connect() as db:
+            columns=[row["name"] for row in db.execute("PRAGMA table_info(payroll_settings)") if row["name"]!="id"]
+            db.execute("DELETE FROM payroll_settings")
+            for row in cleaned:
+                row.setdefault("created_by",user_id); row.setdefault("created_at",utcnow())
+                db.execute(f"INSERT INTO payroll_settings({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",[row.get(column) for column in columns])
+            db.execute("INSERT INTO audit_log(user_id,action,entity,details,created_at) VALUES(?,?,?,?,?)",(user_id,"save","payroll_periods",
+                json.dumps([{"from":r["date_from"],"to":r["date_to"],**{f:r.get(f) for f in self.PERIOD_VALUE_FIELDS}} for r in cleaned]),utcnow()))
+        return self.list_payroll_settings()
 
     def delete_payroll_period(self, date_from, user_id):
         """Remove one Tax & NSSF period; the period before it is extended to cover the gap."""

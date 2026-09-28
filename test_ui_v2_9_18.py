@@ -118,7 +118,26 @@ class ProgramWindowFixesTest(unittest.TestCase):
         self._button(page, "Preview").invoke(); self._button(page, "Post DOE vouchers").invoke(); self.app.update()
         self.assertFalse([m for m in self.messages if m[0] in ("showerror", "showwarning")], self.messages)
         info = [m for m in self.messages if m[0] == "showinfo"][-1][1][1]
-        self.assertIn("2 DOE voucher(s)", info); self.assertIn("EUR", info); self.assertIn("USD", info)
+        self.assertIn("Posted 2 LBP DOE voucher(s)", info); self.assertIn("EUR", info); self.assertIn("USD", info)
+
+    def test_usd_books_doe_for_one_selected_currency(self):
+        api = self.app.client; year = self.app.current_fiscal_year
+        api.save_journal_voucher({"entry_date": f"01-03-{year}", "description": "LBP balance", "currency": "LBP", "voucher_type": "01"},
+                                 [{"account_code": "531", "debit": "895000000"}, {"account_code": "211", "credit": "895000000"}])
+        self.app.manual_date.set(f"30-09-{year}"); self.app.show_doe_page(); self.app.update()
+        page = self._toplevel("DOE")
+        combos = [w for w in page.winfo_children()[0].winfo_children() if w.winfo_class() == "TCombobox"]
+        combos[0].set("USD"); combos[0].event_generate("<<ComboboxSelected>>"); self.app.update()
+        self.assertIn("LBP", combos[1]["values"])
+        combos[1].set("LBP"); combos[1].event_generate("<<ComboboxSelected>>"); self.app.update()
+        entries = [w for w in page.winfo_children()[1].winfo_children() if w.winfo_class() == "Entry"]
+        self.assertEqual(len(entries), 1)
+        entries[0].delete(0, "end"); entries[0].insert(0, "100000")
+        self._button(page, "Preview").invoke(); self._button(page, "Post DOE vouchers").invoke(); self.app.update()
+        self.assertFalse([m for m in self.messages if m[0] in ("showerror", "showwarning")], self.messages)
+        self.assertIn("Posted 1 USD DOE voucher(s)", [m for m in self.messages if m[0] == "showinfo"][-1][1][1])
+        row = next(r for r in api.doe_candidates(f"30-09-{year}", "USD")["items"] if r["account"] == "531")
+        self.assertAlmostEqual(float(row["carrying_usd"]), float(row["balance"]) / 100000, places=2)
 
     def test_legal_document_saved_with_dates_and_no_file(self):
         api = self.app.client
@@ -134,6 +153,27 @@ class ProgramWindowFixesTest(unittest.TestCase):
         self.assertFalse([m for m in self.messages if m[0] == "showerror"], self.messages)
         saved = api.party_documents(party["id"])
         self.assertEqual((saved[0]["issue_date"], saved[0]["expiry_date"], saved[0]["file_name"]), ("01-01-2026", "31-12-2027", ""))
+
+    def test_digits_typed_in_any_date_field_get_dashes(self):
+        frame = tk.Frame(self.app); tk.Label(frame, text="Date From").pack(); entry = tk.Entry(frame); entry.pack()
+        plain = tk.Frame(self.app); tk.Label(plain, text="Quantity").pack(); qty = tk.Entry(plain); qty.pack()
+        for widget in (entry, qty):
+            widget.insert(0, "31122025"); self.app._auto_dash_any_date(mock.Mock(widget=widget, keysym="5"))
+        self.assertEqual(entry.get(), "31-12-2025"); self.assertEqual(qty.get(), "31122025")
+
+    def test_item_cost_is_a_link_to_the_stock_card(self):
+        self.app.load_inventory(); self.app.update()
+        self.app.items_tree.selection_set(self.app.items_tree.get_children()[0])
+        with mock.patch.object(self.app, "open_stock_card") as opened:
+            self.app.item_cost_label.event_generate("<Button-1>"); self.app.update()
+            self.app.open_item_cost_link()
+        self.assertTrue(opened.called)
+
+    def test_program_opens_on_the_dashboard_first_and_builds_the_rest(self):
+        self.app.main_screen()
+        self.assertTrue(self.app.__dict__.get("_pending_builders"))  # the other pages are still waiting
+        self.assertTrue(hasattr(self.app, "payroll_tree"))          # needing one builds them at once
+        self.assertFalse(self.app.__dict__.get("_pending_builders"))
 
 
 if __name__ == "__main__":

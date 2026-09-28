@@ -4,14 +4,26 @@ import os
 import tempfile
 from datetime import datetime
 
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+import functools as _functools
+
+# openpyxl and reportlab take a noticeable time to load. They are loaded the first time an export is
+# made (not when the program opens), which makes opening Saber Accounting faster.
+_LIBRARIES_LOADED = False
+
+
+def _load_libraries():
+    global _LIBRARIES_LOADED, Workbook, Alignment, Font, PatternFill, get_column_letter, colors, A4, landscape
+    global getSampleStyleSheet, mm, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    if _LIBRARIES_LOADED: return
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    _LIBRARIES_LOADED = True
 
 NAVY = "071B2E"
 
@@ -431,3 +443,17 @@ def export_sections_pdf(path, title, meta, sections):
         canvas.drawString(8*mm, 6*mm, footer_title); canvas.drawRightString(page[0] - 8*mm, 6*mm, f"Page {document.page}")
         canvas.restoreState()
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
+
+
+def _with_libraries(function):
+    @_functools.wraps(function)
+    def run(*args, **kwargs):
+        _load_libraries(); return function(*args, **kwargs)
+    return run
+
+
+for _name, _value in list(globals().items()):
+    if callable(_value) and getattr(_value, "__module__", None) == __name__ and isinstance(_value, type(_load_libraries)) \
+            and _name not in ("_load_libraries", "_with_libraries"):
+        globals()[_name] = _with_libraries(_value)
+del _name, _value

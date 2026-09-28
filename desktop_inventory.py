@@ -91,7 +91,9 @@ class InventoryMixin:
                 if key == "category": widget.bind("<<ComboboxSelected>>", lambda _e: self.item_category_chosen())
             else: widget = tk.Entry(form, textvariable=self.item_vars[key], width=width)
             widget.grid(row=index // 3, column=(index % 3) * 2 + 1, sticky="w", padx=4, pady=2)
-        self.item_cost_label = tk.Label(form, text="Cost price (average of purchases): -", bg=LIGHT, fg=NAVY, font=("Segoe UI", 9, "bold")); self.item_cost_label.grid(row=3, column=4, columnspan=2, sticky="w", padx=4)
+        self.item_cost_label = tk.Label(form, text="Cost price (average of purchases): -", bg=LIGHT, fg="#1a5fb4", cursor="hand2", font=("Segoe UI", 9, "bold", "underline")); self.item_cost_label.grid(row=3, column=4, columnspan=2, sticky="w", padx=4)
+        # The cost is a link: click it to open the item's Stock Card (each purchase / sale and the running average cost).
+        self.item_cost_label.bind("<Button-1>", lambda _event: self.open_item_cost_link())
         buttons = tk.Frame(form, bg=LIGHT); buttons.grid(row=5, column=0, columnspan=6, sticky="w", pady=(4, 0))
         tk.Checkbutton(buttons, text="Active", variable=self.item_active, bg=LIGHT).pack(side="left", padx=(0, 8))
         self.action_button(buttons, "New", self.new_item).pack(side="left", padx=3)
@@ -113,7 +115,7 @@ class InventoryMixin:
         for key in self.item_vars: self.item_vars[key].set("" if item.get(key) in (None, 0.0) and key in ("barcode", "notes", "category") else str(item.get(key) if item.get(key) is not None else ""))
         self.item_vars["default_vat"].set("0%" if str(item.get("default_vat") or "11").strip() in ("0", "0.0", "0%") else "11%")
         self.item_vars["sales_price"].set(f'{item["sales_price"]:g}'); self.item_vars["reorder_level"].set(f'{item["reorder_level"]:g}'); self.item_active.set(bool(item["active"]))
-        self.item_cost_label.config(text=f'Cost price (average of purchases): {item["average_cost"]:,.4f} {getattr(self, "inventory_currency", "")}   On hand: {item["quantity"]:,.3f}')
+        self.item_cost_label.config(text=f'Cost price (average of purchases): {item["average_cost"]:,.4f} {getattr(self, "inventory_currency", "")}   On hand: {item["quantity"]:,.3f}   ▸ how is it calculated?')
 
     def save_item(self):
         payload = {k: v.get().strip() for k, v in self.item_vars.items()}; payload.update(id=self.item_id, active=self.item_active.get())
@@ -121,6 +123,10 @@ class InventoryMixin:
         try: saved = self.client.save_inventory_item(payload)
         except Exception as exc: return messagebox.showerror("Items", str(exc))
         self.new_item(); self.load_inventory(); messagebox.showinfo("Items", f'Item {saved["sku"]} - {saved["name"]} saved')
+
+    def open_item_cost_link(self):
+        if not self.items_tree.selection(): return messagebox.showinfo("Cost price", "Select an item in the list, then click its cost to see how it is calculated (Stock Card).")
+        self.open_stock_card()
 
     def open_stock_card(self):
         selected = self.items_tree.selection()

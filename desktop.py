@@ -83,7 +83,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.18")
+        self.title("Saber Accounting 2.9.19")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -132,7 +132,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.active_account_variable=None
         self._style()
         self.bind_all("<F2>",self.open_active_account_lookup)
-        self.install_mouse_wheel(); self.install_field_right_click()
+        self.install_mouse_wheel(); self.install_field_right_click(); self.install_date_dashes()
         self.bind_all("<Control-f>",self.focus_page_search); self.bind_all("<Control-F>",self.focus_page_search)
         self.login_screen()
 
@@ -212,6 +212,47 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
     def register_scroll_page(self, canvas):
         canvas._saber_scroll_page = True; return canvas
+
+    # ------------------------------------------------------------ dates typed as digits get their dashes
+    DATE_LABEL_WORDS=("date","expiry","issue","as of","birth","valid until","retro","period")
+    DATE_LABEL_EXACT=("from","to","date from","date to","from date","to date","dob")
+
+    def install_date_dashes(self):
+        """Every date field (not only the ones built with date_entry) turns 31122025 into 31-12-2025 while
+        typing. A field counts as a date when it was marked as one, when its label says Date / From / To /
+        Expiry / Issue / Period ..., or when it already holds a DD-MM-YYYY date."""
+        self.bind_class("Entry","<KeyRelease>",self._auto_dash_any_date,add="+")
+
+    def _looks_like_date_field(self,widget):
+        if getattr(widget,"_saber_date",None) is not None: return widget._saber_date
+        try: current=widget.get().strip()
+        except Exception: current=""
+        if len(current)==10 and current[2]=="-" and current[5]=="-" and current.replace("-","").isdigit(): return True
+        try:
+            siblings=widget.master.winfo_children(); index=siblings.index(widget)
+        except Exception: return False
+        for sibling in reversed(siblings[:index]):
+            if sibling.winfo_class()=="Label":
+                text=str(sibling.cget("text") or "").strip().lower().rstrip(":")
+                return text in self.DATE_LABEL_EXACT or any(word in text for word in self.DATE_LABEL_WORDS)
+            if sibling.winfo_class() in ("Entry","TCombobox","Checkbutton","Button"): return False
+        return False
+
+    def _auto_dash_any_date(self,event):
+        widget=event.widget
+        if getattr(widget,"_saber_date_entry",False): return  # date_entry fields do this themselves
+        if event.keysym in ("BackSpace","Delete","Left","Right","Home","End","Tab","Shift_L","Shift_R","Return","Escape"): return
+        if len(event.keysym)!=1 or not event.keysym.isdigit(): return
+        try: value=widget.get()
+        except Exception: return
+        if not value or any(ch.isalpha() for ch in value) or (len(value)>=5 and value[4]=="-"): return
+        if not value.replace("-","").isdigit(): return
+        if getattr(widget,"_saber_date",None) is None: widget._saber_date=self._looks_like_date_field(widget)
+        if not widget._saber_date: return
+        formatted=auto_dash_date(value)
+        if formatted!=value:
+            try: widget.delete(0,"end"); widget.insert(0,formatted); widget.icursor("end")
+            except Exception: pass
 
     # ------------------------------------------------------------ right-click search in any field
     def install_field_right_click(self):
@@ -303,7 +344,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         return today.strftime("%d-%m-%Y") if year==today.year else f"01-01-{year}"
 
     def date_entry(self,parent,variable,width=13):
-        entry=tk.Entry(parent,textvariable=variable,width=width)
+        entry=tk.Entry(parent,textvariable=variable,width=width); entry._saber_date_entry=True
         def dashes(event=None):
             if event is not None and event.keysym in ("BackSpace","Delete","Left","Right","Home","End","Tab","Shift_L","Shift_R"): return
             value=variable.get()
@@ -535,12 +576,52 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         if self.can_use("payroll"): builders.append(self.build_payroll)
         if self.can_use("vat"): builders.append(self.build_vat_return)
         builders+=[self.build_journal,self.build_trial,self.build_profit_loss,self.build_financial_reports,self.build_statement,self.build_accounts,self.build_settings]
-        for build in builders:
-            try: build()
-            except Exception as exc:
-                traceback.print_exc(); messagebox.showerror("Saber Accounting",f"A page could not be loaded ({build.__name__.replace('build_','').replace('_',' ')}): {exc}\n\nThe other pages are still available.")
-        self.setup_context_f2()
+        # Faster opening: the Dashboard is built at once and shown; the other pages are built one by one
+        # in the background right after (a page the user opens first, or any page element another
+        # screen needs, is built immediately - see __getattr__ / build_pending_pages).
+        self._page_generation=getattr(self,"_page_generation",0)+1
+        self._pending_builders=list(builders[1:])
+        self._run_page_builder(builders[0])
+        self.update_idletasks()
+        generation=self._page_generation
+        self.after(30,lambda:self._build_next_page(generation))
         self.after(700,lambda:self.show_document_alerts(startup=True))
+
+    def _run_page_builder(self,build):
+        self.__dict__["_building_depth"]=self.__dict__.get("_building_depth",0)+1
+        try: build()
+        except Exception as exc:
+            traceback.print_exc(); messagebox.showerror("Saber Accounting",f"A page could not be loaded ({build.__name__.replace('build_','').replace('_',' ')}): {exc}\n\nThe other pages are still available.")
+        finally: self.__dict__["_building_depth"]-=1
+
+    def _build_next_page(self,generation):
+        if generation!=getattr(self,"_page_generation",None): return  # the company / year was switched meanwhile
+        pending=self.__dict__.get("_pending_builders")
+        if pending:
+            self._run_page_builder(pending.pop(0))
+        if pending: self.after(1,lambda:self._build_next_page(generation))
+        elif self.__dict__.get("_pages_finished_for")!=generation: self._pages_finished_for=generation; self._finish_pages()
+
+    def build_pending_pages(self):
+        """Build every page that is still waiting (called when a page or one of its widgets is needed now)."""
+        pending=self.__dict__.get("_pending_builders")
+        while pending:
+            self._run_page_builder(pending.pop(0))
+        if self.__dict__.get("_pages_finished_for")!=self.__dict__.get("_page_generation"):
+            self._pages_finished_for=self.__dict__.get("_page_generation"); self._finish_pages()
+
+    def _finish_pages(self):
+        self.setup_context_f2()
+
+    def __getattr__(self,name):
+        # Only reached when normal lookup fails: a widget of a page that is not built yet.
+        pending=self.__dict__.get("_pending_builders")
+        # While a page is being built, a missing attribute means exactly what it meant before (not built yet).
+        if pending and not name.startswith("__") and not self.__dict__.get("_building_depth",0):
+            self.build_pending_pages()
+            try: return object.__getattribute__(self,name)
+            except AttributeError: pass
+        return super().__getattr__(name)
 
     def record_activity(self,_event=None): self.last_activity=time.monotonic()
 
@@ -584,6 +665,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.show_tab_window(start,target)
 
     def select_main_tab(self,page):
+        if self.__dict__.get("_pending_builders"): self.build_pending_pages()
         self.main_notebook.select(page); self.highlight_main_tab()
 
     def highlight_main_tab(self):
@@ -1915,13 +1997,14 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
 
         form=tk.LabelFrame(run,text="Monthly Payroll",bg=LIGHT); form.pack(fill="x",padx=10,pady=8)
         self.payroll_employee=tk.StringVar(); self.payroll_period=tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
-        self.payroll_vars={name:tk.StringVar(value="0") for name in ("salary","transport","overtime","commission","retro_salary","schooling","bonus","thirteenth_month")}
+        self.payroll_vars={name:tk.StringVar(value="0") for name in ("salary","transport","overtime","commission","retro_salary","schooling","bonus","thirteenth_month","director_remuneration")}
+        self.payroll_family_override=tk.StringVar()
         self.payroll_retro_from=tk.StringVar(); self.payroll_retro_to=tk.StringVar()
         tk.Label(form,text="Employee",bg=LIGHT).grid(row=0,column=0,padx=6,pady=5,sticky="w")
         self.payroll_employee_combo=ttk.Combobox(form,textvariable=self.payroll_employee,state="readonly",width=26); self.payroll_employee_combo.grid(row=0,column=1,padx=6,pady=5,sticky="w")
         self.payroll_employee_combo.bind("<<ComboboxSelected>>",lambda _event:self.payroll_employee_chosen())
         tk.Label(form,text="Period Date",bg=LIGHT).grid(row=0,column=2,padx=6,pady=5,sticky="w"); self.date_entry(form,self.payroll_period,14).grid(row=0,column=3,padx=6,pady=5,sticky="w")
-        labels=(("salary","Salary"),("transport","Transport"),("overtime","Overtime"),("commission","Commission"),("retro_salary","Retroactive Salary"),("schooling","Schooling"),("bonus","Bonus"),("thirteenth_month","13th Month"))
+        labels=(("salary","Salary"),("transport","Transport"),("overtime","Overtime"),("commission","Commission"),("retro_salary","Retroactive Salary"),("schooling","Schooling"),("bonus","Bonus"),("thirteenth_month","13th Month"),("director_remuneration","Director Remuneration (not taxable)"))
         for index,(key,label) in enumerate(labels):
             row=1+index//3; column=(index%3)*2
             tk.Label(form,text=label,bg=LIGHT).grid(row=row,column=column,padx=6,pady=4,sticky="w")
@@ -1930,6 +2013,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(form,text="Retro To",bg=LIGHT).grid(row=4,column=2,padx=6,pady=4,sticky="w"); self.date_entry(form,self.payroll_retro_to,14).grid(row=4,column=3,padx=6,pady=4,sticky="w")
         self.payroll_transport_days=tk.StringVar()
         tk.Label(form,text="Transport Days",bg=LIGHT).grid(row=4,column=4,padx=6,pady=4,sticky="w"); tk.Entry(form,textvariable=self.payroll_transport_days,width=6).grid(row=4,column=5,padx=6,pady=4,sticky="w")
+        tk.Label(form,text="Family Allocation (empty = automatic)",bg=LIGHT).grid(row=4,column=6,padx=6,pady=4,sticky="w"); tk.Entry(form,textvariable=self.payroll_family_override,width=12).grid(row=4,column=7,padx=6,pady=4,sticky="w")
         self.payroll_breakdown=tk.Label(form,text="",bg=LIGHT,fg="#5f6b76",anchor="w",justify="left",wraplength=1060); self.payroll_breakdown.grid(row=6,column=0,columnspan=8,padx=6,sticky="w")
         self.payroll_notes=tk.Label(form,text="",bg=LIGHT,fg="#8B1E1E",anchor="w",justify="left",font=("Segoe UI",9,"bold"),wraplength=1060); self.payroll_notes.grid(row=7,column=0,columnspan=8,padx=6,sticky="w")
         self.payroll_result=tk.StringVar(value="Gross: 0 | Tax: 0 | Employee NSSF: 0 | Net: 0")
@@ -1957,10 +2041,10 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Button(settings_page,text="Load Lebanese Law 2024-2026",command=self.apply_lebanese_payroll_rules,bg=GOLD,fg=NAVY,border=0,padx=14,pady=7,font=("Segoe UI",9,"bold")).grid(row=12,column=2,columnspan=2,padx=10,pady=10)
         self.build_payroll_periods_panel(settings_page,13)
         mapping_frame=tk.LabelFrame(settings_page,text="Standard Posting Accounts",bg=LIGHT,padx=8,pady=6); mapping_frame.grid(row=14,column=0,columnspan=6,padx=10,pady=8,sticky="ew")
-        self.payroll_employee_accounts={key:tk.StringVar() for key in ("salary","transport","overtime","commission","retro_salary","schooling","bonus","thirteenth_month","tax","nssf","payable")}
+        self.payroll_employee_accounts={key:tk.StringVar() for key in ("salary","transport","overtime","commission","retro_salary","schooling","bonus","thirteenth_month","director_remuneration","family_allowance","tax","nssf","payable")}
         self.payroll_manager_accounts={key:tk.StringVar() for key in self.payroll_employee_accounts}
         tk.Label(mapping_frame,text="Component",bg=LIGHT,font=("Segoe UI",9,"bold")).grid(row=0,column=0,padx=5); tk.Label(mapping_frame,text="Employees",bg=LIGHT,font=("Segoe UI",9,"bold")).grid(row=0,column=1,padx=5); tk.Label(mapping_frame,text="Managers",bg=LIGHT,font=("Segoe UI",9,"bold")).grid(row=0,column=2,padx=5)
-        labels={"salary":"Salary","transport":"Transportation","overtime":"Overtime","commission":"Commission","retro_salary":"Retro Salary","schooling":"Schooling","bonus":"Bonus","thirteenth_month":"13th Salary","tax":"Payroll Tax","nssf":"NSSF","payable":"Net Salary Payable"}
+        labels={"salary":"Salary","transport":"Transportation","overtime":"Overtime","commission":"Commission","retro_salary":"Retro Salary","schooling":"Schooling","bonus":"Bonus","thirteenth_month":"13th Salary","director_remuneration":"Director Remuneration","family_allowance":"Family Allocation (empty = NSSF account)","tax":"Payroll Tax","nssf":"NSSF","payable":"Net Salary Payable"}
         for index,(key,label) in enumerate(labels.items(),1):
             tk.Label(mapping_frame,text=label,bg=LIGHT).grid(row=index,column=0,padx=5,pady=2,sticky="w")
             self.account_search_box(mapping_frame,self.payroll_employee_accounts[key],16).grid(row=index,column=1,padx=5,pady=2)
@@ -2104,6 +2188,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         payload={"employee_id":employee["id"],"period_date":formatted_user_date(self.payroll_period.get())}
         payload.update({key:var.get().strip() or "0" for key,var in self.payroll_vars.items()})
         if self.payroll_transport_days.get().strip(): payload["transport_days"]=self.payroll_transport_days.get().strip()
+        if getattr(self,"payroll_family_override",None) is not None and self.payroll_family_override.get().strip(): payload["family_allowance_override"]=self.payroll_family_override.get().strip()
         if float(payload.get("retro_salary") or 0):
             if not self.payroll_retro_from.get().strip() or not self.payroll_retro_to.get().strip(): raise ValueError("Enter Retro From and Retro To dates")
             payload["retro_from"]=formatted_user_date(self.payroll_retro_from.get()); payload["retro_to"]=formatted_user_date(self.payroll_retro_to.get())
@@ -2789,7 +2874,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         tk.Label(general,text="Registered in VAT",bg=LIGHT).grid(row=10,column=0,padx=14,pady=7,sticky="w")
         ttk.Combobox(general,textvariable=self.company_vat_registered,values=["Yes","No"],state="readonly",width=15).grid(row=10,column=1,padx=14,pady=7,sticky="w")
         tk.Label(general,text="VAT Registration Date",bg=LIGHT).grid(row=11,column=0,padx=14,pady=7,sticky="w")
-        tk.Entry(general,textvariable=self.company_vat_date,width=42).grid(row=11,column=1,padx=14,pady=7,sticky="w")
+        self.date_entry(general,self.company_vat_date,42).grid(row=11,column=1,padx=14,pady=7,sticky="w")
         self.action_button(general,"Save Settings",self.save_general_settings).grid(row=12,column=0,columnspan=2,pady=14)
         self.load_settings_pages()
 

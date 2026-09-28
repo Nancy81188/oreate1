@@ -347,7 +347,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path == "/api/currencies": return self._json(200,{"items":self.db.currencies()})
         if path == "/api/exchange-rates": return self._json(200,{"items":self.db.list_exchange_rates()})
         if path == "/api/doe/candidates":
-            try: return self._json(200,self.db.doe_candidates(self._query(parsed,"date","")))
+            try: return self._json(200,self.db.doe_candidates(self._query(parsed,"date",""),self._query(parsed,"basis","LBP")))
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/trial-balance":
             query = parse_qs(parsed.query)
@@ -590,6 +590,10 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path == "/api/payroll/apply-lebanese-rules":
             if user["role"]!="admin": return self._json(403,{"error":"Administrator permission required"})
             try: return self._json(200,{"items":self.db.apply_lebanese_payroll_rules(user["id"])})
+            except Exception as exc: return self._json(400,{"error":str(exc)})
+        if path == "/api/payroll/periods":
+            if user["role"]!="admin": return self._json(403,{"error":"Administrator permission required"})
+            try: return self._json(200,{"items":self.db.save_payroll_periods(body.get("periods") or [],user["id"])})
             except Exception as exc: return self._json(400,{"error":str(exc)})
         if path == "/api/payroll/settings":
             if user["role"]!="admin": return self._json(403,{"error":"Administrator permission required"})

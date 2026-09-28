@@ -1,6 +1,7 @@
 """Accounting checks for asset amortisation and exchange difference vouchers."""
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 import fixed_assets
@@ -95,6 +96,27 @@ class AssetAndDoeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"gains credit"):
             self.db.save_journal_voucher({"entry_date":"30-09-2024","description":"DOE","currency":"LBP","voucher_type":"07"},
                 [{"account_code":"4011","credit":"100"},{"account_code":"4111","credit":"100"},{"account_code":"775100000","debit":"200"}],1)
+
+
+    def test_usd_doe_moves_only_the_usd_equivalent(self):
+        """DOE in the USD books: an LBP balance is revalued in USD; its LBP balance and the LBP books do not move."""
+        self.db.save_journal_voucher({"entry_date":"01-09-2024","currency":"LBP","voucher_type":"01"},
+            [{"account_code":"4111","debit":"89500000"},{"account_code":"211","credit":"89500000"}],1)
+        before=next(r for r in self.db.doe_candidates("30-09-2024","USD")["items"] if r["account"]=="4111")
+        self.assertEqual((before["currency"],Decimal(before["balance"])),("LBP",Decimal("89500000")))
+        self.assertFalse([r for r in self.db.doe_candidates("30-09-2024","USD")["items"] if r["currency"]=="USD"])
+        target=Decimal("89500000")/Decimal("100000"); difference=(target-Decimal(before["carrying_usd"])).quantize(Decimal("0.01"))
+        self.assertNotEqual(difference,0)
+        side,offset,offside=("debit","775100000","credit") if difference>0 else ("credit","675100000","debit")
+        self.db.save_journal_voucher({"entry_date":"30-09-2024","description":"DOE USD books","currency":"USD","voucher_type":"07","doe_basis":"USD"},
+            [{"account_code":"4111",side:str(abs(difference)),"native_currency":"LBP"},{"account_code":offset,offside:str(abs(difference))}],1)
+        after=next(r for r in self.db.doe_candidates("30-09-2024","USD")["items"] if r["account"]=="4111")
+        self.assertEqual(Decimal(after["carrying_usd"]).quantize(Decimal("0.01")),target.quantize(Decimal("0.01")))
+        self.assertEqual(Decimal(after["balance"]),Decimal("89500000"))
+        import ledger_reports
+        lines=[l for l in ledger_reports._load_lines(self.db,{"posting_status":"posted"}) if l["code"]=="4111"]
+        self.assertEqual(sum(l["signed"]["LBP"] for l in lines),Decimal("89500000"))
+        self.assertEqual(sum(l["signed"]["account"] for l in lines),Decimal("89500000"))
 
 
 if __name__=="__main__": unittest.main()

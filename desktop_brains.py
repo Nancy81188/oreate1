@@ -128,6 +128,7 @@ class EditableSheet:
         if not bbox: return
         row = self.rows[iid]; value = row.get(key, "")
         editor = tk.Entry(self.tree, justify={"w": "left", "e": "right"}.get(self.columns[index][3], "center"))
+        editor._saber_date = "date" in key  # date cells (Date From / To, due date...) get their dashes while typing
         editor.insert(0, "" if value is None else str(value)); editor.place(x=bbox[0], y=bbox[1], width=max(bbox[2], 70), height=bbox[3])
         editor.focus_set(); editor.select_range(0, "end"); done = {"flag": False}
         def commit(move):
@@ -496,23 +497,34 @@ class BrainsScreensMixin:
         self.update_manual_totals(); self.manual_line_info.config(text=f"Voucher {voucher['entry_number']} opened")
 
     def show_doe_page(self):
-        """Automatic DOE for ALL currencies at once: review every foreign-currency class 4/5 balance and
-        post ONE auditable DOE voucher per currency (a USD voucher, a EUR voucher, ...) with all its accounts."""
-        page=tk.Toplevel(self); page.title("DOE - Automatic Exchange Difference (all currencies)"); page.geometry("1180x620")
+        """Automatic DOE. Choose the books to revalue - LBP or USD - and one currency or all of them;
+        one auditable DOE voucher is posted per currency (a USD voucher, a EUR voucher, an LBP voucher, ...).
+        LBP books: foreign-currency class 4/5 balances are revalued in LBP.
+        USD books: LBP and other non-USD class 4/5 balances are revalued in USD; their own balance and the
+        LBP books do not change."""
+        page=tk.Toplevel(self); page.title("DOE - Automatic Exchange Difference"); page.geometry("1180x620")
         page.configure(bg=LIGHT); page.transient(self)
-        date=tk.StringVar(value=self.manual_date.get())
+        date=tk.StringVar(value=self.manual_date.get()); basis=tk.StringVar(value="LBP"); only=tk.StringVar(value="All currencies")
         bar=tk.Frame(page,bg=LIGHT); bar.pack(fill="x",padx=10,pady=(10,4))
         tk.Label(bar,text="DOE posting date",bg=LIGHT).pack(side="left")
-        tk.Entry(bar,textvariable=date,width=12).pack(side="left",padx=(4,12))
+        self.date_entry(bar,date,12).pack(side="left",padx=(4,12))
+        tk.Label(bar,text="Revalue in",bg=LIGHT).pack(side="left")
+        basis_box=ttk.Combobox(bar,textvariable=basis,values=["LBP","USD"],state="readonly",width=6); basis_box.pack(side="left",padx=(4,12))
+        tk.Label(bar,text="Currency",bg=LIGHT).pack(side="left")
+        only_box=ttk.Combobox(bar,textvariable=only,values=["All currencies"],state="readonly",width=15); only_box.pack(side="left",padx=(4,12))
         rates_bar=tk.Frame(page,bg=LIGHT); rates_bar.pack(fill="x",padx=10,pady=(0,4))
-        info=tk.Label(page,text="Load balances, review the DOE date rate of each currency, then Preview.",bg=LIGHT,fg=NAVY,anchor="w"); info.pack(fill="x",padx=10)
+        info=tk.Label(page,text="",bg=LIGHT,fg=NAVY,anchor="w"); info.pack(fill="x",padx=10)
         columns=("currency","account","name","foreign","carrying","target","difference","offset")
         tree=ttk.Treeview(page,columns=columns,show="headings",selectmode="extended")
-        for key,label,width in (("currency","Currency",70),("account","Class 4/5 account",130),("name","Account name",220),("foreign","Foreign balance",140),
-                                ("carrying","Carrying LBP",140),("target","DOE date LBP",140),("difference","Difference LBP",140),("offset","Gain / Loss A/C",120)):
+        for key,label,width in (("currency","Currency",70),("account","Class 4/5 account",130),("name","Account name",220),("foreign","Balance",140),
+                                ("carrying","Carrying",140),("target","At DOE rate",140),("difference","Difference",140),("offset","Gain / Loss A/C",120)):
             tree.heading(key,text=label); tree.column(key,width=width,stretch=key=="name")
         tree.pack(fill="both",expand=True,padx=10,pady=6)
-        state={"candidates":[],"preview":{},"date":None,"rates":{},"rate_vars":{}}
+        state={"candidates":[],"preview":{},"date":None,"basis":None,"rates":{},"rate_vars":{}}
+
+        def factor(code,rate):
+            # USD books: an LBP balance is divided by "LBP per 1 USD"; every other rate is "1 unit = x".
+            return (Decimal("1")/rate) if state["basis"]=="USD" and code=="LBP" else rate
 
         def read_rates():
             rates={}
@@ -525,29 +537,39 @@ class BrainsScreensMixin:
         def load():
             try:
                 day=datetime.strptime(date.get().strip(),"%d-%m-%Y").strftime("%d-%m-%Y")
-                result=self.client.doe_candidates(day)
+                result=self.client.doe_candidates(day,basis.get())
             except Exception as exc: return messagebox.showerror("DOE",str(exc),parent=page)
-            state.update(candidates=[r for r in result["items"] if r["currency"]!="LBP"],preview={},date=day,rates={},rate_vars={})
+            chosen_basis=basis.get(); items=[r for r in result["items"] if r["currency"]!=chosen_basis]
+            available=sorted({r["currency"] for r in items},key=lambda c:(c not in ("USD","LBP"),c))
+            only_box["values"]=["All currencies"]+available
+            if only.get() not in only_box["values"]: only.set("All currencies")
+            if only.get()!="All currencies": items=[r for r in items if r["currency"]==only.get()]
+            state.update(candidates=items,preview={},date=day,basis=chosen_basis,rates={},rate_vars={})
             for child in rates_bar.winfo_children(): child.destroy()
-            tk.Label(rates_bar,text="LBP per 1 unit on the DOE date:",bg=LIGHT,font=("Segoe UI",9,"bold")).pack(side="left",padx=(0,8))
-            for code in sorted({r["currency"] for r in state["candidates"]},key=lambda c:(c!="USD",c)):
-                suggested=next((r["suggested_rate"] for r in state["candidates"] if r["currency"]==code),"")
+            tk.Label(rates_bar,text="DOE date rates:",bg=LIGHT,font=("Segoe UI",9,"bold")).pack(side="left",padx=(0,8))
+            for code in sorted({r["currency"] for r in items},key=lambda c:(c not in ("USD","LBP"),c)):
+                suggested=next((r["suggested_rate"] for r in items if r["currency"]==code),"")
                 variable=tk.StringVar(value=str(suggested or "")); state["rate_vars"][code]=variable
-                tk.Label(rates_bar,text=code,bg=LIGHT).pack(side="left"); tk.Entry(rates_bar,textvariable=variable,width=12).pack(side="left",padx=(4,12))
+                label="1 USD =" if chosen_basis=="USD" and code=="LBP" else f"1 {code} ="
+                unit="LBP" if chosen_basis=="LBP" or code=="LBP" else "USD"
+                tk.Label(rates_bar,text=label,bg=LIGHT).pack(side="left"); tk.Entry(rates_bar,textvariable=variable,width=12).pack(side="left",padx=(4,2))
+                tk.Label(rates_bar,text=unit,bg=LIGHT).pack(side="left",padx=(0,12))
+            tree.heading("carrying",text=f"Carrying {chosen_basis}"); tree.heading("target",text=f"{chosen_basis} at DOE rate"); tree.heading("difference",text=f"Difference {chosen_basis}")
             tree.delete(*tree.get_children())
             skipped=result.get("skipped_accounts") or []
-            currencies=", ".join(state["rate_vars"]) or "none"
-            info.config(text=f'{len(state["candidates"])} foreign-currency account(s) in class 4/5 ({currencies}). ' +
-                (f"Mixed-currency accounts omitted for manual review: {', '.join(skipped)}." if skipped else "Check the rates, then Preview."))
+            info.config(text=f'{chosen_basis} books: {len(items)} class 4/5 account(s) to review ({", ".join(state["rate_vars"]) or "none"}). ' +
+                (f"Mixed-currency accounts omitted for manual review: {', '.join(skipped)}. " if skipped else "") + "Check the rates, then Preview.")
+        basis_box.bind("<<ComboboxSelected>>",lambda _event:load()); only_box.bind("<<ComboboxSelected>>",lambda _event:load())
 
         def preview():
-            if state["date"]!=date.get().strip(): return messagebox.showwarning("DOE","Load balances after changing the DOE date",parent=page)
+            if state["date"]!=date.get().strip() or state["basis"]!=basis.get(): return messagebox.showwarning("DOE","Load balances after changing the date or the books",parent=page)
             try: rates=read_rates()
             except (InvalidOperation,ValueError) as exc: return messagebox.showwarning("DOE",str(exc) if isinstance(exc,ValueError) and str(exc) else "Enter the DOE date rates as numbers",parent=page)
             tree.delete(*tree.get_children()); state["preview"]={}; state["rates"]=rates
+            carrying_key="carrying_usd" if state["basis"]=="USD" else "carrying_lbp"
             for row in state["candidates"]:
-                code_currency=row["currency"]; balance=Decimal(row["balance"]); carrying=Decimal(row["carrying_lbp"])
-                target=(balance*rates[code_currency]).quantize(Decimal("0.01")); difference=target-carrying
+                code_currency=row["currency"]; balance=Decimal(row["balance"]); carrying=Decimal(row[carrying_key])
+                target=(balance*factor(code_currency,rates[code_currency])).quantize(Decimal("0.01")); difference=target-carrying
                 if not difference: continue
                 offset="775100000" if difference>0 else "675100000"; key=f'{code_currency}|{row["account"]}'
                 state["preview"][key]=(row,difference)
@@ -555,42 +577,43 @@ class BrainsScreensMixin:
                     f'{target:,.2f}',f'{difference:,.2f}',offset))
             tree.selection_set(tree.get_children())
             vouchers=len({key.split("|")[0] for key in state["preview"]})
-            info.config(text=f'{len(state["preview"])} account(s) to adjust = {vouchers} DOE voucher(s), one per currency; positive differences credit 7751, negative debit 6751.')
+            info.config(text=f'{state["basis"]} books: {len(state["preview"])} account(s) to adjust = {vouchers} DOE voucher(s), one per currency; gains credit 7751, losses debit 6751.')
 
         def post():
             selected=list(tree.selection())
             if not selected: return messagebox.showwarning("DOE","Select the accounts to post",parent=page)
-            if state["date"]!=date.get().strip(): return messagebox.showwarning("DOE","Preview again after changing the date",parent=page)
+            if state["date"]!=date.get().strip() or state["basis"]!=basis.get(): return messagebox.showwarning("DOE","Preview again after changing the date or the books",parent=page)
             try:
                 if not state["preview"] or read_rates()!=state["rates"]: return messagebox.showwarning("DOE","Preview again after changing a rate",parent=page)
             except (InvalidOperation,ValueError): return messagebox.showwarning("DOE","Preview the vouchers first",parent=page)
+            books=state["basis"]; carrying_key="carrying_usd" if books=="USD" else "carrying_lbp"
             by_currency={}
             for key in selected: by_currency.setdefault(key.split("|")[0],[]).append(key)
-            if not messagebox.askyesno("Post DOE",f"Post {len(by_currency)} DOE voucher(s) ({', '.join(sorted(by_currency))}) dated {state['date']}?",parent=page): return
+            if not messagebox.askyesno("Post DOE",f"Post {len(by_currency)} {books} DOE voucher(s) ({', '.join(sorted(by_currency))}) dated {state['date']}?",parent=page): return
             posted=[]
             try:
-                latest={f'{r["currency"]}|{r["account"]}':r for r in self.client.doe_candidates(state["date"])["items"]}
-                for code_currency in sorted(by_currency,key=lambda c:(c!="USD",c)):
+                latest={f'{r["currency"]}|{r["account"]}':r for r in self.client.doe_candidates(state["date"],books)["items"]}
+                for code_currency in sorted(by_currency,key=lambda c:(c not in ("USD","LBP"),c)):
                     lines=[]; gains=Decimal("0"); losses=Decimal("0"); accounts=[]
                     for key in by_currency[code_currency]:
                         row,difference=state["preview"][key]; current=latest.get(key)
-                        if not current or current["balance"]!=row["balance"] or current["carrying_lbp"]!=row["carrying_lbp"]:
+                        if not current or current["balance"]!=row["balance"] or current[carrying_key]!=row[carrying_key]:
                             raise ValueError(f"Account {row['account']} changed since the preview. Reload the DOE balances.")
-                        lines.append({"account_code":row["account"],"line_currency":"LBP","side":"D" if difference>0 else "C","amount":str(abs(difference)),"rate_lbp":1,
-                                      "description":f"DOE {code_currency} {row['account']}: balance {row['balance']}, carrying LBP {row['carrying_lbp']}"})
+                        lines.append({"account_code":row["account"],"debit" if difference>0 else "credit":str(abs(difference)),"native_currency":code_currency,
+                                      "description":f"DOE {books} {code_currency} {row['account']}: balance {row['balance']}, carrying {books} {row[carrying_key]}"})
                         if difference>0: gains+=difference
                         else: losses+=-difference
                         accounts.append(row["account"])
-                    if gains: lines.append({"account_code":"775100000","line_currency":"LBP","side":"C","amount":str(gains),"rate_lbp":1,"description":f"DOE gain {code_currency}"})
-                    if losses: lines.append({"account_code":"675100000","line_currency":"LBP","side":"D","amount":str(losses),"rate_lbp":1,"description":f"DOE loss {code_currency}"})
-                    details=f"DOE {state['date']} {code_currency} at {state['rates'][code_currency]} LBP; accounts {', '.join(accounts)}"
-                    self.client.save_journal_voucher({"entry_date":state["date"],"description":details,"currency":"LBP","voucher_type":"07"},lines)
+                    if gains: lines.append({"account_code":"775100000","credit":str(gains),"description":f"DOE gain {code_currency} ({books} books)"})
+                    if losses: lines.append({"account_code":"675100000","debit":str(losses),"description":f"DOE loss {code_currency} ({books} books)"})
+                    details=f"DOE {books} books {state['date']} {code_currency} at {state['rates'][code_currency]}; accounts {', '.join(accounts)}"
+                    self.client.save_journal_voucher({"entry_date":state["date"],"description":details,"currency":books,"voucher_type":"07","doe_basis":books},lines)
                     posted.append(code_currency)
             except Exception as exc:
                 self.load_journal(); self.load_trial(); load()
                 return messagebox.showerror("DOE",f"Posted: {', '.join(posted) or 'none'}. Not posted: {exc}",parent=page)
             self.load_journal(); self.load_trial(); load()
-            messagebox.showinfo("DOE",f"Posted {len(posted)} DOE voucher(s) on {state['date']}: {', '.join(posted)}.",parent=page)
+            messagebox.showinfo("DOE",f"Posted {len(posted)} {books} DOE voucher(s) on {state['date']}: {', '.join(posted)}.",parent=page)
 
         self.action_button(bar,"Load balances",load).pack(side="left",padx=3)
         self.action_button(bar,"Preview",preview).pack(side="left",padx=3)

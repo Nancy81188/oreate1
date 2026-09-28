@@ -285,7 +285,7 @@ class ApiClient:
     def invoice_items(self,invoice_id): return self.request("GET",f"/api/invoices/{invoice_id}/items")["items"]
     def account_report(self,options): return self.request("GET","/api/reports/accounts?"+urlencode({"options":json.dumps(options)}))
     def suggested_rates(self,currency,date=None): return self.request("GET","/api/rates/suggest?"+urlencode({k:v for k,v in {"currency":currency,"date":date}.items() if v}))
-    def doe_candidates(self,date): return self.request("GET","/api/doe/candidates?"+urlencode({"date":date}))
+    def doe_candidates(self,date,basis="LBP"): return self.request("GET","/api/doe/candidates?"+urlencode({"date":date,"basis":basis}))
     def departments(self): return self.request("GET","/api/departments")["items"]
     def save_department(self,item): return self.request("POST","/api/departments",item)["item"]
     def projects(self): return self.request("GET","/api/projects")["items"]
@@ -339,6 +339,7 @@ class ApiClient:
     def financial_config(self,year): return self.request("GET","/api/reports/financial-config?"+urlencode({"year":year}))
     def save_financial_config(self,year,config): return self.request("POST","/api/reports/financial-config",{"year":year,"config":config})
     def business_report(self,report,options): return self.request("GET","/api/reports/business?"+urlencode({"report":report,"options":json.dumps(options)}))
+    def save_payroll_periods(self,periods): return self.request("POST","/api/payroll/periods",{"periods":periods})["items"]
     def delete_payroll_period(self,date_from): return self.request("POST","/api/payroll/delete-period",{"date_from":date_from})["items"]
     def dashboard_charts(self,year,basis="USD"): return self.request("GET","/api/reports/dashboard-charts?"+urlencode({"year":year,"basis":basis}))
     def bank_lines(self,account,currency,date_from,date_to,balance=None):
