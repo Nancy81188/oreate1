@@ -1,5 +1,35 @@
 # Saber Accounting MVP
 
+## Version 2.9.27 (Local PDF reader and payroll corrections)
+
+- PDF invoice previews use local text extraction. For scanned images, install free Tesseract OCR with English/French/Arabic language data; the app never requests an OpenAI key or sends invoices to a cloud AI service.
+- Purchase PDF item lines populate the editable purchase form. Items without an existing stock code are created when the purchase is saved. Sales PDF lines populate the sales form where reliably detected; review every field.
+- Payroll tax now uses a 30-day tax month for partial periods and cumulative prior saved payrolls for variable pay. The salary amount itself still uses actual calendar days.
+- The schooling tax exemption is an annual remaining balance, distinct from public/private schooling grant rates. An older company database with auto-seeded payroll rules reads current schooling amounts without overwriting stored settings.
+- PDF layouts vary. Review extracted date, supplier, item lines, VAT and TTC before saving. Scanned OCR requires Tesseract to be installed on the Windows computer.
+
+## Version 2.9.26 (Payroll periods and import review)
+
+- Payroll prorates salary and annual tax amounts by worked calendar days for an employee hired or leaving during the selected month.
+- Dated schooling grant limits for public and private schools can be reviewed and edited in Payroll Settings, separately from the taxable income exemption.
+- PDF and Excel invoice imports preview date, supplier/customer, items where detectable, deductible and non-deductible base, VAT and TTC. Missing VAT on a PDF must be entered or confirmed as 0 before importing; the importer no longer invents 11%.
+- Text extraction from PDF remains best effort. Scanned image PDFs and ambiguous layouts require manual review before saving.
+
+## Version 2.9.25 (Faster tabs and dashboard)
+
+- Opening a tab builds only that tab immediately; other screens continue loading between UI events instead of forcing every remaining page to build at once.
+- Dashboard totals are grouped in SQLite, avoiding loading every expense and invoice into Python just to calculate the cards. The currencies, overdue count and monthly figures keep their previous meaning.
+- Changed files: `desktop.py`, `database.py`, `test_dashboard_aggregation.py`, `installer.iss`, and this README. The existing full test suite and Windows build validate the change.
+
+
+## Version 2.9.24 (Payroll tax and editable employee forms)
+
+- Salary tax: each worker keeps the personal deduction. The spouse deduction applies only if the spouse does not work; when both parents work, the child deduction is split in half. Retroactive salary uses the allowances and brackets of each original month. Existing effective dated 2024–2026 tax brackets and editable periods remain available in Tax & NSSF Settings.
+- Payroll > Employees: R3, R3-1, NSSF employment and leaving worksheets open a review screen populated from saved company and employee details. Entries can be corrected for this export, then previewed or saved as PDF/Excel. The official blank forms remain available separately and the worksheets are not an electronic filing.
+- Changed files: `database.py`, `desktop.py`, `test_employee_r3.py`, `installer.iss`, and this README.
+
+
+
 ## Version 2.9.23 (Payroll: family allocation shown at once and editable)
 
 - Payroll > Payroll Entry: the **Family Allocation** field now shows the automatic amount as soon as the employee (or the period date) is chosen, and after Calculate: spouse and children allowances of the period (Tax & NSSF Settings), within the maximum. Type in the field to use another amount for this payroll; Calculate and Save then use your amount (with a compliance note). Choosing another employee shows the automatic amount again.

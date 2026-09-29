@@ -37,8 +37,13 @@ def _amount_after(text, keywords):
 def read_invoice_pdf(path):
     """Best guess of invoice number, date, party, currency and amounts. Always review before saving."""
     path = Path(path)
-    try: text = pdf_text(path)
-    except Exception as exc: return {"file": path.name, "path": str(path), "text": "", "notes": f"The PDF could not be read ({exc}). Enter the details manually."}
+    try:
+        text = pdf_text(path)
+        if len(text.strip()) < 20:
+            import fitz
+            from ai_service import _ocr_page
+            with fitz.open(str(path)) as document: text = _ocr_page(document[0])
+    except Exception as exc: return {"file": path.name, "path": str(path), "text": "", "notes": f"The scanned PDF could not be read ({exc}). Enter the details manually."}
     return _parse_invoice_text(path, text)
 
 
@@ -50,8 +55,9 @@ def _parse_invoice_text(path, text):
         result["notes"] = "This PDF is a scanned image (no text inside). The file will be attached; enter the amounts manually."; return result
     match = re.search(r"(?:invoice|inv|facture|فاتورة|bill)\s*(?:no\.?|number|num|#|n°|رقم)?\s*[:#.]?\s*([A-Z0-9][A-Z0-9\-/]{1,24})", text, re.I)
     if match and any(ch.isdigit() for ch in match.group(1)): result["invoice_number"] = match.group(1).strip("-/")
+    dated_lines = "\n".join(line for line in text.splitlines() if re.search(r"invoice date|date|تاريخ|émis|émission", line, re.I))
     for pattern, order in DATE_PATTERNS:
-        for groups in re.findall(pattern, text):
+        for groups in re.findall(pattern, dated_lines or text):
             try:
                 day, month, year = (groups if order == "dmy" else (groups[2], groups[1], groups[0]))
                 result["invoice_date"] = datetime(int(year), int(month), int(day)).strftime("%d-%m-%Y"); break
@@ -61,17 +67,26 @@ def _parse_invoice_text(path, text):
     for code, marks in (("LBP", ("LBP", "L.L", "ل.ل", "LL ")), ("EUR", ("EUR", "€")), ("AED", ("AED", "DHS")), ("USD", ("USD", "US$", "$"))):
         if any(mark in upper for mark in marks): result["currency"] = code; break
     result["total"] = _amount_after(text, ("grand total", "total amount", "amount due", "net to pay", "total ttc", "total"))
-    result["vat"] = _amount_after(text, ("vat amount", "vat 11%", "vat", "tva", "tax", "ض.ق.م"))
+    result["vat"] = _amount_after(text, ("vat amount", "vat 11%", "vat", "tva", "ض.ق.م"))
     result["subtotal"] = _amount_after(text, ("subtotal", "sub-total", "sub total", "before vat", "total ht", "net amount", "excl"))
     if result["total"] and result["vat"] and not result["subtotal"]: result["subtotal"] = round(result["total"] - result["vat"], 2)
-    if result["subtotal"] and result["vat"] is None: result["vat"] = round(result["subtotal"] * 0.11, 2)
     if result["subtotal"] and result["vat"] is not None and not result["total"]: result["total"] = round(result["subtotal"] + result["vat"], 2)
+    result["non_deductible"] = _amount_after(text, ("non deductible amount", "non-deductible amount", "non deductible value", "غير قابل للحسم"))
+    deductible_lines = "\n".join(line for line in text.splitlines() if not re.search(r"non[- ]deductible|غير قابل للحسم", line, re.I))
+    result["deductible"] = _amount_after(deductible_lines, ("deductible amount", "deductible value", "déductible", "قابل للحسم"))
+    result["items"] = []
+    for line in text.splitlines():
+        # Table extraction is deliberately conservative: quantity, unit price and line total
+        # must all be visible, otherwise the line stays for manual review.
+        item = re.match(r"^\s*(.{3,80}?)\s{2,}(\d+(?:\.\d+)?)\s{2,}"+AMOUNT+r"\s{2,}"+AMOUNT+r"\s*$", line)
+        if item and any(ch.isalpha() for ch in item.group(1)):
+            result["items"].append({"description": item.group(1).strip(), "quantity": _number(item.group(2)), "unit_price": _number(item.group(3)), "total": _number(item.group(4))})
     for line in text.splitlines():
         clean = line.strip()
         if len(clean) >= 3 and not re.search(r"invoice|facture|date|tel|phone|page|www|@", clean, re.I) and sum(ch.isalpha() for ch in clean) >= 3:
             result["party_name"] = clean[:60]; break
     missing = [label for key, label in (("invoice_number", "number"), ("invoice_date", "date"), ("total", "total")) if not result.get(key)]
-    result["notes"] = "Read from PDF - please check" + (f"; not found: {', '.join(missing)}" if missing else "")
+    result["notes"] = "Read from PDF - please check" + (f"; not found: {', '.join(missing)}" if missing else "") + ("; VAT not printed" if result["vat"] is None else "")
     return result
 
 
@@ -87,6 +102,12 @@ def read_invoice_pdf_pages(path):
     groups = []
     for number, page in enumerate(reader.pages, 1):
         text = page.extract_text() or ""
+        if len(text.strip()) < 20:
+            try:
+                import fitz
+                from ai_service import _ocr_page
+                with fitz.open(str(path)) as document: text = _ocr_page(document[number - 1])
+            except Exception: pass
         parsed = _parse_invoice_text(path, text)
         invoice_number = parsed.get("invoice_number")
         if groups and invoice_number and invoice_number == groups[-1]["invoice_number"]:
