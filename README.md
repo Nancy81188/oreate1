@@ -1,5 +1,13 @@
 # Saber Accounting MVP
 
+## Version 2.9.28 (Lighter startup)
+
+- Unused tabs wait until opened instead of building every report in the background. F2 lookups are bound as each page loads; cross-page access still loads required controls.
+- Existing company files skip repeated schema migration, account reseeding and full ANALYZE on startup once this revision has completed successfully. Older files and restored databases without the current marker still migrate before use.
+- Developers: bump Database.STARTUP_SCHEMA_VERSION whenever schema, initialization, seed accounts or migration helpers change. Explicit initialize() still performs the full initialization.
+- Changed files: desktop.py, database.py, server.py, company_manager.py, installer.iss, test_performance_tuning.py, test_ui_v2_9_18.py, README.md.
+
+
 ## Version 2.9.27 (Local PDF reader and payroll corrections)
 
 - PDF invoice previews use local text extraction. For scanned images, install free Tesseract OCR with English/French/Arabic language data; the app never requests an OpenAI key or sends invoices to a cloud AI service.
