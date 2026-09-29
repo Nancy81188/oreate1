@@ -1562,7 +1562,13 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         item["_iid"]=iid; self.update_sales_totals()
         if not item["description"]:
             self.sales_sheet.selection_set(iid); self.sales_sheet.focus(iid)
-            self.after(50,lambda:self.edit_sales_cell(column_index=1 if not getattr(self,"inventory_rows",None) else 0,iid=iid))
+            sheet = self.sales_sheet
+            def edit_new_line():
+                # A callback from a closed company/page must not rebuild its controls
+                # or steal focus. Optional inventory data must not load every tab.
+                if self.__dict__.get("sales_sheet") is sheet and sheet.winfo_exists() and sheet.winfo_ismapped():
+                    self.edit_sales_cell(column_index=1 if not self.__dict__.get("inventory_rows") else 0,iid=iid)
+            self.after(50,edit_new_line)
         return iid
 
     def sales_item_for(self,iid):
