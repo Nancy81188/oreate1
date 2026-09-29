@@ -84,7 +84,7 @@ def natural_sort_value(value):
 class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScreensMixin, FinalFeaturesMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saber Accounting 2.9.27")
+        self.title("Saber Accounting 2.9.28")
         screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{min(1180, screen_width)}x{min(720, screen_height)}")
         self.minsize(min(760, screen_width), min(480, screen_height))
@@ -582,20 +582,22 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         if self.can_use("payroll"): builders.append(self.build_payroll)
         if self.can_use("vat"): builders.append(self.build_vat_return)
         builders+=[self.build_journal,self.build_trial,self.build_profit_loss,self.build_financial_reports,self.build_statement,self.build_accounts,self.build_settings]
-        # Faster opening: the Dashboard is built at once and shown; the other pages are built one by one
-        # in the background right after (a page the user opens first, or any page element another
-        # screen needs, is built immediately - see __getattr__ / build_pending_pages).
+        # Build the Dashboard now. Other pages wait until selected or explicitly needed;
+        # expensive hidden reports must not compete with the first screen for the UI thread.
         self._page_generation=getattr(self,"_page_generation",0)+1
         self._pending_builders=list(builders[1:])
         self._run_page_builder(builders[0])
         self.update_idletasks()
         generation=self._page_generation
-        self.after(30,lambda:self._build_next_page(generation))
-        self.after(700,lambda:self.show_document_alerts(startup=True))
+        self.after(700,lambda:self.show_document_alerts(startup=True)
+                   if generation==self.__dict__.get("_page_generation") and self.client else None)
 
     def _run_page_builder(self,build):
         self.__dict__["_building_depth"]=self.__dict__.get("_building_depth",0)+1
-        try: build()
+        try:
+            build()
+            # Bind newly created controls while missing widgets cannot trigger eager loading.
+            self.setup_context_f2()
         except Exception as exc:
             traceback.print_exc(); messagebox.showerror("Saber Accounting",f"A page could not be loaded ({build.__name__.replace('build_','').replace('_',' ')}): {exc}\n\nThe other pages are still available.")
         finally: self.__dict__["_building_depth"]-=1
@@ -671,7 +673,7 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         self.show_tab_window(start,target)
 
     def _ensure_main_tab(self,page):
-        """Build only the requested tab; leave unrelated tabs on the background queue."""
+        """Build only the requested tab; leave unrelated tabs waiting until needed."""
         try: index=self.main_tab_pages.index(page)
         except (AttributeError,ValueError): return
         names={"dashboard_tab": ("build_dashboard",), "invoices_tab": ("build_invoices",),
@@ -1560,7 +1562,13 @@ class SaberApp(V22Mixin, InventoryMixin, Stage3Mixin, DimensionsMixin, BrainsScr
         item["_iid"]=iid; self.update_sales_totals()
         if not item["description"]:
             self.sales_sheet.selection_set(iid); self.sales_sheet.focus(iid)
-            self.after(50,lambda:self.edit_sales_cell(column_index=1 if not getattr(self,"inventory_rows",None) else 0,iid=iid))
+            sheet = self.sales_sheet
+            def edit_new_line():
+                # A callback from a closed company/page must not rebuild its controls
+                # or steal focus. Optional inventory data must not load every tab.
+                if self.__dict__.get("sales_sheet") is sheet and sheet.winfo_exists() and sheet.winfo_ismapped():
+                    self.edit_sales_cell(column_index=1 if not self.__dict__.get("inventory_rows") else 0,iid=iid)
+            self.after(50,edit_new_line)
         return iid
 
     def sales_item_for(self,iid):

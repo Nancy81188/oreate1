@@ -339,6 +339,31 @@ class Database:
                 self._transaction.connection = None
                 if not self.pooled: connection.close()
 
+    # Bump whenever initialize(), SCHEMA, seed accounts or its migration helpers change.
+    STARTUP_SCHEMA_VERSION = "1"
+
+    @staticmethod
+    def _startup_schema_signature(db):
+        # Metadata only: no invoice, journal or other business rows are scanned.
+        rows = db.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall()
+        return hashlib.sha256(json.dumps([tuple(row) for row in rows]).encode("utf-8")).hexdigest()
+
+    def initialize_if_needed(self, admin_password):
+        """Prepare a file once per schema revision, including restored older files.
+
+        The marker lives in the database, not process memory. Failed migrations never
+        stamp it. Explicit initialize() remains available for full repair/reseeding.
+        """
+        with self._lock:
+            with self.connect() as db:
+                table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_settings'").fetchone()
+                version = db.execute("SELECT value FROM app_settings WHERE key='startup_schema_version'").fetchone() if table else None
+                signature = db.execute("SELECT value FROM app_settings WHERE key='startup_schema_signature'").fetchone() if table else None
+                current = self._startup_schema_signature(db) if signature else None
+            if version and version["value"] == self.STARTUP_SCHEMA_VERSION and signature and signature["value"] == current:
+                return
+            self.initialize(admin_password)
+
     def initialize(self, admin_password):
         with self.connect() as db:
             db.executescript(SCHEMA)
@@ -587,6 +612,11 @@ class Database:
             # indexes above.
             db.execute("ANALYZE")
         self._auto_lebanese_payroll_rules()
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES('startup_schema_version',?)",
+                       (self.STARTUP_SCHEMA_VERSION,))
+            db.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES('startup_schema_signature',?)",
+                       (self._startup_schema_signature(db),))
 
     def _auto_lebanese_payroll_rules(self):
         """If the Tax & NSSF settings were never filled in (all NSSF ceilings are 0), load the official Lebanese
