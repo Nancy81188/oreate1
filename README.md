@@ -1,5 +1,13 @@
 # Saber Accounting MVP
 
+## Version 2.9.29 (PDF import review corrections; 30 September 2026)
+
+- Supports short-year dates and document references as review-only invoice-number suggestions, with a warning to verify the reference before posting.
+- Selects currency from the invoice-total context instead of unrelated bank details; a stray dollar symbol is not enough to infer currency.
+- Reads an unqualified pre-tax “Total” only when a VAT line and a later “Grand Total” establish that summary sequence.
+- Validation: all 332 automated tests passed locally. The Windows installer build still requires a manual GitHub Actions run.
+- Changed files: `pdf_import.py`, `test_pdf_ocr.py`, `test_asset_pdf_upload.py`, `installer.iss`, `desktop.py`, and this README.
+
 ## Version 2.9.28 (Lighter startup)
 
 - Unused tabs wait until opened instead of building every report in the background. F2 lookups are bound as each page loads; cross-page access still loads required controls.
